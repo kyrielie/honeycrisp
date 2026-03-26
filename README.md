@@ -6,7 +6,7 @@ A native macOS EPUB reader built with AppKit + WebKit, inspired by this [EPUBQui
 Built using claude and gemini because I hate swift.
 
 Download release to try, might have to bypass macos gatekeeper because I didn't sign it.
-`xattr -d com.apple.quarantine /path/to/app`
+```xattr -d com.apple.quarantine /path/to/app```
 
 ## Features
 
