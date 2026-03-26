@@ -1,6 +1,11 @@
 # EPUBReader
 
-A native macOS EPUB reader built with AppKit + WebKit, evolved from the EPUBQuickLook plugin.
+A native macOS EPUB reader built with AppKit + WebKit, inspired by this [EPUBQuickLook plugin](https://github.com/arytek/epub-quicklook-extension).
+
+Built using claude and gemini because I hate swift.
+
+Download release to try, might have to bypass macos gatekeeper because I didn't sign it.
+`xattr -d com.apple.quarantine /path/to/app`
 
 ## Features
 
@@ -53,9 +58,7 @@ A native macOS EPUB reader built with AppKit + WebKit, evolved from the EPUBQuic
 | `HistoryManager.swift` | Persists recently opened files with security-scoped bookmarks |
 | `HistoryViewController.swift` | Popover showing recent books with open/remove actions |
 
-## Compared to the QuickLook plugin
-
-The QuickLook plugin (`EPUBQuickLook`) provided the `EPUBParser` core and the basic WebKit rendering approach. This app builds on that foundation and adds:
+The QuickLook plugin (`EPUBQuickLook`) provided the `EPUBParser` core and the basic WebKit rendering approach. (I think, I just told claude to use it.)
 
 - Full `NSWindowController` lifecycle with multiple independent windows
 - Paginated reading mode driven by the spine order
@@ -64,3 +67,7 @@ The QuickLook plugin (`EPUBQuickLook`) provided the `EPUBParser` core and the ba
 - Persistent history via `UserDefaults` + security-scoped bookmarks
 - Toolbar with mode switcher, page indicator, history popover, pin button
 - Opinionated reader CSS that strips all EPUB styles (Lora typeface, warm paper palette)
+
+## License
+
+MIT
