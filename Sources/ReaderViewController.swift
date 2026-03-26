@@ -17,8 +17,13 @@ final class ReaderViewController: NSViewController {
 
     private static let readerHTMLFilename = "_ql_reader.html"
 
-    // Font size: percentage of base, applied via CSS custom property
-    private var fontSizePercent: Int = 100
+    // FIX (Bug 2): fontSizePercent is no longer a local instance variable.
+    // It is now read from and written to SettingsManager (which persists it in
+    // UserDefaults), so the value survives window closes and app restarts.
+    private var fontSizePercent: Int {
+        get { SettingsManager.shared.fontSizePercent }
+        set { SettingsManager.shared.fontSizePercent = newValue }
+    }
 
     // Toolbar items
     private weak var floatButton: NSButton?
@@ -32,13 +37,12 @@ final class ReaderViewController: NSViewController {
 
         let cfg = WKWebViewConfiguration()
         cfg.preferences = prefs
-        cfg.defaultWebpagePreferences.allowsContentJavaScript = true 
+        cfg.defaultWebpagePreferences.allowsContentJavaScript = true
         cfg.websiteDataStore = .nonPersistent()
 
         webView = ReaderWebView(frame: NSRect(x: 0, y: 0, width: 780, height: 920), configuration: cfg)
         webView.navigationDelegate = self
         webView.allowsMagnification = true
-        // Important: keep the webview background clear so our theming variables or the visual effect view can show through
         webView.setValue(false, forKey: "drawsBackground")
 
         loadingIndicator = NSProgressIndicator()
@@ -71,6 +75,12 @@ final class ReaderViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         NotificationCenter.default.addObserver(self, selector: #selector(applyDynamicSettings), name: SettingsManager.settingsChangedNotification, object: nil)
+
+        // FIX (Bug 3): Apply the persisted theme immediately on load so the
+        // window appearance (NSApp.appearance) is set before any content loads.
+        // Previously this only ran after a WebView navigation finished, so a
+        // cold launch with no EPUB would leave the window white in dark mode.
+        applyDynamicSettings()
     }
 
     override func viewDidAppear() {
@@ -94,37 +104,34 @@ final class ReaderViewController: NSViewController {
     // MARK: - EPUB Loading
 
     func loadEPUB(at url: URL) {
-            currentEPUBURL = url
-            showLoading(true)
-            beginSecurityAccess(for: url)
+        currentEPUBURL = url
+        showLoading(true)
+        beginSecurityAccess(for: url)
 
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                do {
-                    let workDir = URL(fileURLWithPath: NSTemporaryDirectory())
-                        .appendingPathComponent("EPUBReader_\(UUID().uuidString)")
-                    let parser = EPUBParser()
-                    let extracted = try parser.unpackEPUB(at: url, to: workDir)
-                    let pkg = try parser.parsePackage(at: extracted)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let workDir = URL(fileURLWithPath: NSTemporaryDirectory())
+                    .appendingPathComponent("EPUBReader_\(UUID().uuidString)")
+                let parser = EPUBParser()
+                let extracted = try parser.unpackEPUB(at: url, to: workDir)
+                let pkg = try parser.parsePackage(at: extracted)
 
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self else { return }
-                        self.currentPackage = pkg
-                        self.view.window?.title = pkg.title.isEmpty ? url.deletingPathExtension().lastPathComponent : pkg.title
-                        
-                        // FIX: Record the file in history
-                        HistoryManager.shared.record(url: url, title: pkg.title)
-                        
-                        self.renderCurrentContent()
-                        self.showLoading(false)
-                    }
-                } catch {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.showLoading(false)
-                        self?.showError(error)
-                    }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.currentPackage = pkg
+                    self.view.window?.title = pkg.title.isEmpty ? url.deletingPathExtension().lastPathComponent : pkg.title
+                    HistoryManager.shared.record(url: url, title: pkg.title)
+                    self.renderCurrentContent()
+                    self.showLoading(false)
+                }
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    self?.showLoading(false)
+                    self?.showError(error)
                 }
             }
         }
+    }
 
     private func renderCurrentContent() {
         guard let pkg = currentPackage else { return }
@@ -132,7 +139,6 @@ final class ReaderViewController: NSViewController {
             let parser = EPUBParser()
             let html = try parser.buildScrollHTML(from: pkg)
             let indexURL = pkg.rootFolder.appendingPathComponent(Self.readerHTMLFilename)
-            
             try html.write(to: indexURL, atomically: true, encoding: .utf8)
             webView.loadFileURL(indexURL, allowingReadAccessTo: pkg.rootFolder)
         } catch {
@@ -142,46 +148,52 @@ final class ReaderViewController: NSViewController {
 
     // MARK: - Display Settings
 
-    @objc private func applyDynamicSettings() {
-            let font = SettingsManager.shared.currentFont
-            let theme = SettingsManager.shared.currentTheme
-            
-            // 1. Update the web view's CSS variables
-            let js = """
-            document.documentElement.style.setProperty('--reader-font-size', '\(fontSizePercent)%');
-            document.documentElement.style.setProperty('--reader-font-family', "\(font.cssValue)");
-            document.documentElement.style.setProperty('--reader-bg', "\(theme.cssBackground)");
-            document.documentElement.style.setProperty('--reader-text', "\(theme.cssText)");
-            """
-            webView.evaluateJavaScript(js, completionHandler: nil)
-            
-            // 2. Override the application's appearance to match the theme
-            switch theme {
-            case .system:
-                NSApp.appearance = nil // Inherits the system's Appearance (Light or Dark)
-            case .dark:
-                NSApp.appearance = NSAppearance(named: .darkAqua) // Forces Dark Mode
-            case .light, .sepia:
-                NSApp.appearance = NSAppearance(named: .aqua) // Forces Light Mode
-            }
+    @objc func applyDynamicSettings() {
+        let font = SettingsManager.shared.currentFont
+        let theme = SettingsManager.shared.currentTheme
+
+        // Apply CSS custom properties to the live page
+        let js = """
+        document.documentElement.style.setProperty('--reader-font-size', '\(fontSizePercent)%');
+        document.documentElement.style.setProperty('--reader-font-family', "\(font.cssValue)");
+        document.documentElement.style.setProperty('--reader-bg', "\(theme.cssBackground)");
+        document.documentElement.style.setProperty('--reader-text', "\(theme.cssText)");
+        """
+        webView.evaluateJavaScript(js, completionHandler: nil)
+
+        // FIX (Bug 3): This appearance override now runs eagerly from viewDidLoad
+        // (not only after a page finishes loading), so the window chrome is
+        // correctly dark/light immediately, even before any EPUB is opened.
+        switch theme {
+        case .system:
+            NSApp.appearance = nil
+        case .dark:
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        case .light, .sepia:
+            NSApp.appearance = NSAppearance(named: .aqua)
         }
+    }
 
     @objc private func adjustFontSize(_ sender: NSSegmentedControl) {
-        let segment = sender.selectedSegment // Capture the clicked segment
-        
+        let segment = sender.selectedSegment
+
+        // FIX (Bug 2): Write back through the computed property so SettingsManager
+        // persists the new value. Previously this mutated a local Int that was
+        // discarded on the next launch.
         if segment == 0 {
             fontSizePercent = max(50, fontSizePercent - 10)
         } else if segment == 1 {
             fontSizePercent = min(300, fontSizePercent + 10)
         }
-        
-        // Defer the visual clear so AppKit's event tracking doesn't overwrite it
+
         DispatchQueue.main.async {
             if segment != -1 {
                 sender.setSelected(false, forSegment: segment)
             }
         }
-        
+
+        // applyDynamicSettings is triggered by the SettingsManager notification,
+        // but call it directly too so the WebView updates without a round-trip delay.
         applyDynamicSettings()
     }
 
@@ -199,7 +211,6 @@ final class ReaderViewController: NSViewController {
     }
 
     private func scrollByPages(_ pages: Int) {
-        // FIX: Removed '* 0.9' to ensure exact window height jumps
         let js = "window.scrollBy({ top: \(pages) * window.innerHeight, behavior: 'smooth' });"
         webView.evaluateJavaScript(js, completionHandler: nil)
     }
@@ -237,16 +248,14 @@ final class ReaderViewController: NSViewController {
             self?.loadEPUB(at: url)
             self?.presentedViewControllers?.forEach { $0.dismiss(self) }
         }
-        
-        // FIX: Load data before presenting
         historyVC.reload()
-        
+
         let popover = NSPopover()
         popover.contentViewController = historyVC
         popover.behavior = .transient
-        
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
     }
+
     @objc func openFile(_ sender: Any?) {
         (view.window?.windowController as? ReaderWindowController)?.showOpenPanel()
     }
@@ -287,21 +296,20 @@ extension ReaderViewController: NSToolbarDelegate {
             return item
 
         case .fontSize:
-                    let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-                    let seg = NSSegmentedControl(
-                        images: [
-                            NSImage(systemSymbolName: "textformat.size.smaller", accessibilityDescription: "Decrease Font")!,
-                            NSImage(systemSymbolName: "textformat.size.larger", accessibilityDescription: "Increase Font")!
-                        ],
-                        // FIX: Use .momentary so buttons act like normal push buttons
-                        trackingMode: .momentary,
-                        target: self,
-                        action: #selector(adjustFontSize(_:))
-                    )
-                    seg.segmentStyle = .separated
-                    item.view = seg
-                    item.label = "Font Size"
-                    return item
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            let seg = NSSegmentedControl(
+                images: [
+                    NSImage(systemSymbolName: "textformat.size.smaller", accessibilityDescription: "Decrease Font")!,
+                    NSImage(systemSymbolName: "textformat.size.larger", accessibilityDescription: "Increase Font")!
+                ],
+                trackingMode: .momentary,
+                target: self,
+                action: #selector(adjustFontSize(_:))
+            )
+            seg.segmentStyle = .separated
+            item.view = seg
+            item.label = "Font Size"
+            return item
 
         case .history:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
@@ -352,8 +360,8 @@ final class ReaderWebView: WKWebView {
 }
 
 extension NSToolbarItem.Identifier {
-    static let openFile      = NSToolbarItem.Identifier("openFile")
-    static let fontSize      = NSToolbarItem.Identifier("fontSize")
-    static let history       = NSToolbarItem.Identifier("history")
-    static let floatToggle   = NSToolbarItem.Identifier("floatToggle")
+    static let openFile    = NSToolbarItem.Identifier("openFile")
+    static let fontSize    = NSToolbarItem.Identifier("fontSize")
+    static let history     = NSToolbarItem.Identifier("history")
+    static let floatToggle = NSToolbarItem.Identifier("floatToggle")
 }
