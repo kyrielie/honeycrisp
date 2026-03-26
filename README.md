@@ -1,4 +1,5 @@
-# EPUBReader
+# Honeycrisp Reader
+![honeycrispicon](https://github.com/user-attachments/assets/3b1e2779-05a4-488a-bb09-52959af8ee1b)
 
 A native macOS EPUB reader built with AppKit + WebKit, inspired by this [EPUBQuickLook plugin](https://github.com/arytek/epub-quicklook-extension).
 
