@@ -10,12 +10,12 @@ Download release to try, might have to bypass macos gatekeeper because I didn't 
 ## Features
 
 - **Persistent windows** — stays open, unlike Quick Look
-- **Multiple windows** — open several books simultaneously (File > Open, or ⌘O)
-- **Paginated mode** — one spine document per "page", navigate with ← → arrow keys
+- ~~**Multiple windows** — open several books simultaneously (File > Open, or ⌘O)~~ broken
+- ~~**Paginated mode** — one spine document per "page"~~ broken, navigate with ← → arrow keys jumps one window height though
 - **Scroll mode** — all chapters merged into one continuous scroll
 - **Float on top** — pin any window above all others (⌘⇧T or toolbar pin button)
 - **Reading history** — recent books saved with open date, accessible via clock toolbar button
-- **Opinionated typography** — Lora serif + warm parchment palette; all EPUB styling is ignored for a consistent reading experience
+- ~~**Opinionated typography** — Lora serif + warm parchment palette;~~ Dark, light and sepia only. All EPUB styling is ignored for a consistent reading experience
 - **Dark mode** — automatic, follows system appearance
 
 ## Keyboard shortcuts
@@ -33,9 +33,9 @@ Download release to try, might have to bypass macos gatekeeper because I didn't 
 
 ### Xcode (recommended)
 
-1. Open `EPUBReader.xcodeproj` in Xcode 15+
+1. Open `Honeycrisp.xcodeproj` in Xcode 15+
 2. Xcode will automatically resolve the ZIPFoundation Swift Package dependency
-3. Select the **EPUBReader** scheme → **My Mac** destination
+3. Select the **Honeycrisp** scheme → **My Mac** destination
 4. Press ⌘R to build and run
 
 > **Note:** Set your own Team in Signing & Capabilities if you see code signing errors.
