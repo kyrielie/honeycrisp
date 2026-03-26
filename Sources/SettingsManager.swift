@@ -41,7 +41,7 @@ enum ReaderTheme: Int, CaseIterable {
     
     var cssBackground: String {
         switch self {
-        case .system: return "transparent" // Lets NSVisualEffectView shine through
+        case .system: return "transparent"
         case .light: return "#ffffff"
         case .dark: return "#1c1c1e"
         case .sepia: return "#f4ecd8"
@@ -50,7 +50,7 @@ enum ReaderTheme: Int, CaseIterable {
     
     var cssText: String {
         switch self {
-        case .system: return "var(--system-text)" // FIX: Replaced "inherit" with a mapped variable
+        case .system: return "var(--system-text)"
         case .light: return "#000000"
         case .dark: return "#e8e0d4"
         case .sepia: return "#433422"
@@ -81,6 +81,20 @@ final class SettingsManager {
             notifyChange()
         }
     }
+
+    // FIX (Bug 2): Font size is now persisted in UserDefaults instead of living
+    // as a transient instance variable on ReaderViewController.
+    var fontSizePercent: Int {
+        get {
+            let stored = defaults.integer(forKey: "readerFontSize")
+            return stored == 0 ? 100 : stored   // 0 means key was never written
+        }
+        set {
+            let clamped = min(300, max(50, newValue))
+            defaults.set(clamped, forKey: "readerFontSize")
+            notifyChange()
+        }
+    }
     
     private func notifyChange() {
         NotificationCenter.default.post(name: Self.settingsChangedNotification, object: nil)
@@ -91,81 +105,92 @@ final class SettingsManager {
 
 final class SettingsWindowController: NSWindowController {
     static let shared = SettingsWindowController()
-    
+
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 300, height: 160),
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 130),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
         window.title = "Settings"
         window.center()
-        
         super.init(window: window)
-        window.contentViewController = SettingsViewController()
     }
-    
+
     required init?(coder: NSCoder) { fatalError() }
+
+    // Re-create the VC every time the window is shown. This avoids stale state
+    // from a previously closed window whose view hierarchy was torn down.
+    override func showWindow(_ sender: Any?) {
+        window?.contentViewController = SettingsViewController()
+        super.showWindow(sender)
+    }
 }
 
 final class SettingsViewController: NSViewController {
+
     override func loadView() {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 160))
-        
-        let fontLabel = NSTextField(labelWithString: "Font:")
-        fontLabel.isEditable = false
-        fontLabel.isBordered = false
-        fontLabel.backgroundColor = .clear
-        
-        let fontPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        // Must assign self.view before returning from loadView.
+        // Use a concrete frame; the window will size to contentViewController automatically.
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 130))
+        self.view = root
+
+        // Row 1 – Font
+        let fontLabel = makeLabel("Font:")
+        let fontPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 200, height: 26), pullsDown: false)
         fontPopup.addItems(withTitles: ReaderFont.allCases.map { $0.displayName })
         fontPopup.selectItem(at: SettingsManager.shared.currentFont.rawValue)
         fontPopup.target = self
         fontPopup.action = #selector(fontChanged(_:))
-        
-        let themeLabel = NSTextField(labelWithString: "Theme:")
-        themeLabel.isEditable = false
-        themeLabel.isBordered = false
-        themeLabel.backgroundColor = .clear
-        
-        let themePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+
+        // Row 2 – Theme
+        let themeLabel = makeLabel("Theme:")
+        let themePopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 200, height: 26), pullsDown: false)
         themePopup.addItems(withTitles: ReaderTheme.allCases.map { $0.displayName })
         themePopup.selectItem(at: SettingsManager.shared.currentTheme.rawValue)
         themePopup.target = self
         themePopup.action = #selector(themeChanged(_:))
-        
+
         let stack = NSStackView(views: [
-            createRow(label: fontLabel, control: fontPopup),
-            createRow(label: themeLabel, control: themePopup)
+            makeRow(label: fontLabel,  control: fontPopup),
+            makeRow(label: themeLabel, control: themePopup)
         ])
         stack.orientation = .vertical
-        stack.alignment = .trailing
-        stack.spacing = 20
+        stack.alignment = .right
+        stack.spacing = 16
         stack.translatesAutoresizingMaskIntoConstraints = false
-        
-        view.addSubview(stack)
+        root.addSubview(stack)
+
         NSLayoutConstraint.activate([
-            stack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            stack.centerYAnchor.constraint(equalTo: root.centerYAnchor)
         ])
-        
-        self.view = view
     }
-    
-    private func createRow(label: NSView, control: NSView) -> NSStackView {
-        let stack = NSStackView(views: [label, control])
-        stack.orientation = .horizontal
-        stack.spacing = 10
-        return stack
+
+    private func makeLabel(_ text: String) -> NSTextField {
+        let tf = NSTextField(labelWithString: text)
+        tf.isEditable = false
+        tf.isBordered = false
+        tf.backgroundColor = .clear
+        return tf
     }
-    
+
+    private func makeRow(label: NSView, control: NSView) -> NSStackView {
+        let row = NSStackView(views: [label, control])
+        row.orientation = .horizontal
+        row.spacing = 10
+        row.alignment = .centerY
+        return row
+    }
+
     @objc private func fontChanged(_ sender: NSPopUpButton) {
         if let font = ReaderFont(rawValue: sender.indexOfSelectedItem) {
             SettingsManager.shared.currentFont = font
         }
     }
-    
+
     @objc private func themeChanged(_ sender: NSPopUpButton) {
         if let theme = ReaderTheme(rawValue: sender.indexOfSelectedItem) {
             SettingsManager.shared.currentTheme = theme
