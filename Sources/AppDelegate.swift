@@ -1,24 +1,46 @@
 import AppKit
+import CoreServices
 
 class AppDelegate: NSObject, NSApplicationDelegate {
 
-    func applicationDidFinishLaunching(_ aNotification: Notification) {
-            // Force the app to act as a regular app (shows in Dock, can take focus)
-            NSApp.setActivationPolicy(.regular)
-            
-            setupMenus()
-            
-            // FIX: Only open a default reader window if one wasn't already
-            // opened by application(_:open:) during launch
-            let hasReaderWindow = NSApp.windows.contains { $0.windowController is ReaderWindowController }
-            if !hasReaderWindow {
-                let windowController = ReaderWindowController()
-                windowController.showWindow(nil)
+    // 1. Hook into the app lifecycle right before it finishes launching
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Intercept the macOS "Open Document" Apple Event (odoc)
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleOpenEvent(_:withReplyEvent:)),
+            forEventClass: AEEventClass(kCoreEventClass),
+            andEventID: AEEventID(kAEOpenDocuments)
+        )
+    }
+
+    // 2. Process the Apple Event payload natively
+    @objc private func handleOpenEvent(_ event: NSAppleEventDescriptor, withReplyEvent replyEvent: NSAppleEventDescriptor) {
+        // Grab the direct object parameter from the event (this contains the files)
+        guard let descriptor = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject)) else { return }
+        
+        var urls: [URL] = []
+        
+        // Apple Events usually package files as a 1-indexed list (typeAEList)
+        if descriptor.numberOfItems > 0 {
+            for i in 1...descriptor.numberOfItems {
+                if let fileDescriptor = descriptor.atIndex(i),
+                   let urlString = fileDescriptor.stringValue,
+                   let url = URL(string: urlString) {
+                    urls.append(url)
+                }
             }
-            
-            // Bring the app to the front immediately
-            NSApp.activate(ignoringOtherApps: true)
+        } else if let urlString = descriptor.stringValue, let url = URL(string: urlString) {
+            // Fallback just in case a single unlisted item is passed
+            urls.append(url)
         }
+        
+        // 3. Forward to your existing AppDelegate open logic
+        if !urls.isEmpty {
+            self.application(NSApp, open: urls)
+        }
+    }
+
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         return true
