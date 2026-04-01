@@ -1,5 +1,5 @@
 // HistoryManager.swift
-// Persists recently opened EPUB files with open date
+// Persists recently opened EPUB files with open date and reading progress
 
 import Foundation
 
@@ -9,6 +9,8 @@ struct HistoryEntry: Codable, Identifiable {
     let title: String
     let openedAt: Date
     var bookmarkData: Data?
+    /// Last known reading progress (0-100). -1 means unknown.
+    var readingProgressPercent: Int
 
     init(url: URL, title: String, bookmarkData: Data? = nil) {
         self.id = UUID()
@@ -16,6 +18,7 @@ struct HistoryEntry: Codable, Identifiable {
         self.title = title
         self.openedAt = Date()
         self.bookmarkData = bookmarkData
+        self.readingProgressPercent = -1
     }
 }
 
@@ -27,28 +30,39 @@ final class HistoryManager {
 
     private(set) var entries: [HistoryEntry] = []
 
-    private init() {
-        load()
-    }
+    private init() { load() }
 
     func record(url: URL, title: String) {
-        // Create security-scoped bookmark for sandbox persistence
         let bookmarkData = try? url.bookmarkData(
             options: .withSecurityScope,
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
 
-        // Remove duplicate if present
+        // Preserve progress from existing entry if present
+        let existingProgress = entries.first(where: { $0.url == url })?.readingProgressPercent ?? -1
         entries.removeAll { $0.url == url }
 
-        let entry = HistoryEntry(url: url, title: title, bookmarkData: bookmarkData)
+        var entry = HistoryEntry(url: url, title: title, bookmarkData: bookmarkData)
+        entry.readingProgressPercent = existingProgress
         entries.insert(entry, at: 0)
 
         if entries.count > maxEntries {
             entries = Array(entries.prefix(maxEntries))
         }
         save()
+    }
+
+    /// Update reading progress for an entry identified by URL
+    func updateProgress(url: URL, percent: Int) {
+        guard let idx = entries.firstIndex(where: { $0.url == url }) else { return }
+        entries[idx].readingProgressPercent = min(100, max(0, percent))
+        save()
+    }
+
+    /// Return stored reading progress, or -1 if not recorded
+    func readingProgress(for entry: HistoryEntry) -> Int {
+        return entry.readingProgressPercent
     }
 
     func remove(id: UUID) {
@@ -69,11 +83,8 @@ final class HistoryManager {
                 options: .withSecurityScope,
                 relativeTo: nil,
                 bookmarkDataIsStale: &stale
-            ) {
-                return resolved
-            }
+            ) { return resolved }
         }
-        // Fallback to stored URL
         return FileManager.default.fileExists(atPath: entry.url.path) ? entry.url : nil
     }
 

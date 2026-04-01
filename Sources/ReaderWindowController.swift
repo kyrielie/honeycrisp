@@ -41,9 +41,9 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
         window.isMovableByWindowBackground = true
         window.backgroundColor = NSColor.windowBackgroundColor
         window.isOpaque = true
-        window.minSize = NSSize(width: 420, height: 500)
+        window.minSize = NSSize(width: 480, height: 500)
 
-        window.setContentSize(NSSize(width: 780, height: 960))
+        window.setContentSize(NSSize(width: 980, height: 960))   // wider to accommodate sidebar
 
         let toolbar = NSToolbar(identifier: "ReaderToolbar_\(UUID().uuidString.prefix(8))")
         toolbar.delegate = readerViewController
@@ -52,10 +52,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
         window.toolbar = toolbar
 
         let openCount = ReaderWindowController.openWindows.count
-        if openCount == 0 {
-            window.center()
-        } else {
-            window.center()
+        window.center()
+        if openCount > 0 {
             let offset = CGFloat(openCount) * 20
             var frame = window.frame
             frame.origin.x += offset
@@ -66,7 +64,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
 
     func loadEPUB(at url: URL) {
         readerViewController.loadEPUB(at: url)
-        window?.title = url.deletingPathExtension().lastPathComponent
+        // Title shown only if setting is on; ReaderViewController handles this
     }
 
     @objc func showOpenPanel() {
@@ -103,7 +101,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
-// Custom window subclass to forward key events to view controller
+// MARK: - ReaderWindow
+
 final class ReaderWindow: NSWindow {
     override func keyDown(with event: NSEvent) {
         if let vc = contentViewController as? ReaderViewController {
@@ -112,7 +111,6 @@ final class ReaderWindow: NSWindow {
             super.keyDown(with: event)
         }
     }
-
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 }
