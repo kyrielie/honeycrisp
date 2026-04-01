@@ -1,5 +1,5 @@
 // HistoryViewController.swift
-// Popover showing recently opened EPUBs with date, open/remove actions
+// Popover showing recently opened EPUBs with date, progress, open/remove actions
 
 import AppKit
 
@@ -43,7 +43,7 @@ final class HistoryViewController: NSViewController {
         tableView = NSTableView()
         tableView.headerView = nil
         tableView.backgroundColor = .clear
-        tableView.rowHeight = 56
+        tableView.rowHeight = 64
         tableView.intercellSpacing = NSSize(width: 0, height: 0)
         tableView.selectionHighlightStyle = .regular
         tableView.doubleAction = #selector(openSelectedEntry(_:))
@@ -156,7 +156,7 @@ extension HistoryViewController: NSTableViewDataSource, NSTableViewDelegate {
         return cell
     }
 
-    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { 56 }
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { 64 }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { true }
 
@@ -174,7 +174,8 @@ final class HistoryRowView: NSTableCellView {
     var onRemove: (() -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "")
-    private let dateLabel = NSTextField(labelWithString: "")
+    private let detailLabel = NSTextField(labelWithString: "")
+    private let progressView = NSProgressIndicator()
     private let removeBtn = NSButton()
     private let bookIcon = NSImageView()
 
@@ -196,10 +197,16 @@ final class HistoryRowView: NSTableCellView {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
 
-        dateLabel.font = NSFont.systemFont(ofSize: 11)
-        dateLabel.textColor = .secondaryLabelColor
-        dateLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(dateLabel)
+        detailLabel.font = NSFont.systemFont(ofSize: 11)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(detailLabel)
+
+        progressView.style = .bar
+        progressView.isIndeterminate = false
+        progressView.translatesAutoresizingMaskIntoConstraints = false
+        progressView.heightAnchor.constraint(equalToConstant: 3).isActive = true
+        addSubview(progressView)
 
         removeBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Remove")
         removeBtn.bezelStyle = .inline
@@ -219,11 +226,15 @@ final class HistoryRowView: NSTableCellView {
 
             titleLabel.leadingAnchor.constraint(equalTo: bookIcon.trailingAnchor, constant: 10),
             titleLabel.trailingAnchor.constraint(equalTo: removeBtn.leadingAnchor, constant: -8),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
 
-            dateLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            dateLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 3),
-            dateLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            detailLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            detailLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 3),
+            detailLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+
+            progressView.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            progressView.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            progressView.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 6),
 
             removeBtn.centerYAnchor.constraint(equalTo: centerYAnchor),
             removeBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
@@ -240,7 +251,13 @@ final class HistoryRowView: NSTableCellView {
 
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
-        dateLabel.stringValue = formatter.localizedString(for: entry.openedAt, relativeTo: Date())
+        let dateStr = formatter.localizedString(for: entry.openedAt, relativeTo: Date())
+
+        let pct = entry.readingProgressPercent
+        detailLabel.stringValue = pct >= 0 ? "\(dateStr) • \(pct)% read" : dateStr
+
+        progressView.doubleValue = pct >= 0 ? Double(pct) : 0
+        progressView.isHidden = pct <= 0
     }
 
     @objc private func removeTapped() {

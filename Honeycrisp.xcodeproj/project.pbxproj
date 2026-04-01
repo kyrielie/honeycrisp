@@ -8,6 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		6228A9A32F7593FD00A3C2B7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6228A9A22F7593FD00A3C2B7 /* Assets.xcassets */; };
+		628948362F7CA5A800A082DD /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628948332F7CA5A800A082DD /* SettingsWindowController.swift */; };
+		628948372F7CA5A800A082DD /* TOCSidebarViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628948352F7CA5A800A082DD /* TOCSidebarViewController.swift */; };
+		628948382F7CA5A800A082DD /* SearchBarViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628948322F7CA5A800A082DD /* SearchBarViewController.swift */; };
+		628948392F7CA5A800A082DD /* TOCParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628948342F7CA5A800A082DD /* TOCParser.swift */; };
 		62D788FF2F75CBEA006F67C1 /* HistoryViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62D788FA2F75CBEA006F67C1 /* HistoryViewController.swift */; };
 		62D789002F75CBEA006F67C1 /* ReaderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62D788FB2F75CBEA006F67C1 /* ReaderViewController.swift */; };
 		62D789012F75CBEA006F67C1 /* ReaderWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62D788FC2F75CBEA006F67C1 /* ReaderWindowController.swift */; };
@@ -21,6 +25,10 @@
 
 /* Begin PBXFileReference section */
 		6228A9A22F7593FD00A3C2B7 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		628948322F7CA5A800A082DD /* SearchBarViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchBarViewController.swift; sourceTree = "<group>"; };
+		628948332F7CA5A800A082DD /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
+		628948342F7CA5A800A082DD /* TOCParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TOCParser.swift; sourceTree = "<group>"; };
+		628948352F7CA5A800A082DD /* TOCSidebarViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TOCSidebarViewController.swift; sourceTree = "<group>"; };
 		6296C13A2F759E7900C6E6B2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; name = Info.plist; path = Honeycrisp/Info.plist; sourceTree = "<group>"; };
 		62D788F52F75CBEA006F67C1 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		62D788F62F75CBEA006F67C1 /* EPUBParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBParser.swift; sourceTree = "<group>"; };
@@ -49,6 +57,10 @@
 		62D788FE2F75CBEA006F67C1 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				628948322F7CA5A800A082DD /* SearchBarViewController.swift */,
+				628948332F7CA5A800A082DD /* SettingsWindowController.swift */,
+				628948342F7CA5A800A082DD /* TOCParser.swift */,
+				628948352F7CA5A800A082DD /* TOCSidebarViewController.swift */,
 				62D788F52F75CBEA006F67C1 /* AppDelegate.swift */,
 				62D788F62F75CBEA006F67C1 /* EPUBParser.swift */,
 				62D788F72F75CBEA006F67C1 /* EPUBReader.entitlements */,
@@ -176,6 +188,10 @@
 				62D789002F75CBEA006F67C1 /* ReaderViewController.swift in Sources */,
 				62D789012F75CBEA006F67C1 /* ReaderWindowController.swift in Sources */,
 				62D789022F75CBEA006F67C1 /* HistoryManager.swift in Sources */,
+				628948362F7CA5A800A082DD /* SettingsWindowController.swift in Sources */,
+				628948372F7CA5A800A082DD /* TOCSidebarViewController.swift in Sources */,
+				628948382F7CA5A800A082DD /* SearchBarViewController.swift in Sources */,
+				628948392F7CA5A800A082DD /* TOCParser.swift in Sources */,
 				62D789032F75CBEA006F67C1 /* SettingsManager.swift in Sources */,
 				62D789042F75CBEA006F67C1 /* EPUBParser.swift in Sources */,
 				62D789052F75CBEA006F67C1 /* EPUBReaderApp.swift in Sources */,

@@ -88,14 +88,17 @@ final class EPUBParser: NSObject {
 
         var coverURL: URL?
         let coverMeta = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='meta'][@name='cover']")) as? [XMLElement]
-        if let coverID = coverMeta?.first?.attribute(forName: "content")?.stringValue, let coverHref = hrefByID[coverID] {
-            let u = URL(fileURLWithPath: coverHref, relativeTo: rootFolder).standardizedFileURL
+        if let coverID = coverMeta?.first?.attribute(forName: "content")?.stringValue,
+            let coverHref = hrefByID[coverID] {
+            let decoded = coverHref.removingPercentEncoding ?? coverHref
+            let u = URL(fileURLWithPath: decoded, relativeTo: rootFolder).standardizedFileURL
             if FileManager.default.fileExists(atPath: u.path) { coverURL = u }
         }
         if coverURL == nil {
             for (id, href) in hrefByID {
                 if href.lowercased().contains("cover"), let mt = mediaTypeByID[id], mt.hasPrefix("image/") {
-                    let u = URL(fileURLWithPath: href, relativeTo: rootFolder).standardizedFileURL
+                    let decoded = href.removingPercentEncoding ?? href
+                    let u = URL(fileURLWithPath: decoded, relativeTo: rootFolder).standardizedFileURL
                     if FileManager.default.fileExists(atPath: u.path) { coverURL = u; break }
                 }
             }
@@ -110,7 +113,8 @@ final class EPUBParser: NSObject {
         }
 
         let spineURLs: [URL] = spineHrefs.compactMap { href in
-            let u = URL(fileURLWithPath: href, relativeTo: rootFolder).standardizedFileURL
+            let decoded = href.removingPercentEncoding ?? href
+            let u = URL(fileURLWithPath: decoded, relativeTo: rootFolder).standardizedFileURL
             return ["xhtml", "html", "htm"].contains(u.pathExtension.lowercased()) ? u : nil
         }
 
@@ -120,14 +124,20 @@ final class EPUBParser: NSObject {
 
     // MARK: - HTML building
 
-    func buildScrollHTML(from pkg: EPUBPackage) throws -> String {
+    func buildScrollHTML(from pkg: EPUBPackage, formatFirstChapter: Bool = false) throws -> String {
         var body = ""
         let base = pkg.rootFolder
         for (i, url) in pkg.spineURLs.enumerated() {
             let data = try Data(contentsOf: url)
             let src = String(data: data, encoding: .utf8) ?? (String(data: data, encoding: .isoLatin1) ?? "")
-            let extracted = Self.extractBody(html: src)
-            body += "\n<section class=\"chapter\" id=\"ch\(i)\">\n"
+            var extracted = Self.extractBody(html: src)
+
+            // Apply AO3 formatting to ALL chapters when enabled
+            if formatFirstChapter {
+                extracted = Self.applyFirstChapterFormatting(to: extracted)
+            }
+
+            body += "\n<section class=\"ql-chapter\" id=\"chapter-\(i)\" data-chapter-index=\"\(i)\">\n"
                  + Self.rewriteResourceURLs(in: extracted, base: base)
                  + "\n</section>\n"
         }
@@ -142,9 +152,29 @@ final class EPUBParser: NSObject {
         </head>
         <body>
         <div id="content">\(body)</div>
+        <script>\(Self.readerJS)</script>
         </body>
         </html>
         """
+    }
+
+    // MARK: - First Chapter Formatting Quirk
+
+    /// Hides `.toc-heading` h2 blocks and upsizes `.calibre2` bold elements to h2-scale.
+    private static func applyFirstChapterFormatting(to html: String) -> String {
+        // Hide toc-heading h2
+        var result = html.replacingOccurrences(
+            of: #"<h2[^>]*class="[^"]*toc-heading[^"]*"[^>]*>[\s\S]*?<\/h2>"#,
+            with: "",
+            options: .regularExpression
+        )
+        // Upsize calibre2 bold to h2 equivalent via inline style injection
+        result = result.replacingOccurrences(
+            of: #"(<b[^>]*class="[^"]*calibre2[^"]*"[^>]*)(>)"#,
+            with: #"$1 style="font-size:1.5em;font-weight:700;display:block;margin:0.5em 0;"$2"#,
+            options: .regularExpression
+        )
+        return result
     }
 
     private static func extractBody(html: String) -> String {
@@ -179,22 +209,150 @@ final class EPUBParser: NSObject {
         return out
     }
 
+    // MARK: - JS injected into reader page (progress reporting + TOC navigation)
+
+    static let readerJS = """
+    // ── Search ────────────────────────────────────────────────────────────────────
+
+    var _hits = [];
+    var _hitIdx = -1;
+
+    /**
+     * Highlight all occurrences of `term` across all chapter sections.
+     * Returns the total hit count (read by Swift via evaluateJavaScript).
+     */
+    window.searchText = function(term) {
+      // 1. Remove previous highlights
+      document.querySelectorAll('mark.ql-hit').forEach(function(m) {
+        var parent = m.parentNode;
+        parent.replaceChild(document.createTextNode(m.textContent), m);
+        parent.normalize();
+      });
+      _hits = [];
+      _hitIdx = -1;
+
+      if (!term || term.length < 2) return 0;
+
+      // 2. Walk all text nodes and wrap matches
+      var escapedTerm = term.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+      var re = new RegExp(escapedTerm, 'gi');
+
+      function walkNode(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          var text = node.textContent;
+          if (!re.test(text)) return;
+          re.lastIndex = 0;
+
+          var frag = document.createDocumentFragment();
+          var last = 0;
+          var m;
+          while ((m = re.exec(text)) !== null) {
+            frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+            var mark = document.createElement('mark');
+            mark.className = 'ql-hit';
+            mark.textContent = m[0];
+            frag.appendChild(mark);
+            _hits.push(mark);
+            last = re.lastIndex;
+          }
+          frag.appendChild(document.createTextNode(text.slice(last)));
+          node.parentNode.replaceChild(frag, node);
+        } else if (
+          node.nodeType === Node.ELEMENT_NODE &&
+          node.tagName !== 'SCRIPT' &&
+          node.tagName !== 'STYLE' &&
+          node.tagName !== 'MARK'
+        ) {
+          // Clone childNodes list to avoid live-collection mutation issues
+          Array.from(node.childNodes).forEach(walkNode);
+        }
+      }
+
+      walkNode(document.body);
+
+      // 3. Scroll first hit into view and mark it active
+      if (_hits.length > 0) {
+        _hitIdx = 0;
+        _activateHit(_hitIdx);
+      }
+
+      return _hits.length;
+    };
+
+    /**
+     * Advance (+1) or retreat (-1) through search results.
+     */
+    window.nextSearchResult = function(direction) {
+      if (_hits.length === 0) return;
+      _hits[_hitIdx].classList.remove('ql-active');
+      _hitIdx = (_hitIdx + direction + _hits.length) % _hits.length;
+      _activateHit(_hitIdx);
+    };
+
+    function _activateHit(idx) {
+      var hit = _hits[idx];
+      hit.classList.add('ql-active');
+      hit.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    // ── Chapter navigation ────────────────────────────────────────────────────────
+
+    window.navigateToChapter = function(idx) {
+      var sections = document.querySelectorAll('.ql-chapter');
+      if (idx >= 0 && idx < sections.length) {
+        sections[idx].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+
+    window.navigateToFragment = function(id) {
+      var el = document.getElementById(id) || document.querySelector('[name="' + id + '"]');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
+    // ── Reading progress ──────────────────────────────────────────────────────────
+
+    function reportProgress() {
+      var scrolled = window.scrollY + window.innerHeight;
+      var total    = document.documentElement.scrollHeight;
+      var pct      = total > 0 ? Math.round((scrolled / total) * 100) : 0;
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.progressHandler) {
+        window.webkit.messageHandlers.progressHandler.postMessage(Math.min(100, pct));
+      }
+    }
+
+    window.addEventListener('scroll', function() {
+      clearTimeout(window._progressTimer);
+      window._progressTimer = setTimeout(reportProgress, 500);
+    }, { passive: true });
+    """
+
     // MARK: - CSS
 
     static let readerCSS = """
+    /* Search highlight colours */
+    mark.ql-hit {
+        background: #FFEE58;
+        color: inherit;
+        border-radius: 2px;
+        padding: 0 1px;
+    }
+    mark.ql-hit.ql-active {
+        background: #FF9800;
+        outline: 2px solid #E65100;
+    }
+
     :root {
         color-scheme: light dark;
         --reader-font-size: 100%;
         --reader-font-family: ui-sans-serif, -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
         --reader-bg: transparent;
         --reader-text: var(--system-text);
-        --system-text: CanvasText; /* Default standard web-safe text color */
+        --system-text: CanvasText;
     }
 
-    /* System theme handles dark mode automatically */
     @media (prefers-color-scheme: dark) {
         :root { 
-            --system-text: #e8e0d4; /* FIX: Overrides system text color to be light in dark mode */
+            --system-text: #e8e0d4;
         }
     }
 
@@ -203,7 +361,7 @@ final class EPUBParser: NSObject {
         overflow-x: hidden;
         max-width: 100%;
         background-color: var(--reader-bg) !important;
-        font-size: var(--reader-font-size); /* FIX: Map the JS variable to root font-size */
+        font-size: var(--reader-font-size);
     }
     
     *, *::before, *::after { box-sizing: inherit; }
@@ -221,8 +379,8 @@ final class EPUBParser: NSObject {
     }
     
     #content { width: 100%; max-width: 720px; margin: 0 auto; padding: 28px 32px 48px; }
-    .chapter { margin: 40px 0; }
-    .chapter + .chapter {
+    .ql-chapter { margin: 40px 0; }
+    .ql-chapter + .ql-chapter {
         border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
         padding-top: 40px;
     }
