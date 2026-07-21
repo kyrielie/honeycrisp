@@ -132,6 +132,9 @@ final class AppearanceSettingsViewController: NSViewController {
     private var themePopup: NSPopUpButton!
     private var bgColorWell: NSColorWell!
     private var textColorWell: NSColorWell!
+    private var lineHeightSlider: NSSlider!
+    private var fontSizeStepper: NSStepper!
+    private var fontSizeLabel: NSTextField!
 
     /// The currently previewed font name when .custom is selected
     private var pickedFontName: String = SettingsManager.shared.customFontName
@@ -175,6 +178,18 @@ final class AppearanceSettingsViewController: NSViewController {
         textRow.identifier = NSUserInterfaceItemIdentifier("textColorRow")
         stack.addArrangedSubview(textRow)
 
+        // Separator
+        let sep2 = NSBox()
+        sep2.boxType = .separator
+        stack.addArrangedSubview(sep2)
+
+        // Font size — previously toolbar-only; Settings is the more discoverable
+        // home for a range control per HIG, and costs nothing to expose here too.
+        stack.addArrangedSubview(makeRow(label: "Font Size:", control: makeFontSizeStepper()))
+
+        // Line height
+        stack.addArrangedSubview(makeRow(label: "Line Height:", control: makeLineHeightSlider()))
+
         root.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
@@ -213,6 +228,36 @@ final class AppearanceSettingsViewController: NSViewController {
         colorWell.target = self
         colorWell.action = selector
         return makeRow(label: label, control: colorWell)
+    }
+
+    private func makeLineHeightSlider() -> NSView {
+        let slider = NSSlider(value: SettingsManager.shared.lineHeight, minValue: 1.2, maxValue: 2.4, target: self, action: #selector(lineHeightChanged(_:)))
+        slider.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        lineHeightSlider = slider
+        return slider
+    }
+
+    private func makeFontSizeStepper() -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 6
+
+        let stepper = NSStepper()
+        stepper.minValue = 50
+        stepper.maxValue = 300
+        stepper.increment = 10
+        stepper.integerValue = SettingsManager.shared.fontSizePercent
+        stepper.target = self
+        stepper.action = #selector(fontSizeStepperChanged(_:))
+        fontSizeStepper = stepper
+
+        let label = NSTextField(labelWithString: "\(SettingsManager.shared.fontSizePercent)%")
+        label.font = NSFont.systemFont(ofSize: 13)
+        fontSizeLabel = label
+
+        row.addArrangedSubview(stepper)
+        row.addArrangedSubview(label)
+        return row
     }
 
     private func makeRow(label text: String, control: NSView) -> NSStackView {
@@ -292,6 +337,15 @@ final class AppearanceSettingsViewController: NSViewController {
 
     @objc private func textColorChanged(_ sender: NSColorWell) {
         SettingsManager.shared.customTextCSS = SettingsManager.cssHex(from: sender.color)
+    }
+
+    @objc private func lineHeightChanged(_ sender: NSSlider) {
+        SettingsManager.shared.lineHeight = sender.doubleValue
+    }
+
+    @objc private func fontSizeStepperChanged(_ sender: NSStepper) {
+        SettingsManager.shared.fontSizePercent = sender.integerValue
+        fontSizeLabel.stringValue = "\(SettingsManager.shared.fontSizePercent)%"
     }
 }
 
