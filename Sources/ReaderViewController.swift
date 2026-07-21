@@ -302,6 +302,22 @@ final class ReaderViewController: NSViewController {
         }
     }
 
+    // MARK: - Context menu
+
+    /// Wired to the "Search in Browser" context-menu item added by
+    /// `ReaderWebView.willOpenMenu`. `NSWorkspace.shared.open(url)` resolves through
+    /// default-app resolution — i.e. whatever the user has set as their default
+    /// browser, not Safari specifically (which is what WKWebView's own built-in
+    /// web-search menu action does internally).
+    @objc func searchSelectionInBrowser() {
+        webView.evaluateJavaScript("window.getSelection().toString()") { result, _ in
+            guard let text = result as? String, !text.isEmpty else { return }
+            var comps = URLComponents(string: "https://www.google.com/search")!
+            comps.queryItems = [URLQueryItem(name: "q", value: text)]
+            if let url = comps.url { NSWorkspace.shared.open(url) }
+        }
+    }
+
     // MARK: - Display Settings
 
     @objc func applyDynamicSettings() {
@@ -643,6 +659,43 @@ final class ReaderWebView: WKWebView {
         }
     }
     override var acceptsFirstResponder: Bool { true }
+
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        // WKWebView tags its built-in items with a stable NSMenuItem.identifier
+        // (e.g. "WKMenuItemIdentifierShareMenu"). These strings are undocumented
+        // but have shipped unchanged across macOS releases and are commonly relied
+        // on for exactly this. Reading NSMenuItem.identifier itself is ordinary
+        // public AppKit API; no private header import needed.
+        let idsToRemove: Set<String> = [
+            "WKMenuItemIdentifierShareMenu",
+            "WKMenuItemIdentifierSearchWeb",
+        ]
+        // "Copy Link with Highlight" doesn't have a confirmed stable identifier;
+        // match by title instead. Honeycrisp has no localization (no .lproj
+        // folders in the project), so an English title match is safe here — flag
+        // this if Honeycrisp is ever localized.
+        let titlesToRemove: Set<String> = ["Copy Link with Highlight"]
+
+        menu.items.removeAll { item in
+            if let id = item.identifier?.rawValue, idsToRemove.contains(id) { return true }
+            if titlesToRemove.contains(item.title) { return true }
+            return false
+        }
+
+        // Replace the native "Search With Google" (opens via Safari specifically,
+        // not the user's default browser — a known WKWebView quirk) with a version
+        // that goes through NSWorkspace, which always respects the user's actual
+        // default browser.
+        let searchItem = NSMenuItem(
+            title: "Search in Browser",
+            action: #selector(ReaderViewController.searchSelectionInBrowser),
+            keyEquivalent: ""
+        )
+        searchItem.target = readerViewController
+        menu.insertItem(searchItem, at: 0)
+
+        super.willOpenMenu(menu, with: event)
+    }
 }
 
 // MARK: - Toolbar identifier extensions
