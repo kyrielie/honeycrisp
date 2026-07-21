@@ -124,21 +124,17 @@ final class EPUBParser: NSObject {
 
     // MARK: - HTML building
 
-    func buildScrollHTML(from pkg: EPUBPackage, formatFirstChapter: Bool = false) throws -> String {
+    func buildScrollHTML(from pkg: EPUBPackage, formatFirstChapter: Bool = false, removeParagraphIndents: Bool = false) throws -> String {
         var body = ""
         let base = pkg.rootFolder
-        for (i, url) in pkg.spineURLs.enumerated() {
-            let data = try Data(contentsOf: url)
-            let src = String(data: data, encoding: .utf8) ?? (String(data: data, encoding: .isoLatin1) ?? "")
-            var extracted = Self.extractBody(html: src)
-
-            // Apply AO3 formatting to ALL chapters when enabled
-            if formatFirstChapter {
-                extracted = Self.applyFirstChapterFormatting(to: extracted)
-            }
-
+        for i in pkg.spineURLs.indices {
+            let extracted = try Self.extractedChapterBody(
+                from: pkg, index: i, base: base,
+                formatFirstChapter: formatFirstChapter,
+                removeParagraphIndents: removeParagraphIndents
+            )
             body += "\n<section class=\"ql-chapter\" id=\"chapter-\(i)\" data-chapter-index=\"\(i)\">\n"
-                 + Self.rewriteResourceURLs(in: extracted, base: base)
+                 + extracted
                  + "\n</section>\n"
         }
 
@@ -156,6 +152,63 @@ final class EPUBParser: NSObject {
         </body>
         </html>
         """
+    }
+
+    /// Extracts and prepares the `<body>` content of a single spine item: strips the
+    /// surrounding `<body>` tag, applies AO3 formatting / paragraph-indent stripping /
+    /// preface-heading stripping as requested, then rewrites resource URLs to absolute
+    /// file URLs. Shared by `buildScrollHTML` (all spine items, merged) and, in a future
+    /// paginated-mode HTML builder, a single spine item at a time — kept as one code path
+    /// so the two rendering modes can't drift apart on formatting behaviour.
+    private static func extractedChapterBody(
+        from pkg: EPUBPackage,
+        index: Int,
+        base: URL,
+        formatFirstChapter: Bool,
+        removeParagraphIndents: Bool
+    ) throws -> String {
+        let url = pkg.spineURLs[index]
+        let data = try Data(contentsOf: url)
+        let src = String(data: data, encoding: .utf8) ?? (String(data: data, encoding: .isoLatin1) ?? "")
+        var extracted = Self.extractBody(html: src)
+
+        // Apply AO3 formatting to ALL chapters when enabled
+        if formatFirstChapter {
+            extracted = Self.applyFirstChapterFormatting(to: extracted)
+        }
+
+        if removeParagraphIndents {
+            extracted = Self.stripLeadingIndentWhitespace(extracted)
+        }
+
+        // AO3 EPUBs emit a redundant "Preface" heading on the first spine item;
+        // the spine item is the preface by definition once rendered here.
+        if index == 0 {
+            extracted = Self.stripPrefaceHeading(extracted)
+        }
+
+        return Self.rewriteResourceURLs(in: extracted, base: base)
+    }
+
+    /// Strips leading space/tab runs immediately inside paragraph-like elements — the
+    /// literal-whitespace equivalent of a `text-indent: 0` CSS override, for books that
+    /// fake first-line indentation with actual whitespace characters rather than CSS.
+    /// Scoped to `p, div, li` plus headings/blockquote/table cells, since those are
+    /// equally plausible homes for a converted-from-plaintext indent. Deliberately does
+    /// not touch `&nbsp;`-based fake indents — a different, separate pattern.
+    private static func stripLeadingIndentWhitespace(_ html: String) -> String {
+        html.replacingOccurrences(
+            of: #"(?i)(<(?:p|div|li|h[1-6]|blockquote|td|th)[^>]*>)[ \t]+"#,
+            with: "$1", options: .regularExpression)
+    }
+
+    /// Strips a redundant "Preface" heading (AO3 uses <h2 class="toc-heading"> in
+    /// practice, but the level varies; match h1-h6 with a backreference so only the
+    /// matching close tag is eaten). Only ever applied to spine index 0.
+    private static func stripPrefaceHeading(_ html: String) -> String {
+        html.replacingOccurrences(
+            of: #"<(h[1-6])[^>]*>\s*[Pp]reface\s*</\1>"#,
+            with: "", options: .regularExpression)
     }
 
     // MARK: - First Chapter Formatting Quirk
