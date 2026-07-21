@@ -135,6 +135,7 @@ final class AppearanceSettingsViewController: NSViewController {
     private var lineHeightSlider: NSSlider!
     private var fontSizeStepper: NSStepper!
     private var fontSizeLabel: NSTextField!
+    private var presetsRow: NSStackView!
 
     /// The currently previewed font name when .custom is selected
     private var pickedFontName: String = SettingsManager.shared.customFontName
@@ -178,6 +179,17 @@ final class AppearanceSettingsViewController: NSViewController {
         textRow.identifier = NSUserInterfaceItemIdentifier("textColorRow")
         stack.addArrangedSubview(textRow)
 
+        // Saved presets — shown only when .custom is the active theme, same
+        // visibility rule as the color wells above.
+        presetsRow = makePresetsRow()
+        presetsRow.identifier = NSUserInterfaceItemIdentifier("presetsRow")
+        stack.addArrangedSubview(presetsRow)
+
+        let savePresetButton = NSButton(title: "Save as Preset…", target: self, action: #selector(saveAsPreset(_:)))
+        savePresetButton.bezelStyle = .rounded
+        savePresetButton.identifier = NSUserInterfaceItemIdentifier("savePresetButton")
+        stack.addArrangedSubview(savePresetButton)
+
         // Separator
         let sep2 = NSBox()
         sep2.boxType = .separator
@@ -220,6 +232,29 @@ final class AppearanceSettingsViewController: NSViewController {
         themePopup.target = self
         themePopup.action = #selector(themeChanged(_:))
         return themePopup
+    }
+
+    private func makePresetsRow() -> NSStackView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 8
+        rebuildPresetSwatches(in: row)
+        return row
+    }
+
+    private func rebuildPresetSwatches(in row: NSStackView) {
+        for v in row.arrangedSubviews { row.removeArrangedSubview(v); v.removeFromSuperview() }
+        for preset in SettingsManager.shared.savedThemes {
+            row.addArrangedSubview(makeSwatchButton(for: preset))
+        }
+    }
+
+    private func makeSwatchButton(for preset: SavedTheme) -> NSView {
+        let button = ThemeSwatchButton(preset: preset)
+        button.target = self
+        button.action = #selector(presetSwatchClicked(_:))
+        button.onDelete = { [weak self] in self?.deletePreset(preset) }
+        return button
     }
 
     private func makeColorRow(label text: String, colorWell: inout NSColorWell!, selector: Selector) -> NSStackView {
@@ -284,7 +319,8 @@ final class AppearanceSettingsViewController: NSViewController {
         }
         if let stack = view.subviews.first(where: { $0 is NSStackView }) as? NSStackView {
             for sv in stack.arrangedSubviews {
-                if sv.identifier?.rawValue == "bgColorRow" || sv.identifier?.rawValue == "textColorRow" {
+                if sv.identifier?.rawValue == "bgColorRow" || sv.identifier?.rawValue == "textColorRow"
+                    || sv.identifier?.rawValue == "presetsRow" || sv.identifier?.rawValue == "savePresetButton" {
                     sv.isHidden = !isCustomTheme
                 }
             }
@@ -346,6 +382,90 @@ final class AppearanceSettingsViewController: NSViewController {
     @objc private func fontSizeStepperChanged(_ sender: NSStepper) {
         SettingsManager.shared.fontSizePercent = sender.integerValue
         fontSizeLabel.stringValue = "\(SettingsManager.shared.fontSizePercent)%"
+    }
+
+    /// Prompts for a name via an NSAlert with an accessory text field (Honeycrisp has
+    /// no existing sheet/prompt pattern to match, so this is the simplest correct
+    /// addition) and appends a SavedTheme built from the current custom colors.
+    @objc private func saveAsPreset(_ sender: NSButton) {
+        let alert = NSAlert()
+        alert.messageText = "Save Theme Preset"
+        alert.informativeText = "Enter a name for this preset."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        alert.accessoryView = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+
+        let preset = SavedTheme(
+            name: name,
+            backgroundCSS: SettingsManager.shared.customBackgroundCSS,
+            textCSS: SettingsManager.shared.customTextCSS
+        )
+        SettingsManager.shared.savedThemes.append(preset)
+        rebuildPresetSwatches(in: presetsRow)
+    }
+
+    /// Sets currentTheme = .custom and overwrites the custom colors from the clicked
+    /// preset. This is a cosmetic change (Patch 0003's split) — no reload needed.
+    @objc private func presetSwatchClicked(_ sender: ThemeSwatchButton) {
+        SettingsManager.shared.currentTheme = .custom
+        SettingsManager.shared.customBackgroundCSS = sender.preset.backgroundCSS
+        SettingsManager.shared.customTextCSS = sender.preset.textCSS
+        themePopup?.selectItem(at: ReaderTheme.custom.rawValue)
+        updateColorWellsVisibility()
+    }
+
+    private func deletePreset(_ preset: SavedTheme) {
+        SettingsManager.shared.savedThemes.removeAll { $0.id == preset.id }
+        rebuildPresetSwatches(in: presetsRow)
+    }
+}
+
+// MARK: - ThemeSwatchButton
+
+/// A small colored-circle-plus-name button representing one saved theme preset.
+/// Right-click shows a "Delete" context menu — standard AppKit pattern, no sheet
+/// needed for something this reversible.
+final class ThemeSwatchButton: NSButton {
+    let preset: SavedTheme
+    var onDelete: (() -> Void)?
+
+    init(preset: SavedTheme) {
+        self.preset = preset
+        super.init(frame: .zero)
+        title = preset.name
+        bezelStyle = .rounded
+        image = Self.swatchImage(background: preset.backgroundCSS, text: preset.textCSS)
+        imagePosition = .imageLeading
+
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Delete", action: #selector(deleteSelf), keyEquivalent: "")
+        self.menu = menu
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func deleteSelf() { onDelete?() }
+
+    private static func swatchImage(background: String, text: String) -> NSImage {
+        let size = NSSize(width: 14, height: 14)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        let bg = SettingsManager.color(fromCSS: background)
+        bg.setFill()
+        NSBezierPath(ovalIn: NSRect(origin: .zero, size: size)).fill()
+        let border = SettingsManager.color(fromCSS: text)
+        border.setStroke()
+        let path = NSBezierPath(ovalIn: NSRect(x: 0.5, y: 0.5, width: 13, height: 13))
+        path.lineWidth = 1
+        path.stroke()
+        image.unlockFocus()
+        return image
     }
 }
 
