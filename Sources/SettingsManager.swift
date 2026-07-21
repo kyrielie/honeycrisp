@@ -145,6 +145,14 @@ final class SettingsManager {
         set { defaults.set(newValue, forKey: "readerEnlargeSecondLine"); notifyChange() }
     }
 
+    /// Strips leading space/tab runs immediately inside paragraph-like elements, for
+    /// books that fake first-line indentation with literal whitespace. Structural (it
+    /// changes what HTML gets built), not cosmetic.
+    var removeParagraphIndents: Bool {
+        get { defaults.bool(forKey: "readerRemoveParagraphIndents") }
+        set { defaults.set(newValue, forKey: "readerRemoveParagraphIndents"); notifyChange() }
+    }
+
     // MARK: -
 
     private func notifyChange() {

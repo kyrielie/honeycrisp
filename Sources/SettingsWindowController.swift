@@ -87,6 +87,21 @@ final class GeneralSettingsViewController: NSViewController {
         hint.textColor = .secondaryLabelColor
         stack.addArrangedSubview(hint)
 
+        let indentCheckbox = NSButton(
+            checkboxWithTitle: "Remove paragraph indents",
+            target: self,
+            action: #selector(toggleRemoveParagraphIndents(_:))
+        )
+        indentCheckbox.state = SettingsManager.shared.removeParagraphIndents ? .on : .off
+        stack.addArrangedSubview(indentCheckbox)
+
+        let indentHint = NSTextField(wrappingLabelWithString:
+            "Strips leading whitespace used to fake first-line indentation in some books."
+        )
+        indentHint.font = NSFont.systemFont(ofSize: 11)
+        indentHint.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(indentHint)
+
         root.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
@@ -101,6 +116,10 @@ final class GeneralSettingsViewController: NSViewController {
         // SettingsManager still stores this as "formatFirstChapter" internally;
         // EPUBParser's behaviour is now global (not first-chapter-only) — see EPUBParser.
         SettingsManager.shared.formatFirstChapter = sender.state == .on
+    }
+
+    @objc private func toggleRemoveParagraphIndents(_ sender: NSButton) {
+        SettingsManager.shared.removeParagraphIndents = sender.state == .on
     }
 }
 

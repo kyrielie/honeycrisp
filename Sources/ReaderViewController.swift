@@ -240,7 +240,8 @@ final class ReaderViewController: NSViewController {
             let parser = EPUBParser()
             // "Format for AO3" maps to the same formatFirstChapter flag in SettingsManager
             let format = SettingsManager.shared.formatFirstChapter
-            let html = try parser.buildScrollHTML(from: pkg, formatFirstChapter: format)
+            let removeIndents = SettingsManager.shared.removeParagraphIndents
+            let html = try parser.buildScrollHTML(from: pkg, formatFirstChapter: format, removeParagraphIndents: removeIndents)
             let indexURL = pkg.rootFolder.appendingPathComponent(Self.readerHTMLFilename)
             try html.write(to: indexURL, atomically: true, encoding: .utf8)
             webView.loadFileURL(indexURL, allowingReadAccessTo: pkg.rootFolder)
