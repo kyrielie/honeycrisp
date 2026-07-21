@@ -74,6 +74,23 @@ enum ReaderTheme: Int, CaseIterable {
     }
 }
 
+/// A named custom background/text color pair, saved on top of `.custom`. Distinct
+/// from `ReaderTheme`'s fixed built-ins — presets are just quick-recall shortcuts for
+/// `customBackgroundCSS`/`customTextCSS`.
+struct SavedTheme: Codable, Identifiable, Equatable {
+    let id: UUID
+    var name: String
+    var backgroundCSS: String   // "#RRGGBB"
+    var textCSS: String
+
+    init(name: String, backgroundCSS: String, textCSS: String) {
+        self.id = UUID()
+        self.name = name
+        self.backgroundCSS = backgroundCSS
+        self.textCSS = textCSS
+    }
+}
+
 // MARK: - Manager
 
 extension Notification.Name {
@@ -183,6 +200,24 @@ final class SettingsManager {
     var removeParagraphIndents: Bool {
         get { defaults.bool(forKey: "readerRemoveParagraphIndents") }
         set { defaults.set(newValue, forKey: "readerRemoveParagraphIndents"); notifyStructuralChange() }
+    }
+
+    // MARK: Saved theme presets
+
+    /// JSON-array-in-UserDefaults, same pattern as HistoryManager.entries.
+    var savedThemes: [SavedTheme] {
+        get {
+            guard let data = defaults.data(forKey: "readerSavedThemes"),
+                  let decoded = try? JSONDecoder().decode([SavedTheme].self, from: data)
+            else { return [] }
+            return decoded
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: "readerSavedThemes")
+            }
+            notifyChange()
+        }
     }
 
     // MARK: -
