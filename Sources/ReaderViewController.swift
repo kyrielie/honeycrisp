@@ -58,6 +58,10 @@ final class ReaderViewController: NSViewController {
     /// Debounce timer for search input
     private var searchDebounceTimer: Timer?
 
+    /// Debounce timer for structural settings changes (avoids re-rendering on every
+    /// intermediate value while a slider/stepper is being dragged).
+    private var structuralSettingsDebounceTimer: Timer?
+
     // MARK: - View Lifecycle
 
     override func loadView() {
@@ -170,8 +174,11 @@ final class ReaderViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         NotificationCenter.default.addObserver(self,
-            selector: #selector(applyDynamicSettings),
-            name: SettingsManager.settingsChangedNotification, object: nil)
+            selector: #selector(applyCosmeticCSSUpdate),
+            name: .readerCosmeticSettingsChanged, object: nil)
+        NotificationCenter.default.addObserver(self,
+            selector: #selector(scheduleStructuralReload),
+            name: .readerStructuralSettingsChanged, object: nil)
         applyDynamicSettings()
     }
 
@@ -182,6 +189,7 @@ final class ReaderViewController: NSViewController {
 
     deinit {
         searchDebounceTimer?.invalidate()
+        structuralSettingsDebounceTimer?.invalidate()
         securityScopedURL?.stopAccessingSecurityScopedResource()
         NotificationCenter.default.removeObserver(self)
     }
@@ -320,24 +328,52 @@ final class ReaderViewController: NSViewController {
 
     // MARK: - Display Settings
 
+    /// Full initial apply on load — sets every CSS var and the window appearance.
+    /// Subsequent changes go through `applyCosmeticCSSUpdate` or
+    /// `scheduleStructuralReload` instead, not this.
     @objc func applyDynamicSettings() {
-        let font  = SettingsManager.shared.currentFont
-        let theme = SettingsManager.shared.currentTheme
+        applyCosmeticCSSUpdate()
+        applyWindowAppearance()
+    }
 
-        renderCurrentContent()
-
+    /// JS-only live patch of the `#honeycrisp-vars` `<style>` element's textContent —
+    /// no reload, so scroll position and any other DOM state survive a font/theme/
+    /// line-height tweak. `EPUBParser.readerVarsCSS` defines the same custom properties
+    /// as the initial defaults this replaces.
+    @objc private func applyCosmeticCSSUpdate() {
+        let s = SettingsManager.shared
         let js = """
-        document.documentElement.style.setProperty('--reader-font-size', '\(fontSizePercent)%');
-        document.documentElement.style.setProperty('--reader-font-family', "\(font.cssValue)");
-        document.documentElement.style.setProperty('--reader-bg', "\(theme.cssBackground)");
-        document.documentElement.style.setProperty('--reader-text', "\(theme.cssText)");
+        (function() {
+          var el = document.getElementById('honeycrisp-vars');
+          if (!el) return;
+          el.textContent = ':root {' +
+            '--reader-font-size:\(s.fontSizePercent)%;' +
+            '--reader-font-family:\(s.currentFont.cssValue);' +
+            '--reader-bg:\(s.effectiveBackgroundCSS);' +
+            '--reader-text:\(s.effectiveTextCSS);' +
+            '--reader-line-height:\(s.lineHeight);' +
+          '}';
+        })();
         """
         webView.evaluateJavaScript(js, completionHandler: nil)
+        applyWindowAppearance()
+    }
 
-        switch theme {
-        case .system:                          NSApp.appearance = nil
-        case .dark:                            NSApp.appearance = NSAppearance(named: .darkAqua)
-        case .light, .sepia, .custom:          NSApp.appearance = NSAppearance(named: .aqua)
+    private func applyWindowAppearance() {
+        switch SettingsManager.shared.currentTheme {
+        case .system:                  NSApp.appearance = nil
+        case .dark:                    NSApp.appearance = NSAppearance(named: .darkAqua)
+        case .light, .sepia, .custom:  NSApp.appearance = NSAppearance(named: .aqua)
+        }
+    }
+
+    /// Debounced (~0.15s) full reload for structural settings changes (formatting
+    /// flags, pagination layout). A plain Timer, matching the rest of the codebase's
+    /// style rather than introducing a dedicated debounce utility for one call site.
+    @objc private func scheduleStructuralReload() {
+        structuralSettingsDebounceTimer?.invalidate()
+        structuralSettingsDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+            self?.renderCurrentContent()
         }
     }
 
@@ -351,7 +387,8 @@ final class ReaderViewController: NSViewController {
         DispatchQueue.main.async {
             if segment != -1 { sender.setSelected(false, forSegment: segment) }
         }
-        applyDynamicSettings()
+        // fontSizePercent's setter already posts .readerCosmeticSettingsChanged,
+        // which drives applyCosmeticCSSUpdate — no separate call needed here.
     }
 
     // MARK: - Progress reporting
@@ -525,15 +562,10 @@ extension ReaderViewController: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        let font  = SettingsManager.shared.currentFont
-        let theme = SettingsManager.shared.currentTheme
-        let js = """
-        document.documentElement.style.setProperty('--reader-font-size', '\(fontSizePercent)%');
-        document.documentElement.style.setProperty('--reader-font-family', "\(font.cssValue)");
-        document.documentElement.style.setProperty('--reader-bg', "\(theme.cssBackground)");
-        document.documentElement.style.setProperty('--reader-text', "\(theme.cssText)");
-        """
-        webView.evaluateJavaScript(js, completionHandler: nil)
+        // The initial HTML bakes in the readerVarsCSS defaults, not the user's actual
+        // saved values — apply them now via the same path settings changes use, so
+        // there's one definition of "what the CSS vars should be", not two.
+        applyCosmeticCSSUpdate()
     }
 }
 

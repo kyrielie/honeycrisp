@@ -144,6 +144,7 @@ final class EPUBParser: NSObject {
         <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style id="honeycrisp-vars">\(Self.readerVarsCSS)</style>
             <style>\(Self.readerCSS)</style>
         </head>
         <body>
@@ -381,6 +382,27 @@ final class EPUBParser: NSObject {
 
     // MARK: - CSS
 
+    /// The `:root` CSS custom properties, emitted into their own `<style id="honeycrisp-vars">`
+    /// element so `applyCosmeticCSSUpdate` (in ReaderViewController) can replace just this
+    /// element's textContent on a settings change, without touching the rest of the stylesheet.
+    static let readerVarsCSS = """
+    :root {
+        color-scheme: light dark;
+        --reader-font-size: 100%;
+        --reader-font-family: ui-sans-serif, -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+        --reader-bg: transparent;
+        --reader-text: var(--system-text);
+        --reader-line-height: 1.6;
+        --system-text: CanvasText;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --system-text: #e8e0d4;
+        }
+    }
+    """
+
     static let readerCSS = """
     /* Search highlight colours */
     mark.ql-hit {
@@ -392,21 +414,6 @@ final class EPUBParser: NSObject {
     mark.ql-hit.ql-active {
         background: #FF9800;
         outline: 2px solid #E65100;
-    }
-
-    :root {
-        color-scheme: light dark;
-        --reader-font-size: 100%;
-        --reader-font-family: ui-sans-serif, -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
-        --reader-bg: transparent;
-        --reader-text: var(--system-text);
-        --system-text: CanvasText;
-    }
-
-    @media (prefers-color-scheme: dark) {
-        :root { 
-            --system-text: #e8e0d4;
-        }
     }
 
     html {
@@ -423,7 +430,7 @@ final class EPUBParser: NSObject {
         font-family: var(--reader-font-family) !important;
         color: var(--reader-text) !important;
         font-size: 1.1rem;
-        line-height: 1.6;
+        line-height: var(--reader-line-height);
         padding: 0;
         margin: 0;
         background: transparent;

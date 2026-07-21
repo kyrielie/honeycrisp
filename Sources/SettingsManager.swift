@@ -76,6 +76,15 @@ enum ReaderTheme: Int, CaseIterable {
 
 // MARK: - Manager
 
+extension Notification.Name {
+    /// Font/theme/colour/line-height changes: applied live via JS CSS-variable patch,
+    /// no reload.
+    static let readerCosmeticSettingsChanged = Notification.Name("readerCosmeticSettingsChanged")
+    /// Changes that alter the HTML that gets built (formatting flags, pagination
+    /// layout knobs): require re-rendering the current content.
+    static let readerStructuralSettingsChanged = Notification.Name("readerStructuralSettingsChanged")
+}
+
 final class SettingsManager {
     static let shared = SettingsManager()
     static let settingsChangedNotification = Notification.Name("ReaderSettingsChanged")
@@ -86,30 +95,52 @@ final class SettingsManager {
 
     var currentFont: ReaderFont {
         get { ReaderFont(rawValue: defaults.integer(forKey: "readerFont")) ?? .sfPro }
-        set { defaults.set(newValue.rawValue, forKey: "readerFont"); notifyChange() }
+        set { defaults.set(newValue.rawValue, forKey: "readerFont"); notifyCosmeticChange() }
     }
 
     /// PostScript name of the font chosen via NSFontPanel
     var customFontName: String {
         get { defaults.string(forKey: "readerCustomFontName") ?? "" }
-        set { defaults.set(newValue, forKey: "readerCustomFontName"); notifyChange() }
+        set { defaults.set(newValue, forKey: "readerCustomFontName"); notifyCosmeticChange() }
     }
 
     // MARK: Theme
 
     var currentTheme: ReaderTheme {
         get { ReaderTheme(rawValue: defaults.integer(forKey: "readerTheme")) ?? .system }
-        set { defaults.set(newValue.rawValue, forKey: "readerTheme"); notifyChange() }
+        set { defaults.set(newValue.rawValue, forKey: "readerTheme"); notifyCosmeticChange() }
     }
 
     var customBackgroundCSS: String {
         get { defaults.string(forKey: "readerCustomBg") ?? "#ffffff" }
-        set { defaults.set(newValue, forKey: "readerCustomBg"); notifyChange() }
+        set { defaults.set(newValue, forKey: "readerCustomBg"); notifyCosmeticChange() }
     }
 
     var customTextCSS: String {
         get { defaults.string(forKey: "readerCustomText") ?? "#000000" }
-        set { defaults.set(newValue, forKey: "readerCustomText"); notifyChange() }
+        set { defaults.set(newValue, forKey: "readerCustomText"); notifyCosmeticChange() }
+    }
+
+    /// Effective background CSS for the active theme (system/light/dark/sepia read
+    /// their fixed value, .custom reads customBackgroundCSS).
+    var effectiveBackgroundCSS: String { currentTheme.cssBackground }
+
+    /// Effective text CSS for the active theme.
+    var effectiveTextCSS: String { currentTheme.cssText }
+
+    // MARK: Line height
+
+    /// Body line-height multiplier, applied as the `--reader-line-height` CSS
+    /// variable. Default 1.6 matches the previously-hardcoded value exactly.
+    var lineHeight: Double {
+        get {
+            let stored = defaults.double(forKey: "readerLineHeight")
+            return stored == 0 ? 1.6 : stored
+        }
+        set {
+            defaults.set(min(2.4, max(1.2, newValue)), forKey: "readerLineHeight")
+            notifyCosmeticChange()
+        }
     }
 
     // MARK: Font size
@@ -121,7 +152,7 @@ final class SettingsManager {
         }
         set {
             defaults.set(min(300, max(50, newValue)), forKey: "readerFontSize")
-            notifyChange()
+            notifyCosmeticChange()
         }
     }
 
@@ -129,10 +160,11 @@ final class SettingsManager {
 
     /// "Format for AO3" — removes toc-heading elements and enlarges calibre2 elements
     /// across ALL chapters (previously named "Format first chapter", now global).
-    /// UserDefaults key unchanged to preserve existing user preference.
+    /// UserDefaults key unchanged to preserve existing user preference. Structural:
+    /// changes the HTML that gets built.
     var formatFirstChapter: Bool {
         get { defaults.bool(forKey: "readerFormatFirstChapter") }
-        set { defaults.set(newValue, forKey: "readerFormatFirstChapter"); notifyChange() }
+        set { defaults.set(newValue, forKey: "readerFormatFirstChapter"); notifyStructuralChange() }
     }
 
     var removeFirstLine: Bool {
@@ -150,13 +182,26 @@ final class SettingsManager {
     /// changes what HTML gets built), not cosmetic.
     var removeParagraphIndents: Bool {
         get { defaults.bool(forKey: "readerRemoveParagraphIndents") }
-        set { defaults.set(newValue, forKey: "readerRemoveParagraphIndents"); notifyChange() }
+        set { defaults.set(newValue, forKey: "readerRemoveParagraphIndents"); notifyStructuralChange() }
     }
 
     // MARK: -
 
     private func notifyChange() {
         NotificationCenter.default.post(name: Self.settingsChangedNotification, object: nil)
+    }
+
+    /// Cosmetic changes also post the general notification, so anything (like
+    /// HistorySettingsViewController) still watching the old generic notification
+    /// keeps working unchanged.
+    private func notifyCosmeticChange() {
+        NotificationCenter.default.post(name: .readerCosmeticSettingsChanged, object: nil)
+        notifyChange()
+    }
+
+    private func notifyStructuralChange() {
+        NotificationCenter.default.post(name: .readerStructuralSettingsChanged, object: nil)
+        notifyChange()
     }
 
     /// Convert an NSColor to a CSS hex string (#rrggbb)
