@@ -35,6 +35,12 @@ final class ReaderViewController: NSViewController {
     private(set) var currentMode: ReadingMode = .scroll
     private var paginationEngine: PaginationEngine?
     private var currentSpineIndex: Int = 0
+    /// Flips true the first time `viewDidLayout()` runs with the view attached to
+    /// a real window — guards the first paginated load against racing the
+    /// window's first layout pass, ported from Ambrosia's `isLayoutReady`/
+    /// `pendingSpineLoad` pattern (see `loadSpineItem`'s guard below).
+    private var isLayoutReady = false
+    private var pendingSpineLoad: (index: Int, restorePosition: RestorePosition)?
     private var scrollWheelMonitor: Any?
     private var resizeDebounceTimer: Timer?
     private var pendingPaginatedRestorePosition: RestorePosition = .start
@@ -95,6 +101,15 @@ final class ReaderViewController: NSViewController {
         let msgController = WKUserContentController()
         cfg.userContentController = msgController
 
+        // Registered before the WKWebView is constructed — Ambrosia's invariant 6
+        // requires this ordering. WebKit usually tolerates late registration
+        // since content hasn't loaded yet, but that's not guaranteed, so align
+        // with the documented-safe order rather than relying on it.
+        msgController.add(ProgressMessageHandler(owner: self), name: "progressHandler")
+        msgController.add(PositionMessageHandler(owner: self), name: "positionHandler")
+        msgController.add(PageActionMessageHandler(owner: self), name: "pageAction")
+        msgController.add(PositionUpdateMessageHandler(owner: self), name: "positionUpdate")
+
         webView = ReaderWebView(frame: NSRect(x: 0, y: 0, width: 780, height: 920), configuration: cfg)
         webView.navigationDelegate = self
         webView.allowsMagnification = true
@@ -102,11 +117,6 @@ final class ReaderViewController: NSViewController {
         webView.readerViewController = self
 
         paginationEngine = PaginationEngine(webView: webView)
-
-        cfg.userContentController.add(ProgressMessageHandler(owner: self), name: "progressHandler")
-        cfg.userContentController.add(PositionMessageHandler(owner: self), name: "positionHandler")
-        cfg.userContentController.add(PageActionMessageHandler(owner: self), name: "pageAction")
-        cfg.userContentController.add(PositionUpdateMessageHandler(owner: self), name: "positionUpdate")
 
         loadingIndicator = NSProgressIndicator()
         loadingIndicator.style = .spinning
@@ -323,6 +333,14 @@ final class ReaderViewController: NSViewController {
     /// `PaginationEngine.applyLayout` from `webView(_:didFinish:)`.
     private func loadSpineItem(index: Int, restorePosition: RestorePosition, pkg: EPUBPackage) {
         guard index >= 0 && index < pkg.spineURLs.count else { return }
+        // Column CSS is computed from webView.bounds; before the window's first
+        // real layout pass that bounds is whatever loadView's fixed placeholder
+        // frame was, not the real viewport. Defer until viewDidLayout() has fired
+        // at least once with the view attached to a real window.
+        guard isLayoutReady, view.window != nil else {
+            pendingSpineLoad = (index, restorePosition)
+            return
+        }
         currentSpineIndex = index
         pendingPaginatedRestorePosition = restorePosition
         do {
@@ -693,10 +711,29 @@ final class ReaderViewController: NSViewController {
 
     override func viewDidLayout() {
         super.viewDidLayout()
+
+        // First real layout pass: flip isLayoutReady and replay any load that was
+        // deferred by loadSpineItem's guard while the window had no real geometry
+        // yet. Return without also scheduling a resize-reload in this same pass —
+        // this is the initial layout the deferred load was waiting for, not a
+        // resize.
+        if !isLayoutReady, view.window != nil {
+            isLayoutReady = true
+            if let pending = pendingSpineLoad, let pkg = currentPackage {
+                pendingSpineLoad = nil
+                loadSpineItem(index: pending.index, restorePosition: pending.restorePosition, pkg: pkg)
+            }
+            return
+        }
+
         guard currentMode == .paginated, currentPackage != nil else { return }
         resizeDebounceTimer?.invalidate()
         resizeDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
             guard let self, let pkg = self.currentPackage else { return }
+            // Don't clobber a still-pending restore with .fraction(0) if this
+            // layout pass fired before PaginationEngine.applyLayout finished its
+            // own setup (isReady flips true only once that completes).
+            guard self.paginationEngine?.isReady == true else { return }
             self.paginationEngine?.currentFraction { fraction in
                 self.loadSpineItem(index: self.currentSpineIndex, restorePosition: .fraction(fraction), pkg: pkg)
             }
