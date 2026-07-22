@@ -576,13 +576,61 @@ final class EPUBParser: NSObject {
       }
     }
 
+    // ── Page count (menu bar display) ──────────────────────────────────────────
+    //
+    // "Page" here means one window-height of scroll, matching paginated mode's
+    // one-column-per-page convention. Scroll mode's document is the whole book
+    // merged into one continuous document (see buildScrollHTML), so page count
+    // is scoped to the current chapter, found via the .ql-chapter section whose
+    // top is at or above the current scroll position -- the same markers
+    // navigateToChapter already uses.
+
+    window.honeycrispPageInfo = function() {
+      var sections = document.querySelectorAll('.ql-chapter');
+      var viewTop  = window.scrollY;
+      var winH     = Math.max(1, window.innerHeight);
+      var idx = 0, chapterTop = 0, chapterHeight = document.documentElement.scrollHeight;
+
+      for (var i = 0; i < sections.length; i++) {
+        var rect = sections[i].getBoundingClientRect();
+        var top  = rect.top + window.scrollY;
+        if (top <= viewTop + 1) {
+          idx = i;
+          chapterTop = top;
+          chapterHeight = rect.height;
+        }
+      }
+
+      var localScroll = Math.max(0, viewTop - chapterTop);
+      var page        = Math.max(1, Math.round(localScroll / winH) + 1);
+      var totalPages  = Math.max(1, Math.ceil(chapterHeight / winH));
+
+      return JSON.stringify({
+        page: Math.min(page, totalPages),
+        totalPages: totalPages,
+        spineIndex: idx,
+        spineCount: Math.max(1, sections.length)
+      });
+    };
+
+    function reportPageInfo() {
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.pageInfoHandler) {
+        window.webkit.messageHandlers.pageInfoHandler.postMessage(window.honeycrispPageInfo());
+      }
+    }
+
     window.addEventListener('scroll', function() {
       clearTimeout(window._progressTimer);
       window._progressTimer = setTimeout(function() {
         reportProgress();
         reportPosition();
+        reportPageInfo();
       }, 500);
     }, { passive: true });
+
+    // Page info also needs an immediate read on load (before the first scroll
+    // event ever fires), so the menu bar isn't blank until the reader scrolls.
+    reportPageInfo();
     """
 
     // MARK: - CSS

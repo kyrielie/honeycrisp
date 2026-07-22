@@ -11,7 +11,10 @@
 //  • Search: moved to menu bar (⌘F); debounced via a 0.3 s Timer
 //  • Search highlighting: window.searchText() now returns count AND highlights via
 //    CSS mark elements injected by the JS embedded in the HTML template
-//  • Settings button removed from toolbar (accessible only via menu bar)
+//  • Settings gear button back in the toolbar (replaces the old paged/scroll
+//    toggle button); reading-mode toggle itself moved into Settings' General tab
+//  • Page-count display added to the toolbar: "page/pages · chapter/chapters",
+//    scoped per spine item (see EPUBParser.honeycrispPageInfo, PaginationEngine.spineDidLoad)
 //  • "Format for AO3" rename propagated; EPUBParser receives updated flag name
 
 import AppKit
@@ -35,6 +38,17 @@ final class ReaderViewController: NSViewController {
     private(set) var currentMode: ReadingMode = .scroll
     private var paginationEngine: PaginationEngine?
     private var currentSpineIndex: Int = 0
+    // MARK: - Page count (menu bar display)
+    //
+    // "Page" is scoped per spine item / chapter (see EPUBParser.honeycrispPageInfo
+    // and PaginationEngine.spineDidLoad's totalCols) rather than a whole-book
+    // total: paginated mode only ever knows the column count of the currently
+    // loaded spine item (see loadSpineItem), and scroll mode's merged document
+    // has no cheap way to attribute an exact whole-book page count without a
+    // separate offscreen pre-pagination pass. Displayed as "page/pages · chapter/chapters".
+    private var paginatedCurrentColumn: Int = 0
+    private var paginatedTotalColumns: Int = 1
+    private weak var pageCountLabel: NSTextField?
     /// Flips true the first time `viewDidLayout()` runs with the view attached to
     /// a real window — guards the first paginated load against racing the
     /// window's first layout pass, ported from Ambrosia's `isLayoutReady`/
@@ -42,6 +56,15 @@ final class ReaderViewController: NSViewController {
     private var isLayoutReady = false
     private var pendingSpineLoad: (index: Int, restorePosition: RestorePosition)?
     private var scrollWheelMonitor: Any?
+    /// Accumulated horizontal delta for the swipe currently in progress. Reset on
+    /// `.began`, summed on `.changed`, consumed on `.ended`. See
+    /// `installScrollWheelMonitorIfNeeded` for why this replaces the old
+    /// per-event deadzone check.
+    private var swipeAccumulatedDeltaX: CGFloat = 0
+    /// Local NSEvent monitor for Left/Right/Page Up/Page Down in paginated mode.
+    /// See `installKeyDownMonitor` for why a subclass `keyDown` override alone
+    /// isn't sufficient here.
+    private var keyDownMonitor: Any?
     private var resizeDebounceTimer: Timer?
     private var pendingPaginatedRestorePosition: RestorePosition = .start
     private var securityScopedURL: URL?
@@ -71,7 +94,6 @@ final class ReaderViewController: NSViewController {
     /// Weak refs to toolbar controls that need state updates
     private weak var floatButton: NSButton?
     private weak var historyButton: NSButton?
-    private weak var readingModeButton: NSButton?
     private weak var titleLabel: NSTextField?   // centered title in toolbar
 
     /// Debounce timer for search input
@@ -109,6 +131,7 @@ final class ReaderViewController: NSViewController {
         msgController.add(PositionMessageHandler(owner: self), name: "positionHandler")
         msgController.add(PageActionMessageHandler(owner: self), name: "pageAction")
         msgController.add(PositionUpdateMessageHandler(owner: self), name: "positionUpdate")
+        msgController.add(PageInfoMessageHandler(owner: self), name: "pageInfoHandler")
 
         webView = ReaderWebView(frame: NSRect(x: 0, y: 0, width: 780, height: 920), configuration: cfg)
         webView.navigationDelegate = self
@@ -117,6 +140,11 @@ final class ReaderViewController: NSViewController {
         webView.readerViewController = self
 
         paginationEngine = PaginationEngine(webView: webView)
+        paginationEngine?.spineDidLoad = { [weak self] totalCols in
+            guard let self else { return }
+            self.paginatedTotalColumns = totalCols
+            self.updatePageCountLabel()
+        }
 
         loadingIndicator = NSProgressIndicator()
         loadingIndicator.style = .spinning
@@ -221,13 +249,17 @@ final class ReaderViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         view.window?.makeFirstResponder(webView)
-        if currentMode == .paginated { installScrollWheelMonitorIfNeeded() }
+        if currentMode == .paginated {
+            installScrollWheelMonitorIfNeeded()
+            installKeyDownMonitor()
+        }
     }
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
         flushPositionSave()
         removeScrollWheelMonitor()
+        removeKeyDownMonitor()
     }
 
     deinit {
@@ -236,6 +268,7 @@ final class ReaderViewController: NSViewController {
         positionSaveTimer?.invalidate()
         resizeDebounceTimer?.invalidate()
         if let monitor = scrollWheelMonitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = keyDownMonitor { NSEvent.removeMonitor(monitor) }
         securityScopedURL?.stopAccessingSecurityScopedResource()
         NotificationCenter.default.removeObserver(self)
     }
@@ -279,9 +312,9 @@ final class ReaderViewController: NSViewController {
 
                     self.currentMode = SettingsManager.shared.defaultReadingMode
                     self.applyScrollbarVisibility()
-                    self.updateReadingModeButton()
                     if self.currentMode == .paginated {
                         self.installScrollWheelMonitorIfNeeded()
+                        self.installKeyDownMonitor()
                         if let saved = HistoryManager.shared.savedPosition(for: url) {
                             self.currentSpineIndex = min(saved.spineIndex, max(0, pkg.spineURLs.count - 1))
                             self.pendingPaginatedRestorePosition = saved.characterOffset > 0
@@ -394,8 +427,8 @@ final class ReaderViewController: NSViewController {
         }
     }
 
-    /// Wired to the View-menu "Paginated Mode" item (⇧⌘P) and the .readingModeToggle
-    /// toolbar button. Reloads the current content in the new mode at the
+    /// Wired to the View-menu "Paginated Mode" item (⇧⌘P) and the "Paginated Mode"
+    /// checkbox in Settings' General tab. Reloads the current content in the new mode at the
     /// equivalent fraction-based position. Mode isn't persisted per-file — nothing
     /// is written back to HistoryEntry here (SettingsManager.defaultReadingMode,
     /// the global default, is untouched by this toggle too; it only flips this
@@ -416,7 +449,7 @@ final class ReaderViewController: NSViewController {
                 self.currentMode = .paginated
                 self.applyScrollbarVisibility()
                 self.installScrollWheelMonitorIfNeeded()
-                self.updateReadingModeButton()
+                self.installKeyDownMonitor()
                 let fraction = (result as? Double) ?? 0
                 self.loadSpineItem(index: 0, restorePosition: .fraction(fraction), pkg: pkg)
             }
@@ -424,15 +457,9 @@ final class ReaderViewController: NSViewController {
             currentMode = .scroll
             applyScrollbarVisibility()
             removeScrollWheelMonitor()
-            updateReadingModeButton()
+            removeKeyDownMonitor()
             renderScrollContent(pkg: pkg)
         }
-    }
-
-    private func updateReadingModeButton() {
-        let isPaginated = currentMode == .paginated
-        readingModeButton?.contentTintColor = isPaginated ? .systemOrange : nil
-        readingModeButton?.toolTip = isPaginated ? "Scroll Mode" : "Paginated Mode"
     }
 
     // MARK: - Toolbar Title
@@ -645,38 +672,47 @@ final class ReaderViewController: NSViewController {
     /// PaginationJS posts this after every column navigation (page turn or
     /// restore). Reuses the same flushPositionSave path scroll mode's debounced
     /// scroll listener drives, rather than a separate paginated-only scheme.
-    func didReceivePositionUpdate() {
+    /// `column`/`totalColumns` (0-based column, total columns in the current
+    /// spine item) update the page-count display; nil if the JS payload
+    /// couldn't be parsed, in which case the label is simply left as-is.
+    func didReceivePositionUpdate(column: Int?, totalColumns: Int?) {
+        if let column { paginatedCurrentColumn = column }
+        if let totalColumns { paginatedTotalColumns = totalColumns }
+        updatePageCountLabel()
         flushPositionSave()
+    }
+
+    /// Scroll mode's counterpart to the paginated column-based page count —
+    /// see EPUBParser.honeycrispPageInfo for how these values are derived.
+    func didReceiveScrollPageInfo(page: Int, totalPages: Int, spineIndex: Int, spineCount: Int) {
+        guard currentMode == .scroll else { return }
+        pageCountLabel?.stringValue = "\(page) of \(totalPages) · Ch \(spineIndex + 1) of \(spineCount)"
+    }
+
+    /// Paginated-mode counterpart, driven by spineDidLoad/positionUpdate.
+    /// Spine index/count come from the currently loaded book's spine, same
+    /// values loadSpineItem/navigateSpine already track.
+    private func updatePageCountLabel() {
+        guard currentMode == .paginated else { return }
+        let spineCount = currentPackage?.spineURLs.count ?? 1
+        let page = paginatedCurrentColumn + 1
+        pageCountLabel?.stringValue = "\(page) of \(paginatedTotalColumns) · Ch \(currentSpineIndex + 1) of \(spineCount)"
     }
 
     // MARK: - Navigation
 
+    /// Scroll-mode-only now: paginated-mode arrow/PageUp/PageDown handling moved
+    /// to `installKeyDownMonitor`, which intercepts those keys before WebKit's
+    /// own default keyboard-scroll action ever sees them (see that method's doc
+    /// comment). This is only still reachable in scroll mode, where there's no
+    /// competing native horizontal-scroll handler to race.
     func handleKeyDown(_ event: NSEvent) {
-        switch currentMode {
-        case .scroll:
-            switch event.keyCode {
-            case 123, 126, 116: scrollByPages(-1)
-            case 124, 125, 121: scrollByPages(1)
-            case 3 where event.modifierFlags.contains(.command): // ⌘F
-                toggleSearch(nil)
-            default: break
-            }
-        case .paginated:
-            // One physical keypress = one page turn — repeats from a held-down key
-            // are dropped rather than forwarded, matching Ambrosia's isARepeat guard.
-            // Page turns here are instant WKWebView scrolls (not scroll mode's
-            // animated smooth-scroll), so without this guard a held arrow key would
-            // very likely flicker; worth confirming against real hardware once built.
-            guard !event.isARepeat else { return }
-            switch event.keyCode {
-            case 123, 126: paginationEngine?.handleKeyDown(.backward)   // ← / ↑
-            case 124, 125: paginationEngine?.handleKeyDown(.forward)    // → / ↓
-            case 116: paginationEngine?.handleKeyDown(.backward)        // Page Up
-            case 121: paginationEngine?.handleKeyDown(.forward)         // Page Down
-            case 3 where event.modifierFlags.contains(.command): // ⌘F
-                toggleSearch(nil)
-            default: break
-            }
+        switch event.keyCode {
+        case 123, 126, 116: scrollByPages(-1)
+        case 124, 125, 121: scrollByPages(1)
+        case 3 where event.modifierFlags.contains(.command): // ⌘F
+            toggleSearch(nil)
+        default: break
         }
     }
 
@@ -688,26 +724,103 @@ final class ReaderViewController: NSViewController {
     // MARK: - Trackpad/scroll-wheel (paginated mode only)
     //
     // WKWebView's internal scroll machinery bypasses a plain scrollWheel(with:)
-    // override the same way it bypasses keyDown (see ReaderWebView.keyDown) — a
-    // local NSEvent monitor is the only reliable interception point.
+    // override the same way it bypasses keyDown (see installKeyDownMonitor below)
+    // — a local NSEvent monitor is the only reliable interception point.
+    //
+    // Trackpad input arrives as a stream of `.began`/`.changed`/`.ended` phase
+    // events for one physical two-finger swipe, followed by a separate stream of
+    // momentum-phase events once the user's fingers lift. The previous
+    // implementation fired a page turn on every individual event whose delta
+    // exceeded a small deadzone — which fires many times per swipe (once per
+    // `.changed` sample) and keeps firing during momentum decay after the
+    // fingers are already off the trackpad. This accumulates the swipe distance
+    // instead and fires exactly one page turn on `.ended`, and swallows momentum
+    // events outright rather than acting on them.
+    //
+    // Legacy scroll wheels (mice without inertial scrolling) report phase/
+    // momentumPhase of `[]` on every event — never `.began`/`.changed`/`.ended` —
+    // so they fall through to the `default` case below and keep the previous
+    // per-event deadzone behavior, since there's no discrete gesture to
+    // accumulate for that input type.
 
     private func installScrollWheelMonitorIfNeeded() {
         guard scrollWheelMonitor == nil else { return }
         scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             guard let self, self.currentMode == .paginated, self.view.window?.isKeyWindow == true else { return event }
-            // Trackpad horizontal swipe and mouse-wheel vertical scroll both map to
-            // a page turn; a small deadzone avoids triggering on trackpad momentum
-            // noise around zero.
-            let delta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) ? event.scrollingDeltaX : event.scrollingDeltaY
-            guard abs(delta) > 2 else { return nil }
-            self.paginationEngine?.handleKeyDown(delta > 0 ? .backward : .forward)
-            return nil
+
+            switch event.phase {
+            case .began:
+                self.swipeAccumulatedDeltaX = 0
+                return nil
+            case .changed:
+                self.swipeAccumulatedDeltaX += event.scrollingDeltaX
+                return nil
+            case .ended:
+                let dx = self.swipeAccumulatedDeltaX
+                self.swipeAccumulatedDeltaX = 0
+                // Threshold is on total swipe distance, not per-event sample.
+                if abs(dx) > 30 {
+                    self.paginationEngine?.handleKeyDown(dx > 0 ? .backward : .forward)
+                }
+                return nil
+            default:
+                guard event.momentumPhase.isEmpty else { return nil } // swallow momentum
+                // No phase at all: legacy mouse wheel. Keep the old per-event
+                // deadzone behavior since there's no .began/.changed/.ended
+                // gesture to accumulate here.
+                let delta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) ? event.scrollingDeltaX : event.scrollingDeltaY
+                guard abs(delta) > 2 else { return nil }
+                self.paginationEngine?.handleKeyDown(delta > 0 ? .backward : .forward)
+                return nil
+            }
         }
     }
 
     private func removeScrollWheelMonitor() {
         if let monitor = scrollWheelMonitor { NSEvent.removeMonitor(monitor) }
         scrollWheelMonitor = nil
+        swipeAccumulatedDeltaX = 0
+    }
+
+    // MARK: - Keyboard navigation monitor (paginated mode only)
+    //
+    // WebKit applies its own default keyboard-scroll action for Left/Right
+    // directly in the web content process whenever :root has overflow-x: scroll
+    // (required for column layout) — independent of the AppKit responder chain.
+    // That native handling runs regardless of what ReaderWebView.keyDown (a
+    // plain subclass override) does, producing a visible horizontal nudge on top
+    // of — or instead of — the intended column snap. A local NSEvent monitor
+    // sees the key event before it is ever dispatched to the web view, so
+    // returning nil here reliably prevents WebKit's native handling from running
+    // at all. ReaderWebView.keyDown still handles vertical paging in scroll mode
+    // (no competing native horizontal-scroll handler there); this monitor only
+    // acts in paginated mode.
+
+    private func installKeyDownMonitor() {
+        guard keyDownMonitor == nil else { return }
+        keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.currentMode == .paginated, event.window === self.view.window else { return event }
+            guard let responder = self.view.window?.firstResponder as? NSView,
+                  responder.isDescendant(of: self.view) else { return event }
+
+            switch event.keyCode {
+            case 123, 126, 116: // ← ↑ Page Up
+                guard !event.isARepeat else { return nil }
+                self.paginationEngine?.handleKeyDown(.backward)
+                return nil
+            case 124, 125, 121: // → ↓ Page Down
+                guard !event.isARepeat else { return nil }
+                self.paginationEngine?.handleKeyDown(.forward)
+                return nil
+            default:
+                return event
+            }
+        }
+    }
+
+    private func removeKeyDownMonitor() {
+        if let monitor = keyDownMonitor { NSEvent.removeMonitor(monitor) }
+        keyDownMonitor = nil
     }
 
     // MARK: - Resize (paginated mode only)
@@ -795,8 +908,13 @@ final class ReaderViewController: NSViewController {
         (view.window?.windowController as? ReaderWindowController)?.showOpenPanel()
     }
 
-    @objc private func readingModeToggleAction(_ sender: Any?) {
-        toggleReadingMode(sender)
+    /// Toolbar gear button — opens the same Settings window as the App menu's
+    /// "Settings…" (⌘,) item. Routed through the responder chain rather than
+    /// importing AppDelegate directly, matching how other cross-cutting actions
+    /// (e.g. Float on Top, ReaderWindowController.toggleFloat) are already
+    /// dispatched from this toolbar.
+    @objc private func openSettingsAction(_ sender: Any?) {
+        NSApp.sendAction(#selector(AppDelegate.openSettingsAction(_:)), to: nil, from: sender)
     }
 
     @objc private func floatAction(_ sender: Any?) {
@@ -913,15 +1031,16 @@ extension ReaderViewController: WKNavigationDelegate {
 
 // MARK: - NSToolbarDelegate
 //
-// Toolbar items:  [openFile] [flexibleSpace] [titleLabel] [flexibleSpace] [fontSize] [history] [floatToggle]
+// Toolbar items:  [openFile] [flexibleSpace] [titleLabel] [flexibleSpace] [pageCount] [fontSize] [openSettings] [history] [floatToggle]
 //
-// Removed vs original: .toc, .search, .settings
-// Added:               .titleLabel (centered, truncated book title)
+// Removed vs original: .toc, .search, .readingModeToggle (moved into Settings' General tab)
+// Added:               .titleLabel (centered, truncated book title), .pageCount
+//                       (centered "page/pages · chapter/chapters"), .openSettings (gear icon)
 
 extension ReaderViewController: NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.openFile, .flexibleSpace, .titleLabel, .flexibleSpace, .fontSize, .readingModeToggle, .history, .floatToggle]
+        [.openFile, .flexibleSpace, .titleLabel, .flexibleSpace, .pageCount, .fontSize, .openSettings, .history, .floatToggle]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -980,12 +1099,28 @@ extension ReaderViewController: NSToolbarDelegate {
             item.label = "History"
             return item
 
-        case .readingModeToggle:
+        case .pageCount:
+            // Non-interactive label, same pattern as .titleLabel: "3 of 12 · Ch 2 of 20".
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            let btn = makeToolbarButton(symbol: "rectangle.split.2x1", tooltip: "Paginated Mode", action: #selector(readingModeToggleAction(_:)))
-            readingModeButton = btn
+            let label = NSTextField(labelWithString: "")
+            label.font = NSFont.systemFont(ofSize: 11)
+            label.textColor = .secondaryLabelColor
+            label.alignment = .center
+            label.lineBreakMode = .byTruncatingTail
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.widthAnchor.constraint(lessThanOrEqualToConstant: 180).isActive = true
+            pageCountLabel = label
+            item.view = label
+            item.label = ""
+            item.minSize = NSSize(width: 60, height: 24)
+            item.maxSize = NSSize(width: 180, height: 24)
+            return item
+
+        case .openSettings:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            let btn = makeToolbarButton(symbol: "gearshape", tooltip: "Settings…", action: #selector(openSettingsAction(_:)))
             item.view = btn
-            item.label = "Pages"
+            item.label = "Settings"
             return item
 
         case .floatToggle:
@@ -1056,13 +1191,42 @@ private class PageActionMessageHandler: NSObject, WKScriptMessageHandler {
 /// Receives `{ fraction, column, totalColumns }` from PaginationJS's
 /// _postPositionUpdate, posted after every column navigation (page turn or
 /// restore). Triggers a position save via the same flushPositionSave path scroll
-/// mode's debounced scroll listener drives.
+/// mode's debounced scroll listener drives, and updates the page-count display.
 private class PositionUpdateMessageHandler: NSObject, WKScriptMessageHandler {
     weak var owner: ReaderViewController?
     init(owner: ReaderViewController) { self.owner = owner }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        owner?.didReceivePositionUpdate()
+        guard let str = message.body as? String,
+              let data = str.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            owner?.didReceivePositionUpdate(column: nil, totalColumns: nil)
+            return
+        }
+        let column = (dict["column"] as? NSNumber)?.intValue
+        let total  = (dict["totalColumns"] as? NSNumber)?.intValue
+        owner?.didReceivePositionUpdate(column: column, totalColumns: total)
+    }
+}
+
+/// Receives `{ page, totalPages, spineIndex, spineCount }` from
+/// EPUBParser's honeycrispPageInfo() (scroll mode only). Updates the
+/// page-count toolbar label.
+private class PageInfoMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var owner: ReaderViewController?
+    init(owner: ReaderViewController) { self.owner = owner }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let str = message.body as? String,
+              let data = str.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let page = (dict["page"] as? NSNumber)?.intValue,
+              let totalPages = (dict["totalPages"] as? NSNumber)?.intValue,
+              let spineIndex = (dict["spineIndex"] as? NSNumber)?.intValue,
+              let spineCount = (dict["spineCount"] as? NSNumber)?.intValue
+        else { return }
+        owner?.didReceiveScrollPageInfo(page: page, totalPages: totalPages, spineIndex: spineIndex, spineCount: spineCount)
     }
 }
 
@@ -1124,11 +1288,12 @@ final class ReaderWebView: WKWebView {
 // MARK: - Toolbar identifier extensions
 
 extension NSToolbarItem.Identifier {
-    static let openFile    = NSToolbarItem.Identifier("openFile")
-    static let titleLabel  = NSToolbarItem.Identifier("titleLabel")   // NEW: centered title
-    static let fontSize    = NSToolbarItem.Identifier("fontSize")
-    static let history     = NSToolbarItem.Identifier("history")
-    static let floatToggle = NSToolbarItem.Identifier("floatToggle")
-    static let readingModeToggle = NSToolbarItem.Identifier("readingModeToggle")
+    static let openFile     = NSToolbarItem.Identifier("openFile")
+    static let titleLabel   = NSToolbarItem.Identifier("titleLabel")   // NEW: centered title
+    static let pageCount    = NSToolbarItem.Identifier("pageCount")    // NEW: "3 of 12 · Ch 2 of 20"
+    static let fontSize     = NSToolbarItem.Identifier("fontSize")
+    static let history      = NSToolbarItem.Identifier("history")
+    static let floatToggle  = NSToolbarItem.Identifier("floatToggle")
+    static let openSettings = NSToolbarItem.Identifier("openSettings")  // NEW: replaces readingModeToggle
     // .toc, .search, .settings removed — now in menu bar only
 }
