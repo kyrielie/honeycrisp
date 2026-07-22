@@ -374,9 +374,72 @@ final class EPUBParser: NSObject {
       }
     }
 
+    // ── Reading position (exact character offset) ─────────────────────────────────
+    //
+    // Offset contract: UTF-16 code units, counted via a TreeWalker(SHOW_TEXT) over
+    // document.body. honeycrispCurrentCharacterOffset (save side) and
+    // honeycrispNavigateToOffset (restore side) both walk document.body with the
+    // exact same TreeWalker construction, so they can't drift out of sync with
+    // each other — one contract, read on one side and written on the other.
+
+    var HONEYCRISP_POSITION_REFERENCE_Y = Math.round(window.innerHeight / 3);
+
+    window.honeycrispCurrentCharacterOffset = function() {
+      var x = Math.round(window.innerWidth / 2);
+      var y = HONEYCRISP_POSITION_REFERENCE_Y;
+      var range = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+      if (!range || !range.startContainer || range.startContainer.nodeType !== Node.TEXT_NODE) {
+        return Math.round((window.scrollY / Math.max(1, document.documentElement.scrollHeight)) * 1e6);
+      }
+      var target = range.startContainer;
+      var localOffset = range.startOffset;
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+      var count = 0, node;
+      while ((node = walker.nextNode()) !== null) {
+        if (node === target) return count + localOffset;
+        count += node.length;
+      }
+      return count;
+    };
+
+    window.honeycrispNavigateToOffset = function(targetOffset) {
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+      var count = 0, node, lastNode = null;
+      while ((node = walker.nextNode()) !== null) {
+        lastNode = node;
+        var nextCount = count + node.length;
+        if (targetOffset < nextCount) {
+          scrollNodeIntoPosition(node, targetOffset - count);
+          return;
+        }
+        count = nextCount;
+      }
+      // Offset is at or past the end of the document — land on the last text node.
+      if (lastNode) scrollNodeIntoPosition(lastNode, lastNode.length);
+
+      function scrollNodeIntoPosition(node, localOffset) {
+        localOffset = Math.max(0, Math.min(node.length, localOffset));
+        var range = document.createRange();
+        range.setStart(node, localOffset);
+        range.setEnd(node, localOffset);
+        var rect = range.getBoundingClientRect();
+        var targetY = window.scrollY + rect.top - HONEYCRISP_POSITION_REFERENCE_Y;
+        window.scrollTo(0, Math.max(0, targetY));
+      }
+    };
+
+    function reportPosition() {
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.positionHandler) {
+        window.webkit.messageHandlers.positionHandler.postMessage(window.honeycrispCurrentCharacterOffset());
+      }
+    }
+
     window.addEventListener('scroll', function() {
       clearTimeout(window._progressTimer);
-      window._progressTimer = setTimeout(reportProgress, 500);
+      window._progressTimer = setTimeout(function() {
+        reportProgress();
+        reportPosition();
+      }, 500);
     }, { passive: true });
     """
 
