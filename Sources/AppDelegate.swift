@@ -135,6 +135,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         floatItem.keyEquivalentModifierMask = [.command, .shift]
         viewMenu.addItem(floatItem)
+
+        // Paginated Mode (⇧⌘P) — static title + checkmark (HIG), not a title-swap.
+        // ⇧⌘P is unused today and deliberately avoids colliding with the
+        // HIG-reserved plain ⌘P ("Print") convention.
+        let readingModeItem = NSMenuItem(
+            title: "Paginated Mode",
+            action: #selector(toggleReadingMode),
+            keyEquivalent: "p"
+        )
+        readingModeItem.keyEquivalentModifierMask = [.command, .shift]
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(readingModeItem)
     }
 
     // MARK: - Actions
@@ -174,9 +186,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         readerVC()?.toggleTOC(nil)
     }
 
+    /// Forwards ⇧⌘P to the frontmost reader window's view controller.
+    @objc private func toggleReadingMode() {
+        readerVC()?.toggleReadingMode(nil)
+    }
+
     // MARK: - Helpers
 
     private func readerVC() -> ReaderViewController? {
         NSApp.keyWindow?.contentViewController as? ReaderViewController
+    }
+}
+
+// MARK: - NSMenuItemValidation
+//
+// Closes a pre-existing gap: View-menu items (Search in Book, Show TOC, and now
+// Paginated Mode) were always enabled regardless of whether a book/window was
+// loaded. Picked up here because it's the same mechanism already needed for the
+// Paginated Mode checkmark, not separately scoped work.
+
+extension AppDelegate: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard let vc = readerVC() else {
+            // No reader window/content: these don't apply yet.
+            return menuItem.action != #selector(toggleReadingMode)
+                && menuItem.action != #selector(searchInBook)
+                && menuItem.action != #selector(showTOC)
+        }
+        if menuItem.action == #selector(toggleReadingMode) {
+            menuItem.state = vc.currentMode == .paginated ? .on : .off
+        }
+        return true
     }
 }

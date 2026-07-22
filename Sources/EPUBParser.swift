@@ -2,6 +2,7 @@
 // Parses EPUB files into structured content, adapted from the QuickLook plugin
 
 import Foundation
+import AppKit
 import ZIPFoundation
 
 struct EPUBPackage {
@@ -152,6 +153,144 @@ final class EPUBParser: NSObject {
         <script>\(Self.readerJS)</script>
         </body>
         </html>
+        """
+    }
+
+    /// Paginated-mode counterpart to buildScrollHTML: one spine item's HTML, with
+    /// the column layout CSS baked in up front (never injected after load via
+    /// evaluateJavaScript — that's what avoids an unstyled flash before
+    /// repagination). Uses the same extractedChapterBody helper as buildScrollHTML,
+    /// so formatting behaviour can't drift between the two rendering modes.
+    func buildPageHTML(
+        from pkg: EPUBPackage,
+        spineIndex: Int,
+        viewportWidth: CGFloat,
+        viewportHeight: CGFloat,
+        colsPerScreen: ColsPerScreen,
+        formatFirstChapter: Bool = false,
+        removeParagraphIndents: Bool = false
+    ) throws -> String {
+        let base = pkg.rootFolder
+        let extracted = try Self.extractedChapterBody(
+            from: pkg, index: spineIndex, base: base,
+            formatFirstChapter: formatFirstChapter,
+            removeParagraphIndents: removeParagraphIndents
+        )
+        let body = "\n<section class=\"ql-chapter\" id=\"chapter-\(spineIndex)\" data-chapter-index=\"\(spineIndex)\">\n"
+            + extracted
+            + "\n</section>\n"
+
+        let columnCSS = Self.paginatedColumnCSS(
+            viewportWidth: viewportWidth, viewportHeight: viewportHeight, colsPerScreen: colsPerScreen
+        )
+
+        return """
+        <!doctype html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style id="honeycrisp-vars">\(Self.readerVarsCSS)</style>
+            <style>\(Self.readerCSS)</style>
+            <style>\(columnCSS)</style>
+        </head>
+        <body>
+        <div id="content">\(body)</div>
+        <script>\(Self.readerJS)</script>
+        </body>
+        </html>
+        """
+    }
+
+    /// Horizontal CSS multi-column layout, ported from Ambrosia's
+    /// ReaderPreferences.paginatedColumnCSS. Column geometry math and comments kept
+    /// as-is — these are empirical WebKit-version-specific fixes, not style
+    /// choices. Ambrosia's own `paddingH`/`paddingV`/`maxWidth` reading-preference
+    /// inputs don't exist in Honeycrisp; fixed constants matching Ambrosia's
+    /// defaults are used instead (24pt horizontal/vertical margin, 700pt single-
+    /// column max width) since Honeycrisp has no equivalent preference to read them
+    /// from yet.
+    private static func paginatedColumnCSS(viewportWidth: CGFloat, viewportHeight: CGFloat, colsPerScreen: ColsPerScreen) -> String {
+        let marginH: CGFloat = 24
+        let marginV: CGFloat = 24
+        let maxWidth: CGFloat = 700
+        let cols = colsPerScreen.rawValue
+
+        let vw = Int(viewportWidth.rounded())
+        let vh = Int(viewportHeight.rounded())
+        let marginHInt = Int(marginH.rounded())
+
+        // colWidth/colGap divide (vw - 2*marginH) — html's content box after its own
+        // padding is subtracted — not vw directly. See ReaderPreferences.paginatedColumnCSS
+        // in Ambrosia for the full column-fragmentation-vs-container-padding rationale;
+        // dividing vw itself here would double-subtract the margin.
+        let availableWidth = vw - 2 * marginHInt
+
+        var colGap = max(1, Int((marginH * 2).rounded()))
+        let colWidth: Int
+        if cols <= 1 {
+            colWidth = availableWidth
+        } else {
+            let raw = availableWidth + colGap
+            let overhang = raw % cols
+            if overhang != 0 { colGap += cols - overhang }
+            colWidth = (availableWidth + colGap) / cols - colGap
+        }
+
+        let capSingleColumn = cols <= 1 && maxWidth < CGFloat(availableWidth)
+        let bodyWidthCSS = capSingleColumn
+            ? "max-width: \(Int(maxWidth))px !important; margin: 0 auto !important;"
+            : "max-width: none !important; margin: 0 !important;"
+
+        return """
+        /* === Honeycrisp paginated layout === */
+        html {
+            /* :root is the column container and the scroll container.
+               Horizontal margin lives here (container-level padding — applies
+               once, at the true first/last column edge only). */
+            width: \(vw)px !important;
+            height: \(vh)px !important;
+            max-width: \(vw)px !important;
+            max-height: \(vh)px !important;
+            min-width: \(vw)px !important;
+            min-height: \(vh)px !important;
+            padding-left: \(marginHInt)px !important;
+            padding-right: \(marginHInt)px !important;
+            padding-top: \(Int(marginV))px !important;
+            padding-bottom: \(Int(marginV))px !important;
+            column-width: \(colWidth)px !important;
+            column-gap: \(colGap)px !important;
+            column-fill: auto !important;
+            overflow-x: scroll !important;
+            overflow-y: hidden !important;
+            scrollbar-width: none !important;
+            box-sizing: border-box !important;
+        }
+        html::-webkit-scrollbar { display: none !important; }
+        body {
+            /* body must NOT be the column container and must NOT carry padding on
+               either axis — its own max-width/margin (bodyWidthCSS) only
+               crops/centers the rendered text within each already-sized column. */
+            width: 100% !important;
+            \(bodyWidthCSS)
+            height: auto !important;
+            overflow: visible !important;
+            box-sizing: border-box !important;
+        }
+        /* Prevent the first element from creating a blank leading column */
+        body > *:first-child,
+        body > div:first-child > *:first-child {
+            break-before: avoid !important;
+        }
+        /* Long unbreakable inline runs (AO3 tag lists, dl/dd blocks, tables) can
+           force a column wider than column-width requests, throwing off every
+           column boundary after it (JS assumes a uniform pitch). Force wrapping
+           everywhere so no element can be wider than its column. */
+        * {
+            max-width: 100% !important;
+            overflow-wrap: break-word !important;
+            word-break: break-word !important;
+        }
         """
     }
 
