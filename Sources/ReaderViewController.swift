@@ -42,6 +42,15 @@ final class ReaderViewController: NSViewController {
     private var isLayoutReady = false
     private var pendingSpineLoad: (index: Int, restorePosition: RestorePosition)?
     private var scrollWheelMonitor: Any?
+    /// Accumulated horizontal delta for the swipe currently in progress. Reset on
+    /// `.began`, summed on `.changed`, consumed on `.ended`. See
+    /// `installScrollWheelMonitorIfNeeded` for why this replaces the old
+    /// per-event deadzone check.
+    private var swipeAccumulatedDeltaX: CGFloat = 0
+    /// Local NSEvent monitor for Left/Right/Page Up/Page Down in paginated mode.
+    /// See `installKeyDownMonitor` for why a subclass `keyDown` override alone
+    /// isn't sufficient here.
+    private var keyDownMonitor: Any?
     private var resizeDebounceTimer: Timer?
     private var pendingPaginatedRestorePosition: RestorePosition = .start
     private var securityScopedURL: URL?
@@ -221,13 +230,17 @@ final class ReaderViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         view.window?.makeFirstResponder(webView)
-        if currentMode == .paginated { installScrollWheelMonitorIfNeeded() }
+        if currentMode == .paginated {
+            installScrollWheelMonitorIfNeeded()
+            installKeyDownMonitor()
+        }
     }
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
         flushPositionSave()
         removeScrollWheelMonitor()
+        removeKeyDownMonitor()
     }
 
     deinit {
@@ -236,6 +249,7 @@ final class ReaderViewController: NSViewController {
         positionSaveTimer?.invalidate()
         resizeDebounceTimer?.invalidate()
         if let monitor = scrollWheelMonitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = keyDownMonitor { NSEvent.removeMonitor(monitor) }
         securityScopedURL?.stopAccessingSecurityScopedResource()
         NotificationCenter.default.removeObserver(self)
     }
@@ -416,6 +430,7 @@ final class ReaderViewController: NSViewController {
                 self.currentMode = .paginated
                 self.applyScrollbarVisibility()
                 self.installScrollWheelMonitorIfNeeded()
+                self.installKeyDownMonitor()
                 self.updateReadingModeButton()
                 let fraction = (result as? Double) ?? 0
                 self.loadSpineItem(index: 0, restorePosition: .fraction(fraction), pkg: pkg)
@@ -424,6 +439,7 @@ final class ReaderViewController: NSViewController {
             currentMode = .scroll
             applyScrollbarVisibility()
             removeScrollWheelMonitor()
+            removeKeyDownMonitor()
             updateReadingModeButton()
             renderScrollContent(pkg: pkg)
         }
@@ -670,32 +686,18 @@ final class ReaderViewController: NSViewController {
 
     // MARK: - Navigation
 
+    /// Scroll-mode-only now: paginated-mode arrow/PageUp/PageDown handling moved
+    /// to `installKeyDownMonitor`, which intercepts those keys before WebKit's
+    /// own default keyboard-scroll action ever sees them (see that method's doc
+    /// comment). This is only still reachable in scroll mode, where there's no
+    /// competing native horizontal-scroll handler to race.
     func handleKeyDown(_ event: NSEvent) {
-        switch currentMode {
-        case .scroll:
-            switch event.keyCode {
-            case 123, 126, 116: scrollByPages(-1)
-            case 124, 125, 121: scrollByPages(1)
-            case 3 where event.modifierFlags.contains(.command): // ⌘F
-                toggleSearch(nil)
-            default: break
-            }
-        case .paginated:
-            // One physical keypress = one page turn — repeats from a held-down key
-            // are dropped rather than forwarded, matching Ambrosia's isARepeat guard.
-            // Page turns here are instant WKWebView scrolls (not scroll mode's
-            // animated smooth-scroll), so without this guard a held arrow key would
-            // very likely flicker; worth confirming against real hardware once built.
-            guard !event.isARepeat else { return }
-            switch event.keyCode {
-            case 123, 126: paginationEngine?.handleKeyDown(.backward)   // ← / ↑
-            case 124, 125: paginationEngine?.handleKeyDown(.forward)    // → / ↓
-            case 116: paginationEngine?.handleKeyDown(.backward)        // Page Up
-            case 121: paginationEngine?.handleKeyDown(.forward)         // Page Down
-            case 3 where event.modifierFlags.contains(.command): // ⌘F
-                toggleSearch(nil)
-            default: break
-            }
+        switch event.keyCode {
+        case 123, 126, 116: scrollByPages(-1)
+        case 124, 125, 121: scrollByPages(1)
+        case 3 where event.modifierFlags.contains(.command): // ⌘F
+            toggleSearch(nil)
+        default: break
         }
     }
 
@@ -707,26 +709,103 @@ final class ReaderViewController: NSViewController {
     // MARK: - Trackpad/scroll-wheel (paginated mode only)
     //
     // WKWebView's internal scroll machinery bypasses a plain scrollWheel(with:)
-    // override the same way it bypasses keyDown (see ReaderWebView.keyDown) — a
-    // local NSEvent monitor is the only reliable interception point.
+    // override the same way it bypasses keyDown (see installKeyDownMonitor below)
+    // — a local NSEvent monitor is the only reliable interception point.
+    //
+    // Trackpad input arrives as a stream of `.began`/`.changed`/`.ended` phase
+    // events for one physical two-finger swipe, followed by a separate stream of
+    // momentum-phase events once the user's fingers lift. The previous
+    // implementation fired a page turn on every individual event whose delta
+    // exceeded a small deadzone — which fires many times per swipe (once per
+    // `.changed` sample) and keeps firing during momentum decay after the
+    // fingers are already off the trackpad. This accumulates the swipe distance
+    // instead and fires exactly one page turn on `.ended`, and swallows momentum
+    // events outright rather than acting on them.
+    //
+    // Legacy scroll wheels (mice without inertial scrolling) report phase/
+    // momentumPhase of `[]` on every event — never `.began`/`.changed`/`.ended` —
+    // so they fall through to the `default` case below and keep the previous
+    // per-event deadzone behavior, since there's no discrete gesture to
+    // accumulate for that input type.
 
     private func installScrollWheelMonitorIfNeeded() {
         guard scrollWheelMonitor == nil else { return }
         scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             guard let self, self.currentMode == .paginated, self.view.window?.isKeyWindow == true else { return event }
-            // Trackpad horizontal swipe and mouse-wheel vertical scroll both map to
-            // a page turn; a small deadzone avoids triggering on trackpad momentum
-            // noise around zero.
-            let delta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) ? event.scrollingDeltaX : event.scrollingDeltaY
-            guard abs(delta) > 2 else { return nil }
-            self.paginationEngine?.handleKeyDown(delta > 0 ? .backward : .forward)
-            return nil
+
+            switch event.phase {
+            case .began:
+                self.swipeAccumulatedDeltaX = 0
+                return nil
+            case .changed:
+                self.swipeAccumulatedDeltaX += event.scrollingDeltaX
+                return nil
+            case .ended:
+                let dx = self.swipeAccumulatedDeltaX
+                self.swipeAccumulatedDeltaX = 0
+                // Threshold is on total swipe distance, not per-event sample.
+                if abs(dx) > 30 {
+                    self.paginationEngine?.handleKeyDown(dx > 0 ? .backward : .forward)
+                }
+                return nil
+            default:
+                guard event.momentumPhase.isEmpty else { return nil } // swallow momentum
+                // No phase at all: legacy mouse wheel. Keep the old per-event
+                // deadzone behavior since there's no .began/.changed/.ended
+                // gesture to accumulate here.
+                let delta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) ? event.scrollingDeltaX : event.scrollingDeltaY
+                guard abs(delta) > 2 else { return nil }
+                self.paginationEngine?.handleKeyDown(delta > 0 ? .backward : .forward)
+                return nil
+            }
         }
     }
 
     private func removeScrollWheelMonitor() {
         if let monitor = scrollWheelMonitor { NSEvent.removeMonitor(monitor) }
         scrollWheelMonitor = nil
+        swipeAccumulatedDeltaX = 0
+    }
+
+    // MARK: - Keyboard navigation monitor (paginated mode only)
+    //
+    // WebKit applies its own default keyboard-scroll action for Left/Right
+    // directly in the web content process whenever :root has overflow-x: scroll
+    // (required for column layout) — independent of the AppKit responder chain.
+    // That native handling runs regardless of what ReaderWebView.keyDown (a
+    // plain subclass override) does, producing a visible horizontal nudge on top
+    // of — or instead of — the intended column snap. A local NSEvent monitor
+    // sees the key event before it is ever dispatched to the web view, so
+    // returning nil here reliably prevents WebKit's native handling from running
+    // at all. ReaderWebView.keyDown still handles vertical paging in scroll mode
+    // (no competing native horizontal-scroll handler there); this monitor only
+    // acts in paginated mode.
+
+    private func installKeyDownMonitor() {
+        guard keyDownMonitor == nil else { return }
+        keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.currentMode == .paginated, event.window === self.view.window else { return event }
+            guard let responder = self.view.window?.firstResponder as? NSView,
+                  responder.isDescendant(of: self.view) else { return event }
+
+            switch event.keyCode {
+            case 123, 126, 116: // ← ↑ Page Up
+                guard !event.isARepeat else { return nil }
+                self.paginationEngine?.handleKeyDown(.backward)
+                return nil
+            case 124, 125, 121: // → ↓ Page Down
+                guard !event.isARepeat else { return nil }
+                self.paginationEngine?.handleKeyDown(.forward)
+                return nil
+            default:
+                return event
+            }
+        }
+    }
+
+    private func removeKeyDownMonitor() {
+        if let monitor = keyDownMonitor { NSEvent.removeMonitor(monitor) }
+        keyDownMonitor = nil
     }
 
     // MARK: - Resize (paginated mode only)
