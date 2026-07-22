@@ -1,0 +1,49 @@
+name: Build DMG
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
+      - name: Build Release
+        run: |
+          xcodebuild \
+            -project Honeycrisp.xcodeproj \
+            -target Honeycrisp \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+
+      - name: Locate .app
+        id: locate
+        run: |
+          APP_PATH=$(find build/Build/Products/Release -maxdepth 1 -name "*.app" | head -n 1)
+          echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Ad-hoc codesign
+        run: codesign --force --deep --sign - "${{ steps.locate.outputs.app_path }}"
+
+      - name: Create DMG
+        run: |
+          mkdir -p dmg-staging
+          cp -R "${{ steps.locate.outputs.app_path }}" dmg-staging/
+          ln -s /Applications dmg-staging/Applications
+          hdiutil create -volname "Honeycrisp" \
+            -srcfolder dmg-staging \
+            -ov -format UDZO \
+            Honeycrisp.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Honeycrisp-dmg
+          path: Honeycrisp.dmg
