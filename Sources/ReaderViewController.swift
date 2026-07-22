@@ -62,6 +62,11 @@ final class ReaderViewController: NSViewController {
     /// intermediate value while a slider/stepper is being dragged).
     private var structuralSettingsDebounceTimer: Timer?
 
+    /// Periodic position save while a book is open (mirrors Ambrosia's saveTimer) —
+    /// belt-and-suspenders alongside the debounced-scroll save, so a reader who
+    /// stops scrolling and just sits reading still gets saved periodically.
+    private var positionSaveTimer: Timer?
+
     // MARK: - View Lifecycle
 
     override func loadView() {
@@ -84,6 +89,7 @@ final class ReaderViewController: NSViewController {
         webView.readerViewController = self
 
         cfg.userContentController.add(ProgressMessageHandler(owner: self), name: "progressHandler")
+        cfg.userContentController.add(PositionMessageHandler(owner: self), name: "positionHandler")
 
         loadingIndicator = NSProgressIndicator()
         loadingIndicator.style = .spinning
@@ -187,9 +193,15 @@ final class ReaderViewController: NSViewController {
         view.window?.makeFirstResponder(webView)
     }
 
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        flushPositionSave()
+    }
+
     deinit {
         searchDebounceTimer?.invalidate()
         structuralSettingsDebounceTimer?.invalidate()
+        positionSaveTimer?.invalidate()
         securityScopedURL?.stopAccessingSecurityScopedResource()
         NotificationCenter.default.removeObserver(self)
     }
@@ -232,6 +244,7 @@ final class ReaderViewController: NSViewController {
                     self.tocSidebar.load(entries: tocEntries)
                     self.renderCurrentContent()
                     self.showLoading(false)
+                    self.startPositionSaveTimer()
                 }
             } catch {
                 DispatchQueue.main.async { [weak self] in
@@ -373,7 +386,16 @@ final class ReaderViewController: NSViewController {
     @objc private func scheduleStructuralReload() {
         structuralSettingsDebounceTimer?.invalidate()
         structuralSettingsDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
-            self?.renderCurrentContent()
+            guard let self, let url = self.currentEPUBURL else { self?.renderCurrentContent(); return }
+            // Capture current position first so restoreSavedPositionIfAvailable (fired
+            // from the reload's own didFinish) lands back where the reader actually
+            // was, not wherever they were the last time the book was opened.
+            self.webView.evaluateJavaScript("window.honeycrispCurrentCharacterOffset ? window.honeycrispCurrentCharacterOffset() : 0") { result, _ in
+                if let offset = result as? Int {
+                    HistoryManager.shared.updatePosition(url: url, spineIndex: 0, characterOffset: offset)
+                }
+                self.renderCurrentContent()
+            }
         }
     }
 
@@ -396,6 +418,48 @@ final class ReaderViewController: NSViewController {
     func didReceiveProgress(_ percent: Int) {
         guard let url = currentEPUBURL else { return }
         HistoryManager.shared.updateProgress(url: url, percent: percent)
+    }
+
+    // MARK: - Position save/restore
+
+    /// spineIndex is always 0 for now — scroll mode merges the whole book into one
+    /// document, so there's only one "spine item" to speak of. Paginated mode
+    /// (Patch 0007) is what gives this a real per-spine-item meaning.
+    func didReceivePosition(_ offset: Int) {
+        guard let url = currentEPUBURL else { return }
+        HistoryManager.shared.updatePosition(url: url, spineIndex: 0, characterOffset: offset)
+    }
+
+    private func startPositionSaveTimer() {
+        positionSaveTimer?.invalidate()
+        positionSaveTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            self?.flushPositionSave()
+        }
+    }
+
+    /// Best-effort synchronous-as-possible flush: queries the current offset via JS
+    /// and saves it immediately, rather than waiting for the next debounced-scroll or
+    /// periodic tick. Called when a reader closes the window or navigates away —
+    /// without this, quitting mid-page loses however much time elapsed since the
+    /// last periodic tick.
+    func flushPositionSave() {
+        guard let url = currentEPUBURL else { return }
+        webView.evaluateJavaScript("window.honeycrispCurrentCharacterOffset ? window.honeycrispCurrentCharacterOffset() : 0") { [weak self] result, _ in
+            guard let offset = result as? Int else { return }
+            HistoryManager.shared.updatePosition(url: url, spineIndex: 0, characterOffset: offset)
+            self?.positionSaveTimer?.invalidate()
+        }
+    }
+
+    /// Called after the reader HTML finishes loading. If a saved offset exists for
+    /// this URL, seeks to it; otherwise leaves the book at the top, matching current
+    /// (never-restores) behaviour for first opens.
+    private func restoreSavedPositionIfAvailable() {
+        guard let url = currentEPUBURL,
+              let saved = HistoryManager.shared.savedPosition(for: url),
+              saved.characterOffset > 0
+        else { return }
+        webView.evaluateJavaScript("window.honeycrispNavigateToOffset(\(saved.characterOffset));", completionHandler: nil)
     }
 
     // MARK: - Navigation
@@ -566,6 +630,7 @@ extension ReaderViewController: WKNavigationDelegate {
         // saved values — apply them now via the same path settings changes use, so
         // there's one definition of "what the CSS vars should be", not two.
         applyCosmeticCSSUpdate()
+        restoreSavedPositionIfAvailable()
     }
 }
 
@@ -672,6 +737,16 @@ private class ProgressMessageHandler: NSObject, WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let pct = message.body as? Int else { return }
         owner?.didReceiveProgress(pct)
+    }
+}
+
+private class PositionMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var owner: ReaderViewController?
+    init(owner: ReaderViewController) { self.owner = owner }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let offset = message.body as? Int else { return }
+        owner?.didReceivePosition(offset)
     }
 }
 

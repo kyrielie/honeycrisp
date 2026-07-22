@@ -97,6 +97,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
+        readerViewController.flushPositionSave()
         ReaderWindowController.openWindows.removeAll { $0 === self }
     }
 }
