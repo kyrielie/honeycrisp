@@ -167,6 +167,9 @@ final class EPUBParser: NSObject {
         viewportWidth: CGFloat,
         viewportHeight: CGFloat,
         colsPerScreen: ColsPerScreen,
+        maxWidth: CGFloat = 700,
+        paddingH: CGFloat = 24,
+        paddingV: CGFloat = 24,
         formatFirstChapter: Bool = false,
         removeParagraphIndents: Bool = false
     ) throws -> String {
@@ -181,7 +184,8 @@ final class EPUBParser: NSObject {
             + "\n</section>\n"
 
         let columnCSS = Self.paginatedColumnCSS(
-            viewportWidth: viewportWidth, viewportHeight: viewportHeight, colsPerScreen: colsPerScreen
+            viewportWidth: viewportWidth, viewportHeight: viewportHeight, colsPerScreen: colsPerScreen,
+            marginH: paddingH, marginV: paddingV, maxWidth: maxWidth
         )
 
         return """
@@ -205,15 +209,14 @@ final class EPUBParser: NSObject {
     /// Horizontal CSS multi-column layout, ported from Ambrosia's
     /// ReaderPreferences.paginatedColumnCSS. Column geometry math and comments kept
     /// as-is — these are empirical WebKit-version-specific fixes, not style
-    /// choices. Ambrosia's own `paddingH`/`paddingV`/`maxWidth` reading-preference
-    /// inputs don't exist in Honeycrisp; fixed constants matching Ambrosia's
-    /// defaults are used instead (24pt horizontal/vertical margin, 700pt single-
-    /// column max width) since Honeycrisp has no equivalent preference to read them
-    /// from yet.
-    private static func paginatedColumnCSS(viewportWidth: CGFloat, viewportHeight: CGFloat, colsPerScreen: ColsPerScreen) -> String {
-        let marginH: CGFloat = 24
-        let marginV: CGFloat = 24
-        let maxWidth: CGFloat = 700
+    /// choices. marginH/marginV/maxWidth now come from SettingsManager's
+    /// paddingH/paddingV/maxWidth, read by the caller (ReaderViewController.
+    /// loadSpineItem) and passed through buildPageHTML — see the appearance-
+    /// settings merge pass.
+    private static func paginatedColumnCSS(
+        viewportWidth: CGFloat, viewportHeight: CGFloat, colsPerScreen: ColsPerScreen,
+        marginH: CGFloat, marginV: CGFloat, maxWidth: CGFloat
+    ) -> String {
         let cols = colsPerScreen.rawValue
 
         let vw = Int(viewportWidth.rounded())
@@ -595,6 +598,9 @@ final class EPUBParser: NSObject {
         --reader-bg: transparent;
         --reader-text: var(--system-text);
         --reader-line-height: 1.6;
+        --reader-max-width: 700px;
+        --reader-padding-h: 24px;
+        --reader-link-pointer-events: none;
         --system-text: CanvasText;
     }
 
@@ -640,7 +646,7 @@ final class EPUBParser: NSObject {
         max-width: 100%;
     }
     
-    #content { width: 100%; max-width: 720px; margin: 0 auto; padding: 28px 32px 48px; }
+    #content { width: 100%; max-width: var(--reader-max-width); margin: 0 auto; padding: 28px var(--reader-padding-h) 48px; }
     .ql-chapter { margin: 40px 0; }
     .ql-chapter + .ql-chapter {
         border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
@@ -669,7 +675,7 @@ final class EPUBParser: NSObject {
         word-break: break-all;
     }
     
-    a { color: -apple-system-blue; }
+    a { color: -apple-system-blue; pointer-events: var(--reader-link-pointer-events); }
     
     * { 
         font-family: inherit !important; 

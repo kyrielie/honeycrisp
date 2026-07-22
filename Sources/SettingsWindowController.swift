@@ -5,7 +5,9 @@
 //  • AppearanceSettingsViewController: custom font import replaced with
 //    native macOS NSFontPanel; CustomFontStore kept as internal storage but
 //    the "Import Font…" button is gone — users pick from installed system fonts
-//  • ReaderFont.custom now always refers to the font chosen via NSFontPanel
+//  • Font family is now a free-form CSS stack (SettingsManager.fontFamily);
+//    the font popup offers named presets plus "Custom…", and NSFontPanel
+//    writes its picked font into fontFamily directly
 //  • "Format first chapter" checkbox renamed to "Format for AO3"
 //  • CustomFontStore and its disk-copy logic are retained so existing persisted
 //    custom font names continue to work, but are no longer populated by file import
@@ -129,6 +131,7 @@ final class GeneralSettingsViewController: NSViewController {
 final class AppearanceSettingsViewController: NSViewController {
 
     private var fontPopup: NSPopUpButton!
+    private var fontFamilyField: NSTextField!   // free-form CSS font-family stack entry
     private var fontPickerButton: NSButton!     // opens NSFontPanel (replaces import button)
     private var themePopup: NSPopUpButton!
     private var bgColorWell: NSColorWell!
@@ -137,9 +140,19 @@ final class AppearanceSettingsViewController: NSViewController {
     private var fontSizeStepper: NSStepper!
     private var fontSizeLabel: NSTextField!
     private var presetsRow: NSStackView!
+    private var maxWidthStepper: NSStepper!
+    private var maxWidthLabel: NSTextField!
+    private var paddingHStepper: NSStepper!
+    private var paddingHLabel: NSTextField!
+    private var paddingVStepper: NSStepper!
+    private var paddingVLabel: NSTextField!
+    private var linkClicksCheckbox: NSButton!
 
-    /// The currently previewed font name when .custom is selected
+    /// The currently previewed font name when the NSFontPanel is used
     private var pickedFontName: String = SettingsManager.shared.customFontName
+
+    /// Index of the synthetic "Custom…" item, appended after all presets.
+    private var customFontPopupIndex: Int { FontPresets.all.count }
 
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 300))
@@ -153,14 +166,26 @@ final class AppearanceSettingsViewController: NSViewController {
         // Font row
         stack.addArrangedSubview(makeRow(label: "Font:", control: makeFontPopup()))
 
-        // Font picker button — visible only when .custom is selected
+        // Free-form CSS font-family entry — visible only when "Custom…" is
+        // selected. fontFamily is a plain string, not a fixed enum (Ambrosia-
+        // style), so any CSS font stack the user types is accepted as-is.
+        fontFamilyField = NSTextField(string: SettingsManager.shared.fontFamily)
+        fontFamilyField.target = self
+        fontFamilyField.action = #selector(fontFamilyFieldChanged(_:))
+        fontFamilyField.placeholderString = "e.g. Georgia, serif"
+        fontFamilyField.widthAnchor.constraint(equalToConstant: 280).isActive = true
+        fontFamilyField.isHidden = FontPresets.all.contains { $0.cssStack == SettingsManager.shared.fontFamily }
+        stack.addArrangedSubview(fontFamilyField)
+
+        // Font picker button — an alternative to typing a stack by hand;
+        // picking a font here overwrites fontFamily with its PostScript name
+        // and switches the popup to "Custom…".
         fontPickerButton = NSButton(
             title: pickedFontName.isEmpty ? "Choose Font…" : pickedFontName,
             target: self,
             action: #selector(openFontPanel(_:))
         )
         fontPickerButton.bezelStyle = .rounded
-        fontPickerButton.isHidden = SettingsManager.shared.currentFont != .custom
         stack.addArrangedSubview(fontPickerButton)
 
         // Separator
@@ -203,6 +228,31 @@ final class AppearanceSettingsViewController: NSViewController {
         // Line height
         stack.addArrangedSubview(makeRow(label: "Line Height:", control: makeLineHeightSlider()))
 
+        // Separator
+        let sep3 = NSBox()
+        sep3.boxType = .separator
+        stack.addArrangedSubview(sep3)
+
+        // Reading-column width / margins (ported from Ambrosia's maxWidth/
+        // paddingH/paddingV — Honeycrisp previously hardcoded these)
+        stack.addArrangedSubview(makeRow(label: "Max Width:", control: makeMaxWidthStepper()))
+        stack.addArrangedSubview(makeRow(label: "Horizontal Margin:", control: makePaddingHStepper()))
+        stack.addArrangedSubview(makeRow(label: "Vertical Margin:", control: makePaddingVStepper()))
+
+        // Allow link clicks (ported from Ambrosia)
+        linkClicksCheckbox = NSButton(
+            checkboxWithTitle: "Allow link clicks",
+            target: self,
+            action: #selector(linkClicksChanged(_:))
+        )
+        linkClicksCheckbox.state = SettingsManager.shared.allowReaderLinkClicks ? .on : .off
+        stack.addArrangedSubview(linkClicksCheckbox)
+
+        // Reset to defaults (ported from Ambrosia's isReaderCustomized pattern)
+        let resetButton = NSButton(title: "Reset to Defaults", target: self, action: #selector(resetToDefaults(_:)))
+        resetButton.bezelStyle = .rounded
+        stack.addArrangedSubview(resetButton)
+
         root.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
@@ -219,11 +269,22 @@ final class AppearanceSettingsViewController: NSViewController {
 
     private func makeFontPopup() -> NSPopUpButton {
         fontPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 200, height: 26), pullsDown: false)
-        fontPopup.addItems(withTitles: ReaderFont.allCases.map { $0.displayName })
-        fontPopup.selectItem(at: SettingsManager.shared.currentFont.rawValue)
+        fontPopup.addItems(withTitles: FontPresets.all.map { $0.label } + ["Custom…"])
+        selectFontPopupItem(forCurrentFontFamily: SettingsManager.shared.fontFamily)
         fontPopup.target = self
         fontPopup.action = #selector(fontChanged(_:))
         return fontPopup
+    }
+
+    /// Selects the preset item matching `family`'s CSS stack exactly, or the
+    /// "Custom…" item if `family` doesn't match any known preset (a
+    /// hand-typed stack, or one written by the NSFontPanel).
+    private func selectFontPopupItem(forCurrentFontFamily family: String) {
+        if let idx = FontPresets.all.firstIndex(where: { $0.cssStack == family }) {
+            fontPopup.selectItem(at: idx)
+        } else {
+            fontPopup.selectItem(at: customFontPopupIndex)
+        }
     }
 
     private func makeThemePopup() -> NSPopUpButton {
@@ -296,6 +357,75 @@ final class AppearanceSettingsViewController: NSViewController {
         return row
     }
 
+    private func makeMaxWidthStepper() -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 6
+
+        let stepper = NSStepper()
+        stepper.minValue = 320
+        stepper.maxValue = 1400
+        stepper.increment = 20
+        stepper.integerValue = SettingsManager.shared.maxWidth
+        stepper.target = self
+        stepper.action = #selector(maxWidthStepperChanged(_:))
+        maxWidthStepper = stepper
+
+        let label = NSTextField(labelWithString: "\(SettingsManager.shared.maxWidth)px")
+        label.font = NSFont.systemFont(ofSize: 13)
+        maxWidthLabel = label
+
+        row.addArrangedSubview(stepper)
+        row.addArrangedSubview(label)
+        return row
+    }
+
+    private func makePaddingHStepper() -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 6
+
+        let stepper = NSStepper()
+        stepper.minValue = 0
+        stepper.maxValue = 120
+        stepper.increment = 4
+        stepper.integerValue = SettingsManager.shared.paddingH
+        stepper.target = self
+        stepper.action = #selector(paddingHStepperChanged(_:))
+        paddingHStepper = stepper
+
+        let label = NSTextField(labelWithString: "\(SettingsManager.shared.paddingH)px")
+        label.font = NSFont.systemFont(ofSize: 13)
+        paddingHLabel = label
+
+        row.addArrangedSubview(stepper)
+        row.addArrangedSubview(label)
+        return row
+    }
+
+    private func makePaddingVStepper() -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 6
+
+        let stepper = NSStepper()
+        stepper.minValue = 0
+        stepper.maxValue = 120
+        stepper.increment = 4
+        stepper.integerValue = SettingsManager.shared.paddingV
+        stepper.target = self
+        stepper.action = #selector(paddingVStepperChanged(_:))
+        paddingVStepper = stepper
+
+        let label = NSTextField(labelWithString: "\(SettingsManager.shared.paddingV)px")
+        label.font = NSFont.systemFont(ofSize: 13)
+        paddingVLabel = label
+
+        row.addArrangedSubview(stepper)
+        row.addArrangedSubview(label)
+        return row
+    }
+
     private func makeRow(label text: String, control: NSView) -> NSStackView {
         makeRow(label: NSTextField(labelWithString: text), control: control)
     }
@@ -331,9 +461,22 @@ final class AppearanceSettingsViewController: NSViewController {
     // MARK: - Actions
 
     @objc private func fontChanged(_ sender: NSPopUpButton) {
-        guard let font = ReaderFont(rawValue: sender.indexOfSelectedItem) else { return }
-        SettingsManager.shared.currentFont = font
-        fontPickerButton.isHidden = font != .custom
+        let idx = sender.indexOfSelectedItem
+        if idx < FontPresets.all.count {
+            SettingsManager.shared.fontFamily = FontPresets.all[idx].cssStack
+            fontFamilyField.isHidden = true
+        } else {
+            // "Custom…" selected — keep whatever fontFamily already is (hand-
+            // typed or NSFontPanel-picked) and reveal the free-form field.
+            fontFamilyField.stringValue = SettingsManager.shared.fontFamily
+            fontFamilyField.isHidden = false
+        }
+    }
+
+    @objc private func fontFamilyFieldChanged(_ sender: NSTextField) {
+        let value = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        SettingsManager.shared.fontFamily = value
     }
 
     /// Opens the native macOS font picker panel.
@@ -358,7 +501,11 @@ final class AppearanceSettingsViewController: NSViewController {
         let psName = newFont.fontName   // PostScript name, usable in CSS
         pickedFontName = psName
         SettingsManager.shared.customFontName = psName
+        SettingsManager.shared.fontFamily = "'\(psName)', sans-serif"
         fontPickerButton.title = newFont.displayName ?? psName
+        fontFamilyField.stringValue = SettingsManager.shared.fontFamily
+        fontFamilyField.isHidden = false
+        selectFontPopupItem(forCurrentFontFamily: SettingsManager.shared.fontFamily)
     }
 
     @objc private func themeChanged(_ sender: NSPopUpButton) {
@@ -383,6 +530,48 @@ final class AppearanceSettingsViewController: NSViewController {
     @objc private func fontSizeStepperChanged(_ sender: NSStepper) {
         SettingsManager.shared.fontSizePercent = sender.integerValue
         fontSizeLabel.stringValue = "\(SettingsManager.shared.fontSizePercent)%"
+    }
+
+    @objc private func maxWidthStepperChanged(_ sender: NSStepper) {
+        SettingsManager.shared.maxWidth = sender.integerValue
+        maxWidthLabel.stringValue = "\(SettingsManager.shared.maxWidth)px"
+    }
+
+    @objc private func paddingHStepperChanged(_ sender: NSStepper) {
+        SettingsManager.shared.paddingH = sender.integerValue
+        paddingHLabel.stringValue = "\(SettingsManager.shared.paddingH)px"
+    }
+
+    @objc private func paddingVStepperChanged(_ sender: NSStepper) {
+        SettingsManager.shared.paddingV = sender.integerValue
+        paddingVLabel.stringValue = "\(SettingsManager.shared.paddingV)px"
+    }
+
+    @objc private func linkClicksChanged(_ sender: NSButton) {
+        SettingsManager.shared.allowReaderLinkClicks = sender.state == .on
+    }
+
+    /// Resets every reader appearance/layout setting to its default and
+    /// refreshes every control in this tab to match — mirrors Ambrosia's
+    /// isReaderCustomized/resetReaderToDefaults pattern.
+    @objc private func resetToDefaults(_ sender: NSButton) {
+        SettingsManager.shared.resetReaderToDefaults()
+
+        selectFontPopupItem(forCurrentFontFamily: SettingsManager.shared.fontFamily)
+        fontFamilyField.stringValue = SettingsManager.shared.fontFamily
+        fontFamilyField.isHidden = FontPresets.all.contains { $0.cssStack == SettingsManager.shared.fontFamily }
+        themePopup?.selectItem(at: SettingsManager.shared.currentTheme.rawValue)
+        lineHeightSlider.doubleValue = SettingsManager.shared.lineHeight
+        fontSizeStepper.integerValue = SettingsManager.shared.fontSizePercent
+        fontSizeLabel.stringValue = "\(SettingsManager.shared.fontSizePercent)%"
+        maxWidthStepper.integerValue = SettingsManager.shared.maxWidth
+        maxWidthLabel.stringValue = "\(SettingsManager.shared.maxWidth)px"
+        paddingHStepper.integerValue = SettingsManager.shared.paddingH
+        paddingHLabel.stringValue = "\(SettingsManager.shared.paddingH)px"
+        paddingVStepper.integerValue = SettingsManager.shared.paddingV
+        paddingVLabel.stringValue = "\(SettingsManager.shared.paddingV)px"
+        linkClicksCheckbox.state = SettingsManager.shared.allowReaderLinkClicks ? .on : .off
+        updateColorWellsVisibility()
     }
 
     /// Prompts for a name via an NSAlert with an accessory text field (Honeycrisp has

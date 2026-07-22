@@ -352,6 +352,9 @@ final class ReaderViewController: NSViewController {
                 from: pkg, spineIndex: index,
                 viewportWidth: bounds.width, viewportHeight: bounds.height,
                 colsPerScreen: SettingsManager.shared.colsPerScreen,
+                maxWidth: CGFloat(SettingsManager.shared.maxWidth),
+                paddingH: CGFloat(SettingsManager.shared.paddingH),
+                paddingV: CGFloat(SettingsManager.shared.paddingV),
                 formatFirstChapter: format, removeParagraphIndents: removeIndents
             )
             let indexURL = pkg.rootFolder.appendingPathComponent(Self.readerHTMLFilename)
@@ -522,10 +525,13 @@ final class ReaderViewController: NSViewController {
           if (!el) return;
           el.textContent = ':root {' +
             '--reader-font-size:\(s.fontSizePercent)%;' +
-            '--reader-font-family:\(s.currentFont.cssValue);' +
+            '--reader-font-family:\(s.fontFamily);' +
             '--reader-bg:\(s.effectiveBackgroundCSS);' +
             '--reader-text:\(s.effectiveTextCSS);' +
             '--reader-line-height:\(s.lineHeight);' +
+            '--reader-max-width:\(s.maxWidth)px;' +
+            '--reader-padding-h:\(s.paddingH)px;' +
+            '--reader-link-pointer-events:\(s.allowReaderLinkClicks ? "auto" : "none");' +
           '}';
         })();
         """

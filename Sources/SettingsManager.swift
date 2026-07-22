@@ -9,31 +9,36 @@ import AppKit
 
 // MARK: - Models
 
-enum ReaderFont: Int, CaseIterable {
-    case sfPro = 0
-    case serif
-    case monospace
-    case custom          // PostScript name stored in SettingsManager.customFontName
+/// A named font-family CSS stack offered in the Appearance settings font
+/// popup as a quick-recall shortcut — distinct from the free-form
+/// `SettingsManager.fontFamily` string the same way `SavedTheme` is distinct
+/// from `customBackgroundCSS`/`customTextCSS`. Replaces the old fixed
+/// `ReaderFont` enum (ported from Ambrosia's `ReaderPreferences.FontPreset`).
+struct FontPreset: Identifiable {
+    let id: String
+    let label: String
+    let cssStack: String
+}
 
-    var displayName: String {
-        switch self {
-        case .sfPro:      return "System (SF Pro)"
-        case .serif:      return "Serif (New York)"
-        case .monospace:  return "Monospace"
-        case .custom:     return "Custom…"
-        }
-    }
+enum FontPresets {
+    static let all: [FontPreset] = [
+        FontPreset(id: "system",    label: "System (SF Pro)",  cssStack: "ui-sans-serif, -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif"),
+        FontPreset(id: "newyork",   label: "Serif (New York)", cssStack: "ui-serif, Georgia, serif"),
+        FontPreset(id: "monospace", label: "Monospace",        cssStack: "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace"),
+        FontPreset(id: "iowan",     label: "Iowan Old Style",  cssStack: "\"Iowan Old Style\", Georgia, serif"),
+        FontPreset(id: "georgia",   label: "Georgia",          cssStack: "Georgia, serif"),
+        FontPreset(id: "palatino",  label: "Palatino",         cssStack: "Palatino, 'Palatino Linotype', serif"),
+        FontPreset(id: "times",     label: "Times New Roman",  cssStack: "'Times New Roman', Times, serif"),
+        FontPreset(id: "charter",   label: "Charter",          cssStack: "Charter, Georgia, serif"),
+        FontPreset(id: "avenir",    label: "Avenir Next",      cssStack: "'Avenir Next', Avenir, sans-serif"),
+        FontPreset(id: "seravek",   label: "Seravek",          cssStack: "Seravek, 'Gill Sans', sans-serif"),
+        FontPreset(id: "courier",   label: "Courier New",      cssStack: "'Courier New', Courier, monospace"),
+    ]
 
-    var cssValue: String {
-        switch self {
-        case .sfPro:     return "ui-sans-serif, -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif"
-        case .serif:     return "ui-serif, Georgia, serif"
-        case .monospace: return "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace"
-        case .custom:
-            let name = SettingsManager.shared.customFontName
-            return name.isEmpty ? "ui-sans-serif, sans-serif" : "'\(name)', sans-serif"
-        }
-    }
+    /// Falls back to the first preset (System/SF Pro) rather than a second
+    /// hardcoded literal elsewhere, so there's one definition of "the default
+    /// font stack".
+    static var defaultStack: String { all[0].cssStack }
 }
 
 enum ReaderTheme: Int, CaseIterable {
@@ -115,15 +120,40 @@ final class SettingsManager {
 
     // MARK: Font
 
-    var currentFont: ReaderFont {
-        get { ReaderFont(rawValue: defaults.integer(forKey: "readerFont")) ?? .sfPro }
-        set { defaults.set(newValue.rawValue, forKey: "readerFont"); notifyCosmeticChange() }
+    /// Free-form CSS font-family stack (Ambrosia-style) — replaces the old
+    /// fixed `ReaderFont` enum. Migrates a legacy `readerFont` raw value (the
+    /// old enum's 0-3 range) into an equivalent CSS stack the first time this
+    /// is read, so existing users don't silently lose their chosen font on
+    /// upgrade.
+    var fontFamily: String {
+        get {
+            if let stored = defaults.string(forKey: "readerFontFamily") { return stored }
+            if defaults.object(forKey: "readerFont") != nil {
+                return Self.migrateLegacyFontFamily(defaults: defaults)
+            }
+            return FontPresets.defaultStack
+        }
+        set { defaults.set(newValue, forKey: "readerFontFamily"); notifyCosmeticChange() }
     }
 
-    /// PostScript name of the font chosen via NSFontPanel
+    /// PostScript name of the font most recently chosen via NSFontPanel — kept
+    /// only so the panel can pre-select the same font next time it's opened;
+    /// the CSS stack actually applied lives in `fontFamily`.
     var customFontName: String {
         get { defaults.string(forKey: "readerCustomFontName") ?? "" }
-        set { defaults.set(newValue, forKey: "readerCustomFontName"); notifyCosmeticChange() }
+        set { defaults.set(newValue, forKey: "readerCustomFontName") }
+    }
+
+    private static func migrateLegacyFontFamily(defaults: UserDefaults) -> String {
+        switch defaults.integer(forKey: "readerFont") {
+        case 1: return FontPresets.all.first { $0.id == "newyork" }?.cssStack ?? FontPresets.defaultStack
+        case 2: return FontPresets.all.first { $0.id == "monospace" }?.cssStack ?? FontPresets.defaultStack
+        case 3:
+            let name = defaults.string(forKey: "readerCustomFontName") ?? ""
+            return name.isEmpty ? FontPresets.defaultStack : "'\(name)', sans-serif"
+        default:
+            return FontPresets.defaultStack
+        }
     }
 
     // MARK: Theme
@@ -222,6 +252,58 @@ final class SettingsManager {
         set { defaults.set(newValue.rawValue, forKey: "readerColsPerScreen"); notifyStructuralChange() }
     }
 
+    // MARK: Reading-column geometry (ported from Ambrosia's ReaderPreferences)
+    //
+    // Structural, not cosmetic: in paginated mode these feed EPUBParser.
+    // paginatedColumnCSS, which bakes fixed-px column geometry into the loaded
+    // HTML computed against the current viewport — a live CSS-variable patch
+    // can't retarget that, so a change requires the same full spine reload a
+    // resize does. Scroll mode's #content also reads maxWidth/paddingH live via
+    // CSS variables (see EPUBParser.readerVarsCSS), so scroll-mode readers get
+    // the debounced reload rather than an instant patch, but never see stale
+    // geometry.
+
+    /// Reading-column max width in points. Default (700) matches the constant
+    /// EPUBParser.paginatedColumnCSS previously hardcoded.
+    var maxWidth: Int {
+        get {
+            let stored = defaults.integer(forKey: "readerMaxWidth")
+            return stored == 0 ? 700 : stored
+        }
+        set { defaults.set(max(320, min(1400, newValue)), forKey: "readerMaxWidth"); notifyStructuralChange() }
+    }
+
+    /// Horizontal reading margin in points. Default (24) matches the constant
+    /// previously hardcoded in EPUBParser.paginatedColumnCSS. 0 is a valid
+    /// margin, so presence (not value) of the stored default is what's checked.
+    var paddingH: Int {
+        get {
+            defaults.object(forKey: "readerPaddingH") == nil ? 24 : defaults.integer(forKey: "readerPaddingH")
+        }
+        set { defaults.set(max(0, min(120, newValue)), forKey: "readerPaddingH"); notifyStructuralChange() }
+    }
+
+    /// Vertical reading margin in points (paginated mode only — scroll mode's
+    /// vertical spacing comes from #content's own fixed top/bottom padding).
+    /// Default (24) matches the constant previously hardcoded in
+    /// EPUBParser.paginatedColumnCSS.
+    var paddingV: Int {
+        get {
+            defaults.object(forKey: "readerPaddingV") == nil ? 24 : defaults.integer(forKey: "readerPaddingV")
+        }
+        set { defaults.set(max(0, min(120, newValue)), forKey: "readerPaddingV"); notifyStructuralChange() }
+    }
+
+    /// Whether in-book links are clickable. Off by default, matching Ambrosia —
+    /// most in-EPUB links are internal cross-references (footnotes, TOC) that
+    /// are more often accidental-click hazards than useful navigation in a
+    /// reader that already has its own TOC sidebar. Purely a CSS
+    /// pointer-events toggle, so this is cosmetic, not structural.
+    var allowReaderLinkClicks: Bool {
+        get { defaults.bool(forKey: "readerAllowLinkClicks") }
+        set { defaults.set(newValue, forKey: "readerAllowLinkClicks"); notifyCosmeticChange() }
+    }
+
     // MARK: Saved theme presets
 
     /// JSON-array-in-UserDefaults, same pattern as HistoryManager.entries.
@@ -238,6 +320,36 @@ final class SettingsManager {
             }
             notifyChange()
         }
+    }
+
+    // MARK: - Reset to defaults (Appearance tab)
+
+    /// True only when at least one reader appearance/layout setting differs
+    /// from its default — mirrors Ambrosia's `isReaderCustomized`, so the
+    /// "Reset to Defaults" button is inert rather than an always-live
+    /// destructive action. Saved theme presets are deliberately excluded,
+    /// same as Ambrosia's `savedThemes` — there's no "default" preset list to
+    /// reset to.
+    var isReaderCustomized: Bool {
+        fontFamily != FontPresets.defaultStack
+            || currentTheme != .system
+            || lineHeight != 1.6
+            || fontSizePercent != 100
+            || maxWidth != 700
+            || paddingH != 24
+            || paddingV != 24
+            || allowReaderLinkClicks != false
+    }
+
+    func resetReaderToDefaults() {
+        fontFamily = FontPresets.defaultStack
+        currentTheme = .system
+        lineHeight = 1.6
+        fontSizePercent = 100
+        maxWidth = 700
+        paddingH = 24
+        paddingV = 24
+        allowReaderLinkClicks = false
     }
 
     // MARK: -
