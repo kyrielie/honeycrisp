@@ -74,6 +74,11 @@ enum ReaderTheme: Int, CaseIterable {
     }
 }
 
+enum ReadingMode: Int, CaseIterable {
+    case scroll    = 0
+    case paginated = 1
+}
+
 /// A named custom background/text color pair, saved on top of `.custom`. Distinct
 /// from `ReaderTheme`'s fixed built-ins — presets are just quick-recall shortcuts for
 /// `customBackgroundCSS`/`customTextCSS`.
@@ -200,6 +205,21 @@ final class SettingsManager {
     var removeParagraphIndents: Bool {
         get { defaults.bool(forKey: "readerRemoveParagraphIndents") }
         set { defaults.set(newValue, forKey: "readerRemoveParagraphIndents"); notifyStructuralChange() }
+    }
+
+    // MARK: Pagination
+
+    /// Global default for which mode a reader window opens in. Deliberately not
+    /// per-book — every window opens in whatever the current global default is,
+    /// not read from or written to HistoryEntry.
+    var defaultReadingMode: ReadingMode {
+        get { ReadingMode(rawValue: defaults.integer(forKey: "readerDefaultReadingMode")) ?? .scroll }
+        set { defaults.set(newValue.rawValue, forKey: "readerDefaultReadingMode"); notifyStructuralChange() }
+    }
+
+    var colsPerScreen: ColsPerScreen {
+        get { ColsPerScreen(rawValue: defaults.integer(forKey: "readerColsPerScreen")) ?? .one }
+        set { defaults.set(newValue.rawValue, forKey: "readerColsPerScreen"); notifyStructuralChange() }
     }
 
     // MARK: Saved theme presets

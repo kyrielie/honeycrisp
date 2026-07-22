@@ -26,6 +26,18 @@ final class ReaderViewController: NSViewController {
 
     private var currentPackage: EPUBPackage?
     private var currentEPUBURL: URL?
+
+    // MARK: - Pagination state (Patch 0007)
+
+    /// Initialized from SettingsManager.shared.defaultReadingMode when a book is
+    /// loaded — deliberately not read from or written to HistoryEntry. Every
+    /// window opens in whatever the current global default is.
+    private(set) var currentMode: ReadingMode = .scroll
+    private var paginationEngine: PaginationEngine?
+    private var currentSpineIndex: Int = 0
+    private var scrollWheelMonitor: Any?
+    private var resizeDebounceTimer: Timer?
+    private var pendingPaginatedRestorePosition: RestorePosition = .start
     private var securityScopedURL: URL?
 
     private static let readerHTMLFilename = "_ql_reader.html"
@@ -53,6 +65,7 @@ final class ReaderViewController: NSViewController {
     /// Weak refs to toolbar controls that need state updates
     private weak var floatButton: NSButton?
     private weak var historyButton: NSButton?
+    private weak var readingModeButton: NSButton?
     private weak var titleLabel: NSTextField?   // centered title in toolbar
 
     /// Debounce timer for search input
@@ -88,8 +101,12 @@ final class ReaderViewController: NSViewController {
         webView.setValue(false, forKey: "drawsBackground")
         webView.readerViewController = self
 
+        paginationEngine = PaginationEngine(webView: webView)
+
         cfg.userContentController.add(ProgressMessageHandler(owner: self), name: "progressHandler")
         cfg.userContentController.add(PositionMessageHandler(owner: self), name: "positionHandler")
+        cfg.userContentController.add(PageActionMessageHandler(owner: self), name: "pageAction")
+        cfg.userContentController.add(PositionUpdateMessageHandler(owner: self), name: "positionUpdate")
 
         loadingIndicator = NSProgressIndicator()
         loadingIndicator.style = .spinning
@@ -125,6 +142,9 @@ final class ReaderViewController: NSViewController {
             webView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
             webView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
+        // enclosingScrollView is nil until now that webView is in the hierarchy.
+        // Scrollbar visibility itself is set per-mode by applyScrollbarVisibility,
+        // called once currentMode is known (loadEPUB / toggleReadingMode).
 
         // Search bar overlay (hidden initially)
         searchBarVC = SearchBarViewController()
@@ -191,17 +211,21 @@ final class ReaderViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         view.window?.makeFirstResponder(webView)
+        if currentMode == .paginated { installScrollWheelMonitorIfNeeded() }
     }
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
         flushPositionSave()
+        removeScrollWheelMonitor()
     }
 
     deinit {
         searchDebounceTimer?.invalidate()
         structuralSettingsDebounceTimer?.invalidate()
         positionSaveTimer?.invalidate()
+        resizeDebounceTimer?.invalidate()
+        if let monitor = scrollWheelMonitor { NSEvent.removeMonitor(monitor) }
         securityScopedURL?.stopAccessingSecurityScopedResource()
         NotificationCenter.default.removeObserver(self)
     }
@@ -242,6 +266,19 @@ final class ReaderViewController: NSViewController {
                     self.setToolbarTitle(title)
                     HistoryManager.shared.record(url: url, title: pkg.title)
                     self.tocSidebar.load(entries: tocEntries)
+
+                    self.currentMode = SettingsManager.shared.defaultReadingMode
+                    self.applyScrollbarVisibility()
+                    self.updateReadingModeButton()
+                    if self.currentMode == .paginated {
+                        self.installScrollWheelMonitorIfNeeded()
+                        if let saved = HistoryManager.shared.savedPosition(for: url) {
+                            self.currentSpineIndex = min(saved.spineIndex, max(0, pkg.spineURLs.count - 1))
+                            self.pendingPaginatedRestorePosition = saved.characterOffset > 0
+                                ? .characterOffset(saved.characterOffset) : .start
+                        }
+                    }
+
                     self.renderCurrentContent()
                     self.showLoading(false)
                     self.startPositionSaveTimer()
@@ -257,6 +294,15 @@ final class ReaderViewController: NSViewController {
 
     private func renderCurrentContent() {
         guard let pkg = currentPackage else { return }
+        switch currentMode {
+        case .scroll:
+            renderScrollContent(pkg: pkg)
+        case .paginated:
+            loadSpineItem(index: currentSpineIndex, restorePosition: pendingPaginatedRestorePosition, pkg: pkg)
+        }
+    }
+
+    private func renderScrollContent(pkg: EPUBPackage) {
         do {
             let parser = EPUBParser()
             // "Format for AO3" maps to the same formatFirstChapter flag in SettingsManager
@@ -269,6 +315,103 @@ final class ReaderViewController: NSViewController {
         } catch {
             showError(error)
         }
+    }
+
+    /// Loads a single spine item in paginated mode, with the column layout CSS
+    /// baked into the HTML before load (never injected after, to avoid an
+    /// unstyled flash before repagination). `pendingRestorePosition` is applied by
+    /// `PaginationEngine.applyLayout` from `webView(_:didFinish:)`.
+    private func loadSpineItem(index: Int, restorePosition: RestorePosition, pkg: EPUBPackage) {
+        guard index >= 0 && index < pkg.spineURLs.count else { return }
+        currentSpineIndex = index
+        pendingPaginatedRestorePosition = restorePosition
+        do {
+            let parser = EPUBParser()
+            let format = SettingsManager.shared.formatFirstChapter
+            let removeIndents = SettingsManager.shared.removeParagraphIndents
+            let bounds = webView.bounds.isEmpty ? NSRect(x: 0, y: 0, width: 780, height: 920) : webView.bounds
+            let html = try parser.buildPageHTML(
+                from: pkg, spineIndex: index,
+                viewportWidth: bounds.width, viewportHeight: bounds.height,
+                colsPerScreen: SettingsManager.shared.colsPerScreen,
+                formatFirstChapter: format, removeParagraphIndents: removeIndents
+            )
+            let indexURL = pkg.rootFolder.appendingPathComponent(Self.readerHTMLFilename)
+            try html.write(to: indexURL, atomically: true, encoding: .utf8)
+            webView.loadFileURL(indexURL, allowingReadAccessTo: pkg.rootFolder)
+        } catch {
+            showError(error)
+        }
+    }
+
+    /// Called from PaginationEngine.spineNavigationHandler when a page turn runs
+    /// past the current spine item's last/first column.
+    private func navigateSpine(forward: Bool) {
+        guard let pkg = currentPackage else { return }
+        let next = currentSpineIndex + (forward ? 1 : -1)
+        guard next >= 0 && next < pkg.spineURLs.count else { return }
+        loadSpineItem(index: next, restorePosition: forward ? .start : .end, pkg: pkg)
+    }
+
+    // Paginated-mode position saves are unified with scroll mode's — see
+    // flushPositionSave and didReceivePositionUpdate, called after every column
+    // navigation, rather than a separate paginated-only scheme.
+
+    private func applyScrollbarVisibility() {
+        let scrollView = webView.enclosingScrollView
+        switch currentMode {
+        case .scroll:
+            scrollView?.hasVerticalScroller = true
+            scrollView?.hasHorizontalScroller = false
+            scrollView?.verticalScrollElasticity = .automatic
+            scrollView?.horizontalScrollElasticity = .none
+        case .paginated:
+            scrollView?.hasVerticalScroller = false
+            scrollView?.hasHorizontalScroller = false
+            scrollView?.verticalScrollElasticity = .none
+            scrollView?.horizontalScrollElasticity = .none
+        }
+    }
+
+    /// Wired to the View-menu "Paginated Mode" item (⇧⌘P) and the .readingModeToggle
+    /// toolbar button. Reloads the current content in the new mode at the
+    /// equivalent fraction-based position. Mode isn't persisted per-file — nothing
+    /// is written back to HistoryEntry here (SettingsManager.defaultReadingMode,
+    /// the global default, is untouched by this toggle too; it only flips this
+    /// window's currentMode for its current session).
+    @objc func toggleReadingMode(_ sender: Any?) {
+        guard let pkg = currentPackage else { return }
+        let goingTo: ReadingMode = currentMode == .scroll ? .paginated : .scroll
+
+        if goingTo == .paginated {
+            // Scroll mode's own progress fraction (scrollY / scrollHeight) becomes
+            // the paginated spine item's restore fraction. Spine index carries over
+            // as-is — scroll mode has no notion of "which spine item", so index 0
+            // (the merged document's start) is the only thing to hand off; this is
+            // an approximation, not lossless, since scroll mode's fraction is over
+            // the WHOLE book while paginated mode's fraction is over ONE spine item.
+            webView.evaluateJavaScript("(window.scrollY + window.innerHeight) / document.documentElement.scrollHeight") { [weak self] result, _ in
+                guard let self else { return }
+                self.currentMode = .paginated
+                self.applyScrollbarVisibility()
+                self.installScrollWheelMonitorIfNeeded()
+                self.updateReadingModeButton()
+                let fraction = (result as? Double) ?? 0
+                self.loadSpineItem(index: 0, restorePosition: .fraction(fraction), pkg: pkg)
+            }
+        } else {
+            currentMode = .scroll
+            applyScrollbarVisibility()
+            removeScrollWheelMonitor()
+            updateReadingModeButton()
+            renderScrollContent(pkg: pkg)
+        }
+    }
+
+    private func updateReadingModeButton() {
+        let isPaginated = currentMode == .paginated
+        readingModeButton?.contentTintColor = isPaginated ? .systemOrange : nil
+        readingModeButton?.toolTip = isPaginated ? "Scroll Mode" : "Paginated Mode"
     }
 
     // MARK: - Toolbar Title
@@ -422,12 +565,15 @@ final class ReaderViewController: NSViewController {
 
     // MARK: - Position save/restore
 
-    /// spineIndex is always 0 for now — scroll mode merges the whole book into one
-    /// document, so there's only one "spine item" to speak of. Paginated mode
-    /// (Patch 0007) is what gives this a real per-spine-item meaning.
+    /// spineIndex is 0 in scroll mode (the whole book is one merged document) and
+    /// currentSpineIndex in paginated mode. honeycrispCurrentCharacterOffset (Patch
+    /// 0005) is embedded in both buildScrollHTML's and buildPageHTML's readerJS, and
+    /// caretRangeFromPoint works the same regardless of which axis is scrolling, so
+    /// one save path serves both modes without a separate paginated-only offset
+    /// scheme.
     func didReceivePosition(_ offset: Int) {
         guard let url = currentEPUBURL else { return }
-        HistoryManager.shared.updatePosition(url: url, spineIndex: 0, characterOffset: offset)
+        HistoryManager.shared.updatePosition(url: url, spineIndex: currentSpineIndex, characterOffset: offset)
     }
 
     private func startPositionSaveTimer() {
@@ -441,19 +587,23 @@ final class ReaderViewController: NSViewController {
     /// and saves it immediately, rather than waiting for the next debounced-scroll or
     /// periodic tick. Called when a reader closes the window or navigates away —
     /// without this, quitting mid-page loses however much time elapsed since the
-    /// last periodic tick.
+    /// last periodic tick. Also called after every paginated column navigation
+    /// (via didReceivePositionUpdate), since PaginationJS's own scroll events don't
+    /// drive readerJS's debounced-scroll save path the way scroll mode's do.
     func flushPositionSave() {
         guard let url = currentEPUBURL else { return }
-        webView.evaluateJavaScript("window.honeycrispCurrentCharacterOffset ? window.honeycrispCurrentCharacterOffset() : 0") { [weak self] result, _ in
+        let spineIndex = currentSpineIndex
+        webView.evaluateJavaScript("window.honeycrispCurrentCharacterOffset ? window.honeycrispCurrentCharacterOffset() : 0") { result, _ in
             guard let offset = result as? Int else { return }
-            HistoryManager.shared.updatePosition(url: url, spineIndex: 0, characterOffset: offset)
-            self?.positionSaveTimer?.invalidate()
+            HistoryManager.shared.updatePosition(url: url, spineIndex: spineIndex, characterOffset: offset)
         }
     }
 
-    /// Called after the reader HTML finishes loading. If a saved offset exists for
-    /// this URL, seeks to it; otherwise leaves the book at the top, matching current
-    /// (never-restores) behaviour for first opens.
+    /// Called after the reader HTML finishes loading, in scroll mode only —
+    /// paginated mode's restore goes through PaginationEngine.applyLayout's
+    /// .characterOffset case instead (set up in loadEPUB/loadSpineItem). If a
+    /// saved offset exists for this URL, seeks to it; otherwise leaves the book at
+    /// the top, matching current (never-restores) behaviour for first opens.
     private func restoreSavedPositionIfAvailable() {
         guard let url = currentEPUBURL,
               let saved = HistoryManager.shared.savedPosition(for: url),
@@ -462,21 +612,95 @@ final class ReaderViewController: NSViewController {
         webView.evaluateJavaScript("window.honeycrispNavigateToOffset(\(saved.characterOffset));", completionHandler: nil)
     }
 
+    /// PaginationJS's qlNextPage/qlPrevPage post this when a page turn runs past
+    /// the current spine item's last/first column.
+    func didReceivePageAction(forward: Bool) {
+        navigateSpine(forward: forward)
+    }
+
+    /// PaginationJS posts this after every column navigation (page turn or
+    /// restore). Reuses the same flushPositionSave path scroll mode's debounced
+    /// scroll listener drives, rather than a separate paginated-only scheme.
+    func didReceivePositionUpdate() {
+        flushPositionSave()
+    }
+
     // MARK: - Navigation
 
     func handleKeyDown(_ event: NSEvent) {
-        switch event.keyCode {
-        case 123, 126, 116: scrollByPages(-1)
-        case 124, 125, 121: scrollByPages(1)
-        case 3 where event.modifierFlags.contains(.command): // ⌘F
-            toggleSearch(nil)
-        default: break
+        switch currentMode {
+        case .scroll:
+            switch event.keyCode {
+            case 123, 126, 116: scrollByPages(-1)
+            case 124, 125, 121: scrollByPages(1)
+            case 3 where event.modifierFlags.contains(.command): // ⌘F
+                toggleSearch(nil)
+            default: break
+            }
+        case .paginated:
+            // One physical keypress = one page turn — repeats from a held-down key
+            // are dropped rather than forwarded, matching Ambrosia's isARepeat guard.
+            // Page turns here are instant WKWebView scrolls (not scroll mode's
+            // animated smooth-scroll), so without this guard a held arrow key would
+            // very likely flicker; worth confirming against real hardware once built.
+            guard !event.isARepeat else { return }
+            switch event.keyCode {
+            case 123, 126: paginationEngine?.handleKeyDown(.backward)   // ← / ↑
+            case 124, 125: paginationEngine?.handleKeyDown(.forward)    // → / ↓
+            case 116: paginationEngine?.handleKeyDown(.backward)        // Page Up
+            case 121: paginationEngine?.handleKeyDown(.forward)         // Page Down
+            case 3 where event.modifierFlags.contains(.command): // ⌘F
+                toggleSearch(nil)
+            default: break
+            }
         }
     }
 
     private func scrollByPages(_ pages: Int) {
         let js = "window.scrollBy({ top: \(pages) * window.innerHeight, behavior: 'smooth' });"
         webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    // MARK: - Trackpad/scroll-wheel (paginated mode only)
+    //
+    // WKWebView's internal scroll machinery bypasses a plain scrollWheel(with:)
+    // override the same way it bypasses keyDown (see ReaderWebView.keyDown) — a
+    // local NSEvent monitor is the only reliable interception point.
+
+    private func installScrollWheelMonitorIfNeeded() {
+        guard scrollWheelMonitor == nil else { return }
+        scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, self.currentMode == .paginated, self.view.window?.isKeyWindow == true else { return event }
+            // Trackpad horizontal swipe and mouse-wheel vertical scroll both map to
+            // a page turn; a small deadzone avoids triggering on trackpad momentum
+            // noise around zero.
+            let delta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) ? event.scrollingDeltaX : event.scrollingDeltaY
+            guard abs(delta) > 2 else { return nil }
+            self.paginationEngine?.handleKeyDown(delta > 0 ? .backward : .forward)
+            return nil
+        }
+    }
+
+    private func removeScrollWheelMonitor() {
+        if let monitor = scrollWheelMonitor { NSEvent.removeMonitor(monitor) }
+        scrollWheelMonitor = nil
+    }
+
+    // MARK: - Resize (paginated mode only)
+    //
+    // Column CSS is baked into the HTML, so a resize requires a full spine reload
+    // with updated viewport geometry, not just re-running JS.
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        guard currentMode == .paginated, currentPackage != nil else { return }
+        resizeDebounceTimer?.invalidate()
+        resizeDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
+            guard let self, let pkg = self.currentPackage else { return }
+            self.paginationEngine?.currentFraction { fraction in
+                self.loadSpineItem(index: self.currentSpineIndex, restorePosition: .fraction(fraction), pkg: pkg)
+            }
+        }
     }
 
     // MARK: - Toolbar updates
@@ -526,6 +750,10 @@ final class ReaderViewController: NSViewController {
 
     @objc func openFile(_ sender: Any?) {
         (view.window?.windowController as? ReaderWindowController)?.showOpenPanel()
+    }
+
+    @objc private func readingModeToggleAction(_ sender: Any?) {
+        toggleReadingMode(sender)
     }
 
     @objc private func floatAction(_ sender: Any?) {
@@ -630,7 +858,13 @@ extension ReaderViewController: WKNavigationDelegate {
         // saved values — apply them now via the same path settings changes use, so
         // there's one definition of "what the CSS vars should be", not two.
         applyCosmeticCSSUpdate()
-        restoreSavedPositionIfAvailable()
+        switch currentMode {
+        case .scroll:
+            restoreSavedPositionIfAvailable()
+        case .paginated:
+            paginationEngine?.setColsPerScreen(SettingsManager.shared.colsPerScreen)
+            paginationEngine?.applyLayout(restorePosition: pendingPaginatedRestorePosition)
+        }
     }
 }
 
@@ -644,7 +878,7 @@ extension ReaderViewController: WKNavigationDelegate {
 extension ReaderViewController: NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.openFile, .flexibleSpace, .titleLabel, .flexibleSpace, .fontSize, .history, .floatToggle]
+        [.openFile, .flexibleSpace, .titleLabel, .flexibleSpace, .fontSize, .readingModeToggle, .history, .floatToggle]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -703,6 +937,14 @@ extension ReaderViewController: NSToolbarDelegate {
             item.label = "History"
             return item
 
+        case .readingModeToggle:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            let btn = makeToolbarButton(symbol: "rectangle.split.2x1", tooltip: "Paginated Mode", action: #selector(readingModeToggleAction(_:)))
+            readingModeButton = btn
+            item.view = btn
+            item.label = "Pages"
+            return item
+
         case .floatToggle:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             let btn = makeToolbarButton(symbol: "pin", tooltip: "Float on top", action: #selector(floatAction(_:)))
@@ -747,6 +989,37 @@ private class PositionMessageHandler: NSObject, WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let offset = message.body as? Int else { return }
         owner?.didReceivePosition(offset)
+    }
+}
+
+/// Receives `{ action: 'nextSpineItem' | 'prevSpineItem' }` from PaginationJS's
+/// qlNextPage/qlPrevPage when a page turn runs past the current spine item's
+/// last/first column.
+private class PageActionMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var owner: ReaderViewController?
+    init(owner: ReaderViewController) { self.owner = owner }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        // PaginationJS posts JSON.stringify({...}) — a String, not a dictionary.
+        guard let str = message.body as? String,
+              let data = str.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let action = dict["action"] as? String
+        else { return }
+        owner?.didReceivePageAction(forward: action == "nextSpineItem")
+    }
+}
+
+/// Receives `{ fraction, column, totalColumns }` from PaginationJS's
+/// _postPositionUpdate, posted after every column navigation (page turn or
+/// restore). Triggers a position save via the same flushPositionSave path scroll
+/// mode's debounced scroll listener drives.
+private class PositionUpdateMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var owner: ReaderViewController?
+    init(owner: ReaderViewController) { self.owner = owner }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        owner?.didReceivePositionUpdate()
     }
 }
 
@@ -813,5 +1086,6 @@ extension NSToolbarItem.Identifier {
     static let fontSize    = NSToolbarItem.Identifier("fontSize")
     static let history     = NSToolbarItem.Identifier("history")
     static let floatToggle = NSToolbarItem.Identifier("floatToggle")
+    static let readingModeToggle = NSToolbarItem.Identifier("readingModeToggle")
     // .toc, .search, .settings removed — now in menu bar only
 }
