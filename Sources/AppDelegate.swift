@@ -102,6 +102,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let fileMenu = NSMenu(title: "File")
         fileMenuItem.submenu = fileMenu
         fileMenu.addItem(NSMenuItem(title: "Open…", action: #selector(openDocumentAction), keyEquivalent: "o"))
+        // Standard AppKit responder-chain action — the correct way to make a
+        // window's built-in close button/behavior also reachable by keyboard, and
+        // what every other closable-window Mac app does. Not in RebindableAction:
+        // Close, like Quit and Settings, is a fixed system-level convention, not
+        // something users are offered a rebind row for.
+        fileMenu.addItem(NSMenuItem(title: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
 
         // ── View Menu ─────────────────────────────────────────────────────────
         let viewMenuItem = NSMenuItem()
