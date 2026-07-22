@@ -46,6 +46,7 @@ final class SettingsTabViewController: NSTabViewController {
             (GeneralSettingsViewController(),    "General",    "gear"),
             (AppearanceSettingsViewController(), "Appearance", "paintbrush"),
             (HistorySettingsViewController(),    "History",    "clock"),
+            (ShortcutsSettingsViewController(),  "Shortcuts",  "keyboard"),
         ]
 
         for (vc, label, symbol) in tabs {

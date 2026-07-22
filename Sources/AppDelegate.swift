@@ -21,6 +21,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             andEventID: AEEventID(kAEOpenDocuments)
         )
         setupMenus()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(syncMenuShortcuts),
+            name: .keyBindingsChanged, object: nil
+        )
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -153,6 +157,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         readingModeItem.keyEquivalentModifierMask = [.command, .shift]
         viewMenu.addItem(.separator())
         viewMenu.addItem(readingModeItem)
+
+        // Reflect any previously-saved rebinding immediately on launch, not only
+        // after the next change.
+        syncMenuShortcuts()
+    }
+
+    // MARK: - Live menu sync (Patch 0009)
+    //
+    // Matches items by their bound #selector (not by title — titles are for
+    // humans, selectors are stable). Honeycrisp builds its NSMenu directly in
+    // setupMenus(), so the actual action selector is available and is the more
+    // robust choice here than Ambrosia's title-match (Ambrosia's menu is
+    // SwiftUI-CommandMenu-generated, where titles are the only handle available).
+
+    @objc private func syncMenuShortcuts() {
+        guard let mainMenu = NSApp.mainMenu else { return }
+        let bindings = SettingsManager.shared.keyBindings
+        let selectorForAction: [RebindableAction: Selector] = [
+            .openFile: #selector(openDocumentAction),
+            .searchInBook: #selector(searchInBook),
+            .showTOC: #selector(showTOC),
+            .toggleFloat: #selector(ReaderWindowController.toggleFloat(_:)),
+            .toggleReadingMode: #selector(toggleReadingMode),
+        ]
+        // Invert once: selector -> binding, so the recursive walk below is a
+        // single dictionary lookup per item instead of re-scanning all five
+        // actions for every menu item.
+        var bindingForSelector: [Selector: KeyBinding] = [:]
+        for (action, selector) in selectorForAction {
+            if let binding = bindings[action] { bindingForSelector[selector] = binding }
+        }
+        applyBindings(bindingForSelector, to: mainMenu)
+    }
+
+    private func applyBindings(_ bindingForSelector: [Selector: KeyBinding], to menu: NSMenu) {
+        for item in menu.items {
+            if let action = item.action, let binding = bindingForSelector[action] {
+                item.keyEquivalent = binding.key
+                item.keyEquivalentModifierMask = binding.modifierFlags
+            }
+            if let submenu = item.submenu {
+                applyBindings(bindingForSelector, to: submenu)
+            }
+        }
     }
 
     // MARK: - Actions
