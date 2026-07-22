@@ -2,6 +2,7 @@
 // Parses EPUB files into structured content, adapted from the QuickLook plugin
 
 import Foundation
+import AppKit
 import ZIPFoundation
 
 struct EPUBPackage {
@@ -88,14 +89,17 @@ final class EPUBParser: NSObject {
 
         var coverURL: URL?
         let coverMeta = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='meta'][@name='cover']")) as? [XMLElement]
-        if let coverID = coverMeta?.first?.attribute(forName: "content")?.stringValue, let coverHref = hrefByID[coverID] {
-            let u = URL(fileURLWithPath: coverHref, relativeTo: rootFolder).standardizedFileURL
+        if let coverID = coverMeta?.first?.attribute(forName: "content")?.stringValue,
+            let coverHref = hrefByID[coverID] {
+            let decoded = coverHref.removingPercentEncoding ?? coverHref
+            let u = URL(fileURLWithPath: decoded, relativeTo: rootFolder).standardizedFileURL
             if FileManager.default.fileExists(atPath: u.path) { coverURL = u }
         }
         if coverURL == nil {
             for (id, href) in hrefByID {
                 if href.lowercased().contains("cover"), let mt = mediaTypeByID[id], mt.hasPrefix("image/") {
-                    let u = URL(fileURLWithPath: href, relativeTo: rootFolder).standardizedFileURL
+                    let decoded = href.removingPercentEncoding ?? href
+                    let u = URL(fileURLWithPath: decoded, relativeTo: rootFolder).standardizedFileURL
                     if FileManager.default.fileExists(atPath: u.path) { coverURL = u; break }
                 }
             }
@@ -110,7 +114,8 @@ final class EPUBParser: NSObject {
         }
 
         let spineURLs: [URL] = spineHrefs.compactMap { href in
-            let u = URL(fileURLWithPath: href, relativeTo: rootFolder).standardizedFileURL
+            let decoded = href.removingPercentEncoding ?? href
+            let u = URL(fileURLWithPath: decoded, relativeTo: rootFolder).standardizedFileURL
             return ["xhtml", "html", "htm"].contains(u.pathExtension.lowercased()) ? u : nil
         }
 
@@ -120,15 +125,17 @@ final class EPUBParser: NSObject {
 
     // MARK: - HTML building
 
-    func buildScrollHTML(from pkg: EPUBPackage) throws -> String {
+    func buildScrollHTML(from pkg: EPUBPackage, formatFirstChapter: Bool = false, removeParagraphIndents: Bool = false) throws -> String {
         var body = ""
         let base = pkg.rootFolder
-        for (i, url) in pkg.spineURLs.enumerated() {
-            let data = try Data(contentsOf: url)
-            let src = String(data: data, encoding: .utf8) ?? (String(data: data, encoding: .isoLatin1) ?? "")
-            let extracted = Self.extractBody(html: src)
-            body += "\n<section class=\"chapter\" id=\"ch\(i)\">\n"
-                 + Self.rewriteResourceURLs(in: extracted, base: base)
+        for i in pkg.spineURLs.indices {
+            let extracted = try Self.extractedChapterBody(
+                from: pkg, index: i, base: base,
+                formatFirstChapter: formatFirstChapter,
+                removeParagraphIndents: removeParagraphIndents
+            )
+            body += "\n<section class=\"ql-chapter\" id=\"chapter-\(i)\" data-chapter-index=\"\(i)\">\n"
+                 + extracted
                  + "\n</section>\n"
         }
 
@@ -138,13 +145,229 @@ final class EPUBParser: NSObject {
         <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style id="honeycrisp-vars">\(Self.readerVarsCSS)</style>
             <style>\(Self.readerCSS)</style>
         </head>
         <body>
         <div id="content">\(body)</div>
+        <script>\(Self.readerJS)</script>
         </body>
         </html>
         """
+    }
+
+    /// Paginated-mode counterpart to buildScrollHTML: one spine item's HTML, with
+    /// the column layout CSS baked in up front (never injected after load via
+    /// evaluateJavaScript — that's what avoids an unstyled flash before
+    /// repagination). Uses the same extractedChapterBody helper as buildScrollHTML,
+    /// so formatting behaviour can't drift between the two rendering modes.
+    func buildPageHTML(
+        from pkg: EPUBPackage,
+        spineIndex: Int,
+        viewportWidth: CGFloat,
+        viewportHeight: CGFloat,
+        colsPerScreen: ColsPerScreen,
+        formatFirstChapter: Bool = false,
+        removeParagraphIndents: Bool = false
+    ) throws -> String {
+        let base = pkg.rootFolder
+        let extracted = try Self.extractedChapterBody(
+            from: pkg, index: spineIndex, base: base,
+            formatFirstChapter: formatFirstChapter,
+            removeParagraphIndents: removeParagraphIndents
+        )
+        let body = "\n<section class=\"ql-chapter\" id=\"chapter-\(spineIndex)\" data-chapter-index=\"\(spineIndex)\">\n"
+            + extracted
+            + "\n</section>\n"
+
+        let columnCSS = Self.paginatedColumnCSS(
+            viewportWidth: viewportWidth, viewportHeight: viewportHeight, colsPerScreen: colsPerScreen
+        )
+
+        return """
+        <!doctype html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style id="honeycrisp-vars">\(Self.readerVarsCSS)</style>
+            <style>\(Self.readerCSS)</style>
+            <style>\(columnCSS)</style>
+        </head>
+        <body>
+        <div id="content">\(body)</div>
+        <script>\(Self.readerJS)</script>
+        </body>
+        </html>
+        """
+    }
+
+    /// Horizontal CSS multi-column layout, ported from Ambrosia's
+    /// ReaderPreferences.paginatedColumnCSS. Column geometry math and comments kept
+    /// as-is — these are empirical WebKit-version-specific fixes, not style
+    /// choices. Ambrosia's own `paddingH`/`paddingV`/`maxWidth` reading-preference
+    /// inputs don't exist in Honeycrisp; fixed constants matching Ambrosia's
+    /// defaults are used instead (24pt horizontal/vertical margin, 700pt single-
+    /// column max width) since Honeycrisp has no equivalent preference to read them
+    /// from yet.
+    private static func paginatedColumnCSS(viewportWidth: CGFloat, viewportHeight: CGFloat, colsPerScreen: ColsPerScreen) -> String {
+        let marginH: CGFloat = 24
+        let marginV: CGFloat = 24
+        let maxWidth: CGFloat = 700
+        let cols = colsPerScreen.rawValue
+
+        let vw = Int(viewportWidth.rounded())
+        let vh = Int(viewportHeight.rounded())
+        let marginHInt = Int(marginH.rounded())
+
+        // colWidth/colGap divide (vw - 2*marginH) — html's content box after its own
+        // padding is subtracted — not vw directly. See ReaderPreferences.paginatedColumnCSS
+        // in Ambrosia for the full column-fragmentation-vs-container-padding rationale;
+        // dividing vw itself here would double-subtract the margin.
+        let availableWidth = vw - 2 * marginHInt
+
+        var colGap = max(1, Int((marginH * 2).rounded()))
+        let colWidth: Int
+        if cols <= 1 {
+            colWidth = availableWidth
+        } else {
+            let raw = availableWidth + colGap
+            let overhang = raw % cols
+            if overhang != 0 { colGap += cols - overhang }
+            colWidth = (availableWidth + colGap) / cols - colGap
+        }
+
+        let capSingleColumn = cols <= 1 && maxWidth < CGFloat(availableWidth)
+        let bodyWidthCSS = capSingleColumn
+            ? "max-width: \(Int(maxWidth))px !important; margin: 0 auto !important;"
+            : "max-width: none !important; margin: 0 !important;"
+
+        return """
+        /* === Honeycrisp paginated layout === */
+        html {
+            /* :root is the column container and the scroll container.
+               Horizontal margin lives here (container-level padding — applies
+               once, at the true first/last column edge only). */
+            width: \(vw)px !important;
+            height: \(vh)px !important;
+            max-width: \(vw)px !important;
+            max-height: \(vh)px !important;
+            min-width: \(vw)px !important;
+            min-height: \(vh)px !important;
+            padding-left: \(marginHInt)px !important;
+            padding-right: \(marginHInt)px !important;
+            padding-top: \(Int(marginV))px !important;
+            padding-bottom: \(Int(marginV))px !important;
+            column-width: \(colWidth)px !important;
+            column-gap: \(colGap)px !important;
+            column-fill: auto !important;
+            overflow-x: scroll !important;
+            overflow-y: hidden !important;
+            scrollbar-width: none !important;
+            box-sizing: border-box !important;
+        }
+        html::-webkit-scrollbar { display: none !important; }
+        body {
+            /* body must NOT be the column container and must NOT carry padding on
+               either axis — its own max-width/margin (bodyWidthCSS) only
+               crops/centers the rendered text within each already-sized column. */
+            width: 100% !important;
+            \(bodyWidthCSS)
+            height: auto !important;
+            overflow: visible !important;
+            box-sizing: border-box !important;
+        }
+        /* Prevent the first element from creating a blank leading column */
+        body > *:first-child,
+        body > div:first-child > *:first-child {
+            break-before: avoid !important;
+        }
+        /* Long unbreakable inline runs (AO3 tag lists, dl/dd blocks, tables) can
+           force a column wider than column-width requests, throwing off every
+           column boundary after it (JS assumes a uniform pitch). Force wrapping
+           everywhere so no element can be wider than its column. */
+        * {
+            max-width: 100% !important;
+            overflow-wrap: break-word !important;
+            word-break: break-word !important;
+        }
+        """
+    }
+
+    /// Extracts and prepares the `<body>` content of a single spine item: strips the
+    /// surrounding `<body>` tag, applies AO3 formatting / paragraph-indent stripping /
+    /// preface-heading stripping as requested, then rewrites resource URLs to absolute
+    /// file URLs. Shared by `buildScrollHTML` (all spine items, merged) and, in a future
+    /// paginated-mode HTML builder, a single spine item at a time — kept as one code path
+    /// so the two rendering modes can't drift apart on formatting behaviour.
+    private static func extractedChapterBody(
+        from pkg: EPUBPackage,
+        index: Int,
+        base: URL,
+        formatFirstChapter: Bool,
+        removeParagraphIndents: Bool
+    ) throws -> String {
+        let url = pkg.spineURLs[index]
+        let data = try Data(contentsOf: url)
+        let src = String(data: data, encoding: .utf8) ?? (String(data: data, encoding: .isoLatin1) ?? "")
+        var extracted = Self.extractBody(html: src)
+
+        // Apply AO3 formatting to ALL chapters when enabled
+        if formatFirstChapter {
+            extracted = Self.applyFirstChapterFormatting(to: extracted)
+        }
+
+        if removeParagraphIndents {
+            extracted = Self.stripLeadingIndentWhitespace(extracted)
+        }
+
+        // AO3 EPUBs emit a redundant "Preface" heading on the first spine item;
+        // the spine item is the preface by definition once rendered here.
+        if index == 0 {
+            extracted = Self.stripPrefaceHeading(extracted)
+        }
+
+        return Self.rewriteResourceURLs(in: extracted, base: base)
+    }
+
+    /// Strips leading space/tab runs immediately inside paragraph-like elements — the
+    /// literal-whitespace equivalent of a `text-indent: 0` CSS override, for books that
+    /// fake first-line indentation with actual whitespace characters rather than CSS.
+    /// Scoped to `p, div, li` plus headings/blockquote/table cells, since those are
+    /// equally plausible homes for a converted-from-plaintext indent. Deliberately does
+    /// not touch `&nbsp;`-based fake indents — a different, separate pattern.
+    private static func stripLeadingIndentWhitespace(_ html: String) -> String {
+        html.replacingOccurrences(
+            of: #"(?i)(<(?:p|div|li|h[1-6]|blockquote|td|th)[^>]*>)[ \t]+"#,
+            with: "$1", options: .regularExpression)
+    }
+
+    /// Strips a redundant "Preface" heading (AO3 uses <h2 class="toc-heading"> in
+    /// practice, but the level varies; match h1-h6 with a backreference so only the
+    /// matching close tag is eaten). Only ever applied to spine index 0.
+    private static func stripPrefaceHeading(_ html: String) -> String {
+        html.replacingOccurrences(
+            of: #"<(h[1-6])[^>]*>\s*[Pp]reface\s*</\1>"#,
+            with: "", options: .regularExpression)
+    }
+
+    // MARK: - First Chapter Formatting Quirk
+
+    /// Hides `.toc-heading` h2 blocks and upsizes `.calibre2` bold elements to h2-scale.
+    private static func applyFirstChapterFormatting(to html: String) -> String {
+        // Hide toc-heading h2
+        var result = html.replacingOccurrences(
+            of: #"<h2[^>]*class="[^"]*toc-heading[^"]*"[^>]*>[\s\S]*?<\/h2>"#,
+            with: "",
+            options: .regularExpression
+        )
+        // Upsize calibre2 bold to h2 equivalent via inline style injection
+        result = result.replacingOccurrences(
+            of: #"(<b[^>]*class="[^"]*calibre2[^"]*"[^>]*)(>)"#,
+            with: #"$1 style="font-size:1.5em;font-weight:700;display:block;margin:0.5em 0;"$2"#,
+            options: .regularExpression
+        )
+        return result
     }
 
     private static func extractBody(html: String) -> String {
@@ -179,23 +402,220 @@ final class EPUBParser: NSObject {
         return out
     }
 
+    // MARK: - JS injected into reader page (progress reporting + TOC navigation)
+
+    static let readerJS = """
+    // ── Search ────────────────────────────────────────────────────────────────────
+
+    var _hits = [];
+    var _hitIdx = -1;
+
+    /**
+     * Highlight all occurrences of `term` across all chapter sections.
+     * Returns the total hit count (read by Swift via evaluateJavaScript).
+     */
+    window.searchText = function(term) {
+      // 1. Remove previous highlights
+      document.querySelectorAll('mark.ql-hit').forEach(function(m) {
+        var parent = m.parentNode;
+        parent.replaceChild(document.createTextNode(m.textContent), m);
+        parent.normalize();
+      });
+      _hits = [];
+      _hitIdx = -1;
+
+      if (!term || term.length < 2) return 0;
+
+      // 2. Walk all text nodes and wrap matches
+      var escapedTerm = term.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+      var re = new RegExp(escapedTerm, 'gi');
+
+      function walkNode(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          var text = node.textContent;
+          if (!re.test(text)) return;
+          re.lastIndex = 0;
+
+          var frag = document.createDocumentFragment();
+          var last = 0;
+          var m;
+          while ((m = re.exec(text)) !== null) {
+            frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+            var mark = document.createElement('mark');
+            mark.className = 'ql-hit';
+            mark.textContent = m[0];
+            frag.appendChild(mark);
+            _hits.push(mark);
+            last = re.lastIndex;
+          }
+          frag.appendChild(document.createTextNode(text.slice(last)));
+          node.parentNode.replaceChild(frag, node);
+        } else if (
+          node.nodeType === Node.ELEMENT_NODE &&
+          node.tagName !== 'SCRIPT' &&
+          node.tagName !== 'STYLE' &&
+          node.tagName !== 'MARK'
+        ) {
+          // Clone childNodes list to avoid live-collection mutation issues
+          Array.from(node.childNodes).forEach(walkNode);
+        }
+      }
+
+      walkNode(document.body);
+
+      // 3. Scroll first hit into view and mark it active
+      if (_hits.length > 0) {
+        _hitIdx = 0;
+        _activateHit(_hitIdx);
+      }
+
+      return _hits.length;
+    };
+
+    /**
+     * Advance (+1) or retreat (-1) through search results.
+     */
+    window.nextSearchResult = function(direction) {
+      if (_hits.length === 0) return;
+      _hits[_hitIdx].classList.remove('ql-active');
+      _hitIdx = (_hitIdx + direction + _hits.length) % _hits.length;
+      _activateHit(_hitIdx);
+    };
+
+    function _activateHit(idx) {
+      var hit = _hits[idx];
+      hit.classList.add('ql-active');
+      hit.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    // ── Chapter navigation ────────────────────────────────────────────────────────
+
+    window.navigateToChapter = function(idx) {
+      var sections = document.querySelectorAll('.ql-chapter');
+      if (idx >= 0 && idx < sections.length) {
+        sections[idx].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+
+    window.navigateToFragment = function(id) {
+      var el = document.getElementById(id) || document.querySelector('[name="' + id + '"]');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
+    // ── Reading progress ──────────────────────────────────────────────────────────
+
+    function reportProgress() {
+      var scrolled = window.scrollY + window.innerHeight;
+      var total    = document.documentElement.scrollHeight;
+      var pct      = total > 0 ? Math.round((scrolled / total) * 100) : 0;
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.progressHandler) {
+        window.webkit.messageHandlers.progressHandler.postMessage(Math.min(100, pct));
+      }
+    }
+
+    // ── Reading position (exact character offset) ─────────────────────────────────
+    //
+    // Offset contract: UTF-16 code units, counted via a TreeWalker(SHOW_TEXT) over
+    // document.body. honeycrispCurrentCharacterOffset (save side) and
+    // honeycrispNavigateToOffset (restore side) both walk document.body with the
+    // exact same TreeWalker construction, so they can't drift out of sync with
+    // each other — one contract, read on one side and written on the other.
+
+    var HONEYCRISP_POSITION_REFERENCE_Y = Math.round(window.innerHeight / 3);
+
+    window.honeycrispCurrentCharacterOffset = function() {
+      var x = Math.round(window.innerWidth / 2);
+      var y = HONEYCRISP_POSITION_REFERENCE_Y;
+      var range = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+      if (!range || !range.startContainer || range.startContainer.nodeType !== Node.TEXT_NODE) {
+        return Math.round((window.scrollY / Math.max(1, document.documentElement.scrollHeight)) * 1e6);
+      }
+      var target = range.startContainer;
+      var localOffset = range.startOffset;
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+      var count = 0, node;
+      while ((node = walker.nextNode()) !== null) {
+        if (node === target) return count + localOffset;
+        count += node.length;
+      }
+      return count;
+    };
+
+    window.honeycrispNavigateToOffset = function(targetOffset) {
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+      var count = 0, node, lastNode = null;
+      while ((node = walker.nextNode()) !== null) {
+        lastNode = node;
+        var nextCount = count + node.length;
+        if (targetOffset < nextCount) {
+          scrollNodeIntoPosition(node, targetOffset - count);
+          return;
+        }
+        count = nextCount;
+      }
+      // Offset is at or past the end of the document — land on the last text node.
+      if (lastNode) scrollNodeIntoPosition(lastNode, lastNode.length);
+
+      function scrollNodeIntoPosition(node, localOffset) {
+        localOffset = Math.max(0, Math.min(node.length, localOffset));
+        var range = document.createRange();
+        range.setStart(node, localOffset);
+        range.setEnd(node, localOffset);
+        var rect = range.getBoundingClientRect();
+        var targetY = window.scrollY + rect.top - HONEYCRISP_POSITION_REFERENCE_Y;
+        window.scrollTo(0, Math.max(0, targetY));
+      }
+    };
+
+    function reportPosition() {
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.positionHandler) {
+        window.webkit.messageHandlers.positionHandler.postMessage(window.honeycrispCurrentCharacterOffset());
+      }
+    }
+
+    window.addEventListener('scroll', function() {
+      clearTimeout(window._progressTimer);
+      window._progressTimer = setTimeout(function() {
+        reportProgress();
+        reportPosition();
+      }, 500);
+    }, { passive: true });
+    """
+
     // MARK: - CSS
 
-    static let readerCSS = """
+    /// The `:root` CSS custom properties, emitted into their own `<style id="honeycrisp-vars">`
+    /// element so `applyCosmeticCSSUpdate` (in ReaderViewController) can replace just this
+    /// element's textContent on a settings change, without touching the rest of the stylesheet.
+    static let readerVarsCSS = """
     :root {
         color-scheme: light dark;
         --reader-font-size: 100%;
         --reader-font-family: ui-sans-serif, -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
         --reader-bg: transparent;
         --reader-text: var(--system-text);
-        --system-text: CanvasText; /* Default standard web-safe text color */
+        --reader-line-height: 1.6;
+        --system-text: CanvasText;
     }
 
-    /* System theme handles dark mode automatically */
     @media (prefers-color-scheme: dark) {
-        :root { 
-            --system-text: #e8e0d4; /* FIX: Overrides system text color to be light in dark mode */
+        :root {
+            --system-text: #e8e0d4;
         }
+    }
+    """
+
+    static let readerCSS = """
+    /* Search highlight colours */
+    mark.ql-hit {
+        background: #FFEE58;
+        color: inherit;
+        border-radius: 2px;
+        padding: 0 1px;
+    }
+    mark.ql-hit.ql-active {
+        background: #FF9800;
+        outline: 2px solid #E65100;
     }
 
     html {
@@ -203,7 +623,7 @@ final class EPUBParser: NSObject {
         overflow-x: hidden;
         max-width: 100%;
         background-color: var(--reader-bg) !important;
-        font-size: var(--reader-font-size); /* FIX: Map the JS variable to root font-size */
+        font-size: var(--reader-font-size);
     }
     
     *, *::before, *::after { box-sizing: inherit; }
@@ -212,7 +632,7 @@ final class EPUBParser: NSObject {
         font-family: var(--reader-font-family) !important;
         color: var(--reader-text) !important;
         font-size: 1.1rem;
-        line-height: 1.6;
+        line-height: var(--reader-line-height);
         padding: 0;
         margin: 0;
         background: transparent;
@@ -221,8 +641,8 @@ final class EPUBParser: NSObject {
     }
     
     #content { width: 100%; max-width: 720px; margin: 0 auto; padding: 28px 32px 48px; }
-    .chapter { margin: 40px 0; }
-    .chapter + .chapter {
+    .ql-chapter { margin: 40px 0; }
+    .ql-chapter + .ql-chapter {
         border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
         padding-top: 40px;
     }
