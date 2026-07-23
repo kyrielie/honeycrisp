@@ -42,6 +42,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
         window.backgroundColor = NSColor.windowBackgroundColor
         window.isOpaque = true
         window.minSize = NSSize(width: 480, height: 500)
+        window.isRestorable = false
 
         window.setContentSize(NSSize(width: 980, height: 960))   // wider to accommodate sidebar
 
