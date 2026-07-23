@@ -965,19 +965,29 @@ final class ReaderViewController: NSViewController {
         (view.window?.windowController as? ReaderWindowController)?.showOpenPanel()
     }
 
-    /// Toolbar gear button — opens the same Settings window as the App menu's
-    /// "Settings…" (⌘,) item. Routed through the responder chain rather than
-    /// importing AppDelegate directly, matching how other cross-cutting actions
-    /// (e.g. Float on Top, ReaderWindowController.toggleFloat) are already
-    /// dispatched from this toolbar.
-    @objc private func openSettingsAction(_ sender: Any?) {
-        // NOTE: must NOT use NSApp.sendAction(_:to: nil, from:) here. That walks
-        // the responder chain by selector name, and this method's own selector
-        // ("openSettingsAction:") is identical to AppDelegate's, so the chain
-        // finds this method again before it ever reaches AppDelegate -- infinite
-        // self-recursion and a stack overflow. Target AppDelegate directly.
-        NSLog("[Honeycrisp][Settings] toolbar gear button tapped, forwarding to AppDelegate")
-        (NSApp.delegate as? AppDelegate)?.openSettingsAction(sender)
+    /// Toolbar gear button — shows a quick Apple-Books-style theme popover
+    /// rather than opening the full Settings window. The full Settings window
+    /// (SettingsWindowController) is now reachable only from the App menu's
+    /// "Settings…" (⌘,) item.
+    ///
+    /// This method is deliberately NOT named `openSettingsAction:`. AppDelegate
+    /// already implements a method with that exact selector, and the App menu's
+    /// "Settings…" item has a nil target, so it resolves its action by walking
+    /// the responder chain by selector name starting at the key window's first
+    /// responder. ReaderViewController sits in that chain (it's the reader
+    /// window's contentViewController, and a reader window is key almost
+    /// always), so a same-named method here would intercept the menu item
+    /// before the chain ever reached AppDelegate -- which is exactly why
+    /// "Ambrosia > Settings…" was a no-op even after the toolbar button itself
+    /// was fixed.
+    @objc private func showThemePopover(_ sender: NSButton) {
+        NSLog("[Honeycrisp][Settings] toolbar gear button tapped, showing theme popover")
+        let themeVC = ThemePopoverViewController()
+
+        let popover = NSPopover()
+        popover.contentViewController = themeVC
+        popover.behavior = .transient
+        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
     }
 
     @objc private func floatAction(_ sender: Any?) {
@@ -1102,16 +1112,18 @@ extension ReaderViewController: WKNavigationDelegate {
 
 // MARK: - NSToolbarDelegate
 //
-// Toolbar items:  [openFile] [flexibleSpace] [titleLabel] [flexibleSpace] [pageCount] [fontSize] [openSettings] [history] [floatToggle]
+// Toolbar items:  [openFile] [flexibleSpace] [titleLabel] [flexibleSpace] [pageCount] [fontSize] [themePopover] [history] [floatToggle]
 //
 // Removed vs original: .toc, .search, .readingModeToggle (moved into Settings' General tab)
 // Added:               .titleLabel (centered, truncated book title), .pageCount
-//                       (centered "page/pages · chapter/chapters"), .openSettings (gear icon)
+//                       (centered "page/pages · chapter/chapters"), .themePopover (gear icon;
+//                       quick Apple-Books-style theme switcher, popover only -- the full
+//                       Settings window is reachable only via the App menu's Settings… item)
 
 extension ReaderViewController: NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.openFile, .flexibleSpace, .titleLabel, .flexibleSpace, .pageCount, .fontSize, .openSettings, .history, .floatToggle]
+        [.openFile, .flexibleSpace, .titleLabel, .flexibleSpace, .pageCount, .fontSize, .themePopover, .history, .floatToggle]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -1185,11 +1197,11 @@ extension ReaderViewController: NSToolbarDelegate {
             item.label = ""
             return item
 
-        case .openSettings:
+        case .themePopover:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            let btn = makeToolbarButton(symbol: "gearshape", tooltip: "Settings…", action: #selector(openSettingsAction(_:)))
+            let btn = makeToolbarButton(symbol: "gearshape", tooltip: "Theme…", action: #selector(showThemePopover(_:)))
             item.view = btn
-            item.label = "Settings"
+            item.label = "Theme"
             return item
 
         case .floatToggle:
@@ -1363,6 +1375,6 @@ extension NSToolbarItem.Identifier {
     static let fontSize     = NSToolbarItem.Identifier("fontSize")
     static let history      = NSToolbarItem.Identifier("history")
     static let floatToggle  = NSToolbarItem.Identifier("floatToggle")
-    static let openSettings = NSToolbarItem.Identifier("openSettings")  // NEW: replaces readingModeToggle
+    static let themePopover = NSToolbarItem.Identifier("themePopover")  // NEW: replaces readingModeToggle; Apple-Books-style theme quick switcher
     // .toc, .search, .settings removed — now in menu bar only
 }
