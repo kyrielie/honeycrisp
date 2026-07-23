@@ -23,14 +23,16 @@ final class SettingsWindowController: NSWindowController {
     private init() {
         NSLog("[Honeycrisp][Settings] SettingsWindowController.init start")
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 380),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 420),
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Settings"
         window.center()
         window.isReleasedWhenClosed = false
+        window.minSize = NSSize(width: 420, height: 320)
+        window.maxSize = NSSize(width: 720, height: 900)
         super.init(window: window)
         NSLog("[Honeycrisp][Settings] SettingsWindowController.init: window created, assigning contentViewController")
         window.contentViewController = SettingsTabViewController()
@@ -198,6 +200,28 @@ final class GeneralSettingsViewController: NSViewController {
 }
 
 // MARK: - Appearance Settings
+//
+// Rewritten to fix several issues found in review:
+//  • The tab's content (18+ rows) was taller than the fixed, non-resizable
+//    Settings window and was never wrapped in a scroll view -- most of it was
+//    silently unreachable. Now wrapped in an NSScrollView (window is resizable
+//    too, see SettingsWindowController.init).
+//  • No live preview of the selected theme/font/colors existed. Added a fixed
+//    preview strip at the top, refreshed from the same call sites that already
+//    refresh color wells / labels.
+//  • Rows were separate NSStackView label/control pairs, so label column widths
+//    (and therefore where each control started) were inconsistent. Replaced
+//    with a single NSGridView so every row's control aligns in one column, with
+//    merged full-width rows as section headers (Typography / Colors / Layout).
+//  • The font-picker button (opens NSFontPanel) was always visible regardless
+//    of whether "Custom…" was selected. It's now hidden/shown alongside
+//    fontFamilyField, since they're both only relevant in Custom mode.
+//  • Stepper+label rows (font size, max width, h/v margin) were four
+//    near-identical copy-pasted factory methods; consolidated into one
+//    parameterized makeStepperRow(...).
+//  • Added accessibility labels/value descriptions to the steppers so
+//    VoiceOver announces units ("Font Size, 60 percent"), not just a bare
+//    number read from an adjacent, unassociated text field.
 
 final class AppearanceSettingsViewController: NSViewController {
 
@@ -219,6 +243,17 @@ final class AppearanceSettingsViewController: NSViewController {
     private var paddingVLabel: NSTextField!
     private var linkClicksCheckbox: NSButton!
 
+    private var previewBox: NSBox!
+    private var previewLabel: NSTextField!
+
+    private var grid: NSGridView!
+    private var fontFamilyFieldRow: NSGridRow!
+    private var fontPickerButtonRow: NSGridRow!
+    private var bgColorGridRow: NSGridRow!
+    private var textColorGridRow: NSGridRow!
+    private var presetsGridRow: NSGridRow!
+    private var savePresetGridRow: NSGridRow!
+
     /// The currently previewed font name when the NSFontPanel is used
     private var pickedFontName: String = SettingsManager.shared.customFontName
 
@@ -227,118 +262,136 @@ final class AppearanceSettingsViewController: NSViewController {
 
     override func loadView() {
         NSLog("[Honeycrisp][Settings] AppearanceSettingsViewController.loadView start")
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 300))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 420))
 
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 16
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        // ── Preview strip ────────────────────────────────────────────────────
+        previewBox = NSBox()
+        previewBox.boxType = .custom
+        previewBox.cornerRadius = 8
+        previewBox.borderWidth = 1
+        previewBox.borderColor = .separatorColor
+        previewBox.translatesAutoresizingMaskIntoConstraints = false
+        previewBox.heightAnchor.constraint(equalToConstant: 64).isActive = true
 
-        // Font row
-        stack.addArrangedSubview(makeRow(label: "Font:", control: makeFontPopup()))
+        previewLabel = NSTextField(wrappingLabelWithString: "The quick brown fox jumps over the lazy dog.")
+        previewLabel.alignment = .left
+        previewLabel.isEditable = false
+        previewLabel.isSelectable = false
+        previewLabel.isBezeled = false
+        previewLabel.drawsBackground = false
+        previewLabel.translatesAutoresizingMaskIntoConstraints = false
+        previewBox.contentView?.addSubview(previewLabel)
+        NSLayoutConstraint.activate([
+            previewLabel.leadingAnchor.constraint(equalTo: previewBox.contentView!.leadingAnchor, constant: 14),
+            previewLabel.trailingAnchor.constraint(equalTo: previewBox.contentView!.trailingAnchor, constant: -14),
+            previewLabel.centerYAnchor.constraint(equalTo: previewBox.contentView!.centerYAnchor),
+        ])
 
-        // Free-form CSS font-family entry — visible only when "Custom…" is
-        // selected. fontFamily is a plain string, not a fixed enum (Ambrosia-
-        // style), so any CSS font stack the user types is accepted as-is.
-        fontFamilyField = NSTextField(string: SettingsManager.shared.fontFamily)
-        fontFamilyField.target = self
-        fontFamilyField.action = #selector(fontFamilyFieldChanged(_:))
-        fontFamilyField.placeholderString = "e.g. Georgia, serif"
-        fontFamilyField.widthAnchor.constraint(equalToConstant: 280).isActive = true
-        fontFamilyField.isHidden = FontPresets.all.contains { $0.cssStack == SettingsManager.shared.fontFamily }
-        stack.addArrangedSubview(fontFamilyField)
+        // ── Form grid ────────────────────────────────────────────────────────
+        grid = NSGridView(numberOfColumns: 2, rows: 0)
+        grid.rowSpacing = 12
+        grid.columnSpacing = 12
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        grid.column(at: 0).xPlacement = .trailing
+        grid.column(at: 1).xPlacement = .leading
 
-        // Font picker button — an alternative to typing a stack by hand;
-        // picking a font here overwrites fontFamily with its PostScript name
-        // and switches the popup to "Custom…".
-        fontPickerButton = NSButton(
-            title: pickedFontName.isEmpty ? "Choose Font…" : pickedFontName,
-            target: self,
-            action: #selector(openFontPanel(_:))
-        )
-        fontPickerButton.bezelStyle = .rounded
-        stack.addArrangedSubview(fontPickerButton)
+        addSectionHeader("Typography", to: grid)
+        grid.addRow(with: [label("Font:"), makeFontPopup()])
+        fontFamilyFieldRow = grid.addRow(with: [NSGridCell.emptyContentView, makeFontFamilyField()])
+        fontPickerButtonRow = grid.addRow(with: [NSGridCell.emptyContentView, makeFontPickerButton()])
+        grid.addRow(with: [label("Font Size:"), makeFontSizeRow()])
+        grid.addRow(with: [label("Line Height:"), makeLineHeightSlider()])
 
-        // Separator
-        let sep = NSBox()
-        sep.boxType = .separator
-        stack.addArrangedSubview(sep)
-
-        // Theme row
-        stack.addArrangedSubview(makeRow(label: "Theme:", control: makeThemePopup()))
-
-        // Custom colour rows
-        let bgRow = makeColorRow(label: "Background:", colorWell: &bgColorWell, selector: #selector(bgColorChanged(_:)))
-        bgRow.identifier = NSUserInterfaceItemIdentifier("bgColorRow")
-        stack.addArrangedSubview(bgRow)
-
-        let textRow = makeColorRow(label: "Text Color:", colorWell: &textColorWell, selector: #selector(textColorChanged(_:)))
-        textRow.identifier = NSUserInterfaceItemIdentifier("textColorRow")
-        stack.addArrangedSubview(textRow)
-
-        // Saved presets — shown only when .custom is the active theme, same
-        // visibility rule as the color wells above.
+        addSectionHeader("Colors", to: grid)
+        grid.addRow(with: [label("Theme:"), makeThemePopup()])
+        bgColorWell = makeColorWell(action: #selector(bgColorChanged(_:)))
+        bgColorGridRow = grid.addRow(with: [label("Background:"), bgColorWell])
+        textColorWell = makeColorWell(action: #selector(textColorChanged(_:)))
+        textColorGridRow = grid.addRow(with: [label("Text Color:"), textColorWell])
         presetsRow = makePresetsRow()
-        presetsRow.identifier = NSUserInterfaceItemIdentifier("presetsRow")
-        stack.addArrangedSubview(presetsRow)
-
+        presetsGridRow = grid.addRow(with: [label("Presets:"), presetsRow])
         let savePresetButton = NSButton(title: "Save as Preset…", target: self, action: #selector(saveAsPreset(_:)))
         savePresetButton.bezelStyle = .rounded
-        savePresetButton.identifier = NSUserInterfaceItemIdentifier("savePresetButton")
-        stack.addArrangedSubview(savePresetButton)
+        savePresetGridRow = grid.addRow(with: [NSGridCell.emptyContentView, savePresetButton])
 
-        // Separator
-        let sep2 = NSBox()
-        sep2.boxType = .separator
-        stack.addArrangedSubview(sep2)
+        addSectionHeader("Layout", to: grid)
+        grid.addRow(with: [label("Max Width:"), makeMaxWidthRow()])
+        grid.addRow(with: [label("Horizontal Margin:"), makePaddingHRow()])
+        grid.addRow(with: [label("Vertical Margin:"), makePaddingVRow()])
 
-        // Font size — previously toolbar-only; Settings is the more discoverable
-        // home for a range control per HIG, and costs nothing to expose here too.
-        stack.addArrangedSubview(makeRow(label: "Font Size:", control: makeFontSizeStepper()))
-
-        // Line height
-        stack.addArrangedSubview(makeRow(label: "Line Height:", control: makeLineHeightSlider()))
-
-        // Separator
-        let sep3 = NSBox()
-        sep3.boxType = .separator
-        stack.addArrangedSubview(sep3)
-
-        // Reading-column width / margins (ported from Ambrosia's maxWidth/
-        // paddingH/paddingV — Honeycrisp previously hardcoded these)
-        stack.addArrangedSubview(makeRow(label: "Max Width:", control: makeMaxWidthStepper()))
-        stack.addArrangedSubview(makeRow(label: "Horizontal Margin:", control: makePaddingHStepper()))
-        stack.addArrangedSubview(makeRow(label: "Vertical Margin:", control: makePaddingVStepper()))
-
-        // Allow link clicks (ported from Ambrosia)
         linkClicksCheckbox = NSButton(
             checkboxWithTitle: "Allow link clicks",
             target: self,
             action: #selector(linkClicksChanged(_:))
         )
         linkClicksCheckbox.state = SettingsManager.shared.allowReaderLinkClicks ? .on : .off
-        stack.addArrangedSubview(linkClicksCheckbox)
+        grid.addRow(with: [NSGridCell.emptyContentView, linkClicksCheckbox])
 
-        // Reset to defaults (ported from Ambrosia's isReaderCustomized pattern)
         let resetButton = NSButton(title: "Reset to Defaults", target: self, action: #selector(resetToDefaults(_:)))
         resetButton.bezelStyle = .rounded
-        stack.addArrangedSubview(resetButton)
+        grid.addRow(with: [NSGridCell.emptyContentView, resetButton])
 
-        root.addSubview(stack)
+        // ── Scroll view (Appearance's content is taller than the window;
+        // this is the fix for the tab being unreachable below the fold) ──────
+        let formStack = NSStackView(views: [previewBox, grid])
+        formStack.orientation = .vertical
+        formStack.alignment = .leading
+        formStack.spacing = 16
+        formStack.translatesAutoresizingMaskIntoConstraints = false
+        previewBox.widthAnchor.constraint(equalTo: formStack.widthAnchor).isActive = true
+
+        let clipContainer = NSView()
+        clipContainer.translatesAutoresizingMaskIntoConstraints = false
+        clipContainer.addSubview(formStack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
+            formStack.topAnchor.constraint(equalTo: clipContainer.topAnchor, constant: 20),
+            formStack.leadingAnchor.constraint(equalTo: clipContainer.leadingAnchor, constant: 20),
+            formStack.trailingAnchor.constraint(equalTo: clipContainer.trailingAnchor, constant: -20),
+            formStack.bottomAnchor.constraint(equalTo: clipContainer.bottomAnchor, constant: -20),
+        ])
+
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.documentView = clipContainer
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        root.addSubview(scrollView)
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: root.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            // documentView's width tracks the scroll view's clip view, so only
+            // vertical scrolling happens; height is left to the stack's
+            // intrinsic content size, which is what makes scrolling work.
+            clipContainer.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
         ])
 
         self.view = root
 
-        updateColorWellsVisibility()
+        updateCustomModeVisibility()
+        updateColorRowsVisibility()
+        refreshPreview()
         NSLog("[Honeycrisp][Settings] AppearanceSettingsViewController.loadView done")
     }
 
     // MARK: - Control Factories
+
+    private func label(_ text: String) -> NSTextField {
+        NSTextField(labelWithString: text)
+    }
+
+    private func addSectionHeader(_ title: String, to grid: NSGridView) {
+        let header = NSTextField(labelWithString: title)
+        header.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        header.textColor = .secondaryLabelColor
+        let row = grid.addRow(with: [header, NSGridCell.emptyContentView])
+        row.mergeCells(in: NSRange(location: 0, length: 2))
+        row.topPadding = grid.numberOfRows == 1 ? 0 : 10
+    }
 
     private func makeFontPopup() -> NSPopUpButton {
         fontPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 200, height: 26), pullsDown: false)
@@ -347,6 +400,34 @@ final class AppearanceSettingsViewController: NSViewController {
         fontPopup.target = self
         fontPopup.action = #selector(fontChanged(_:))
         return fontPopup
+    }
+
+    private func makeFontFamilyField() -> NSTextField {
+        // Free-form CSS font-family entry — visible only when "Custom…" is
+        // selected. fontFamily is a plain string, not a fixed enum, so any CSS
+        // font stack the user types is accepted as-is.
+        let field = NSTextField(string: SettingsManager.shared.fontFamily)
+        field.target = self
+        field.action = #selector(fontFamilyFieldChanged(_:))
+        field.placeholderString = "e.g. Georgia, serif"
+        field.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        fontFamilyField = field
+        return field
+    }
+
+    private func makeFontPickerButton() -> NSButton {
+        // Alternative to typing a stack by hand; picking a font here overwrites
+        // fontFamily with its PostScript name and switches the popup to
+        // "Custom…". Only shown/hidden together with fontFamilyField (both are
+        // Custom-mode-only controls) -- see updateCustomModeVisibility().
+        let button = NSButton(
+            title: pickedFontName.isEmpty ? "Choose Font…" : pickedFontName,
+            target: self,
+            action: #selector(openFontPanel(_:))
+        )
+        button.bezelStyle = .rounded
+        fontPickerButton = button
+        return button
     }
 
     /// Selects the preset item matching `family`'s CSS stack exactly, or the
@@ -392,128 +473,107 @@ final class AppearanceSettingsViewController: NSViewController {
         return button
     }
 
-    private func makeColorRow(label text: String, colorWell: inout NSColorWell!, selector: Selector) -> NSStackView {
-        let label = NSTextField(labelWithString: text)
-        colorWell = NSColorWell()
-        colorWell.target = self
-        colorWell.action = selector
-        return makeRow(label: label, control: colorWell)
+    private func makeColorWell(action: Selector) -> NSColorWell {
+        let well = NSColorWell()
+        well.target = self
+        well.action = action
+        return well
     }
 
     private func makeLineHeightSlider() -> NSView {
         let slider = NSSlider(value: SettingsManager.shared.lineHeight, minValue: 1.2, maxValue: 2.4, target: self, action: #selector(lineHeightChanged(_:)))
         slider.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        slider.setAccessibilityLabel("Line Height")
         lineHeightSlider = slider
         return slider
     }
 
-    private func makeFontSizeStepper() -> NSView {
+    /// Single parameterized factory replacing four near-identical
+    /// stepper+label row builders (font size / max width / h margin / v
+    /// margin). Returns the row view; the stepper and label are handed back
+    /// via the completion closure so callers can retain references and wire
+    /// up their own @objc action selector (steppers need a concrete target
+    /// action, so the caller still owns that part).
+    private func makeStepperRow(
+        label accessibilityName: String,
+        min: Double, max: Double, increment: Double,
+        initialValue: Int, unit: String,
+        action: Selector,
+        stepper: inout NSStepper!, valueLabel: inout NSTextField!
+    ) -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
         row.spacing = 6
 
-        let stepper = NSStepper()
-        stepper.minValue = 50
-        stepper.maxValue = 300
-        stepper.increment = 10
-        stepper.integerValue = SettingsManager.shared.fontSizePercent
-        stepper.target = self
-        stepper.action = #selector(fontSizeStepperChanged(_:))
-        fontSizeStepper = stepper
+        let s = NSStepper()
+        s.minValue = min
+        s.maxValue = max
+        s.increment = increment
+        s.integerValue = initialValue
+        s.target = self
+        s.action = action
+        s.setAccessibilityLabel(accessibilityName)
+        s.setAccessibilityValueDescription("\(initialValue) \(unit)")
+        stepper = s
 
-        let label = NSTextField(labelWithString: "\(SettingsManager.shared.fontSizePercent)%")
-        label.font = NSFont.systemFont(ofSize: 13)
-        fontSizeLabel = label
+        let l = NSTextField(labelWithString: "\(initialValue)\(unit == "percent" ? "%" : "px")")
+        l.font = NSFont.systemFont(ofSize: 13)
+        valueLabel = l
 
-        row.addArrangedSubview(stepper)
-        row.addArrangedSubview(label)
+        row.addArrangedSubview(s)
+        row.addArrangedSubview(l)
         return row
     }
 
-    private func makeMaxWidthStepper() -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = 6
-
-        let stepper = NSStepper()
-        stepper.minValue = 320
-        stepper.maxValue = 1400
-        stepper.increment = 20
-        stepper.integerValue = SettingsManager.shared.maxWidth
-        stepper.target = self
-        stepper.action = #selector(maxWidthStepperChanged(_:))
-        maxWidthStepper = stepper
-
-        let label = NSTextField(labelWithString: "\(SettingsManager.shared.maxWidth)px")
-        label.font = NSFont.systemFont(ofSize: 13)
-        maxWidthLabel = label
-
-        row.addArrangedSubview(stepper)
-        row.addArrangedSubview(label)
-        return row
+    private func makeFontSizeRow() -> NSView {
+        makeStepperRow(
+            label: "Font Size", min: 50, max: 300, increment: 10,
+            initialValue: SettingsManager.shared.fontSizePercent, unit: "percent",
+            action: #selector(fontSizeStepperChanged(_:)),
+            stepper: &fontSizeStepper, valueLabel: &fontSizeLabel
+        )
     }
 
-    private func makePaddingHStepper() -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = 6
-
-        let stepper = NSStepper()
-        stepper.minValue = 0
-        stepper.maxValue = 120
-        stepper.increment = 4
-        stepper.integerValue = SettingsManager.shared.paddingH
-        stepper.target = self
-        stepper.action = #selector(paddingHStepperChanged(_:))
-        paddingHStepper = stepper
-
-        let label = NSTextField(labelWithString: "\(SettingsManager.shared.paddingH)px")
-        label.font = NSFont.systemFont(ofSize: 13)
-        paddingHLabel = label
-
-        row.addArrangedSubview(stepper)
-        row.addArrangedSubview(label)
-        return row
+    private func makeMaxWidthRow() -> NSView {
+        makeStepperRow(
+            label: "Max Width", min: 320, max: 1400, increment: 20,
+            initialValue: SettingsManager.shared.maxWidth, unit: "px",
+            action: #selector(maxWidthStepperChanged(_:)),
+            stepper: &maxWidthStepper, valueLabel: &maxWidthLabel
+        )
     }
 
-    private func makePaddingVStepper() -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = 6
-
-        let stepper = NSStepper()
-        stepper.minValue = 0
-        stepper.maxValue = 120
-        stepper.increment = 4
-        stepper.integerValue = SettingsManager.shared.paddingV
-        stepper.target = self
-        stepper.action = #selector(paddingVStepperChanged(_:))
-        paddingVStepper = stepper
-
-        let label = NSTextField(labelWithString: "\(SettingsManager.shared.paddingV)px")
-        label.font = NSFont.systemFont(ofSize: 13)
-        paddingVLabel = label
-
-        row.addArrangedSubview(stepper)
-        row.addArrangedSubview(label)
-        return row
+    private func makePaddingHRow() -> NSView {
+        makeStepperRow(
+            label: "Horizontal Margin", min: 0, max: 120, increment: 4,
+            initialValue: SettingsManager.shared.paddingH, unit: "px",
+            action: #selector(paddingHStepperChanged(_:)),
+            stepper: &paddingHStepper, valueLabel: &paddingHLabel
+        )
     }
 
-    private func makeRow(label text: String, control: NSView) -> NSStackView {
-        makeRow(label: NSTextField(labelWithString: text), control: control)
-    }
-
-    private func makeRow(label: NSView, control: NSView) -> NSStackView {
-        let row = NSStackView(views: [label, control])
-        row.orientation = .horizontal
-        row.spacing = 10
-        row.alignment = .centerY
-        return row
+    private func makePaddingVRow() -> NSView {
+        makeStepperRow(
+            label: "Vertical Margin", min: 0, max: 120, increment: 4,
+            initialValue: SettingsManager.shared.paddingV, unit: "px",
+            action: #selector(paddingVStepperChanged(_:)),
+            stepper: &paddingVStepper, valueLabel: &paddingVLabel
+        )
     }
 
     // MARK: - Visibility
 
-    private func updateColorWellsVisibility() {
+    /// fontFamilyField and fontPickerButton are both Custom-mode-only controls
+    /// (the preset popup and the font panel/free-text entry are alternative
+    /// ways to set the same fontFamily value) -- shown/hidden together rather
+    /// than the font-picker button always being visible regardless of mode.
+    private func updateCustomModeVisibility() {
+        let isCustomFont = !FontPresets.all.contains { $0.cssStack == SettingsManager.shared.fontFamily }
+        fontFamilyFieldRow.isHidden = !isCustomFont
+        fontPickerButtonRow.isHidden = !isCustomFont
+    }
+
+    private func updateColorRowsVisibility() {
         let isCustomTheme = SettingsManager.shared.currentTheme == .custom
         if let well = bgColorWell {
             well.color = SettingsManager.color(fromCSS: SettingsManager.shared.customBackgroundCSS)
@@ -521,14 +581,40 @@ final class AppearanceSettingsViewController: NSViewController {
         if let well = textColorWell {
             well.color = SettingsManager.color(fromCSS: SettingsManager.shared.customTextCSS)
         }
-        if let stack = view.subviews.first(where: { $0 is NSStackView }) as? NSStackView {
-            for sv in stack.arrangedSubviews {
-                if sv.identifier?.rawValue == "bgColorRow" || sv.identifier?.rawValue == "textColorRow"
-                    || sv.identifier?.rawValue == "presetsRow" || sv.identifier?.rawValue == "savePresetButton" {
-                    sv.isHidden = !isCustomTheme
-                }
-            }
+        bgColorGridRow.isHidden = !isCustomTheme
+        textColorGridRow.isHidden = !isCustomTheme
+        presetsGridRow.isHidden = !isCustomTheme
+        savePresetGridRow.isHidden = !isCustomTheme
+    }
+
+    /// Renders the current theme/font-size/line-height combination against a
+    /// line of real sample text, so the effect of a change is visible without
+    /// leaving Settings. Best-effort on the font: fontFamily is a CSS stack
+    /// (e.g. "Georgia, serif"), not directly usable as an NSFont name, so this
+    /// takes the first family name in the stack and falls back to the system
+    /// font if AppKit doesn't have a font by that name -- exact CSS font
+    /// resolution is WebKit's job when actually rendering the book.
+    private func refreshPreview() {
+        let theme = SettingsManager.shared.currentTheme
+        if theme == .system {
+            // cssBackground/cssText for .system are "transparent" and
+            // "var(--system-text)" -- valid CSS the book's WebKit view resolves
+            // itself, but not hex strings color(fromCSS:) can parse (it falls
+            // back to black for non-hex input, which would render as an
+            // unreadable black-on-black preview here).
+            previewBox.fillColor = .windowBackgroundColor
+            previewLabel.textColor = .labelColor
+        } else {
+            previewBox.fillColor = SettingsManager.color(fromCSS: theme.cssBackground)
+            previewLabel.textColor = SettingsManager.color(fromCSS: theme.cssText)
         }
+
+        let baseSize = 13.0 * Double(SettingsManager.shared.fontSizePercent) / 100.0
+        let firstFamily = SettingsManager.shared.fontFamily
+            .split(separator: ",").first?
+            .trimmingCharacters(in: CharacterSet(charactersIn: " '\"")) ?? ""
+        previewLabel.font = NSFont(name: firstFamily, size: CGFloat(baseSize))
+            ?? NSFont.systemFont(ofSize: CGFloat(baseSize))
     }
 
     // MARK: - Actions
@@ -537,19 +623,20 @@ final class AppearanceSettingsViewController: NSViewController {
         let idx = sender.indexOfSelectedItem
         if idx < FontPresets.all.count {
             SettingsManager.shared.fontFamily = FontPresets.all[idx].cssStack
-            fontFamilyField.isHidden = true
         } else {
             // "Custom…" selected — keep whatever fontFamily already is (hand-
             // typed or NSFontPanel-picked) and reveal the free-form field.
             fontFamilyField.stringValue = SettingsManager.shared.fontFamily
-            fontFamilyField.isHidden = false
         }
+        updateCustomModeVisibility()
+        refreshPreview()
     }
 
     @objc private func fontFamilyFieldChanged(_ sender: NSTextField) {
         let value = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
         SettingsManager.shared.fontFamily = value
+        refreshPreview()
     }
 
     /// Opens the native macOS font picker panel.
@@ -577,23 +664,27 @@ final class AppearanceSettingsViewController: NSViewController {
         SettingsManager.shared.fontFamily = "'\(psName)', sans-serif"
         fontPickerButton.title = newFont.displayName ?? psName
         fontFamilyField.stringValue = SettingsManager.shared.fontFamily
-        fontFamilyField.isHidden = false
         selectFontPopupItem(forCurrentFontFamily: SettingsManager.shared.fontFamily)
+        updateCustomModeVisibility()
+        refreshPreview()
     }
 
     @objc private func themeChanged(_ sender: NSPopUpButton) {
         if let theme = ReaderTheme(rawValue: sender.indexOfSelectedItem) {
             SettingsManager.shared.currentTheme = theme
-            updateColorWellsVisibility()
+            updateColorRowsVisibility()
+            refreshPreview()
         }
     }
 
     @objc private func bgColorChanged(_ sender: NSColorWell) {
         SettingsManager.shared.customBackgroundCSS = SettingsManager.cssHex(from: sender.color)
+        refreshPreview()
     }
 
     @objc private func textColorChanged(_ sender: NSColorWell) {
         SettingsManager.shared.customTextCSS = SettingsManager.cssHex(from: sender.color)
+        refreshPreview()
     }
 
     @objc private func lineHeightChanged(_ sender: NSSlider) {
@@ -603,21 +694,26 @@ final class AppearanceSettingsViewController: NSViewController {
     @objc private func fontSizeStepperChanged(_ sender: NSStepper) {
         SettingsManager.shared.fontSizePercent = sender.integerValue
         fontSizeLabel.stringValue = "\(SettingsManager.shared.fontSizePercent)%"
+        sender.setAccessibilityValueDescription("\(SettingsManager.shared.fontSizePercent) percent")
+        refreshPreview()
     }
 
     @objc private func maxWidthStepperChanged(_ sender: NSStepper) {
         SettingsManager.shared.maxWidth = sender.integerValue
         maxWidthLabel.stringValue = "\(SettingsManager.shared.maxWidth)px"
+        sender.setAccessibilityValueDescription("\(SettingsManager.shared.maxWidth) pixels")
     }
 
     @objc private func paddingHStepperChanged(_ sender: NSStepper) {
         SettingsManager.shared.paddingH = sender.integerValue
         paddingHLabel.stringValue = "\(SettingsManager.shared.paddingH)px"
+        sender.setAccessibilityValueDescription("\(SettingsManager.shared.paddingH) pixels")
     }
 
     @objc private func paddingVStepperChanged(_ sender: NSStepper) {
         SettingsManager.shared.paddingV = sender.integerValue
         paddingVLabel.stringValue = "\(SettingsManager.shared.paddingV)px"
+        sender.setAccessibilityValueDescription("\(SettingsManager.shared.paddingV) pixels")
     }
 
     @objc private func linkClicksChanged(_ sender: NSButton) {
@@ -632,7 +728,6 @@ final class AppearanceSettingsViewController: NSViewController {
 
         selectFontPopupItem(forCurrentFontFamily: SettingsManager.shared.fontFamily)
         fontFamilyField.stringValue = SettingsManager.shared.fontFamily
-        fontFamilyField.isHidden = FontPresets.all.contains { $0.cssStack == SettingsManager.shared.fontFamily }
         themePopup?.selectItem(at: SettingsManager.shared.currentTheme.rawValue)
         lineHeightSlider.doubleValue = SettingsManager.shared.lineHeight
         fontSizeStepper.integerValue = SettingsManager.shared.fontSizePercent
@@ -644,7 +739,9 @@ final class AppearanceSettingsViewController: NSViewController {
         paddingVStepper.integerValue = SettingsManager.shared.paddingV
         paddingVLabel.stringValue = "\(SettingsManager.shared.paddingV)px"
         linkClicksCheckbox.state = SettingsManager.shared.allowReaderLinkClicks ? .on : .off
-        updateColorWellsVisibility()
+        updateCustomModeVisibility()
+        updateColorRowsVisibility()
+        refreshPreview()
     }
 
     /// Prompts for a name via an NSAlert with an accessory text field (Honeycrisp has
@@ -674,13 +771,14 @@ final class AppearanceSettingsViewController: NSViewController {
     }
 
     /// Sets currentTheme = .custom and overwrites the custom colors from the clicked
-    /// preset. This is a cosmetic change (Patch 0003's split) — no reload needed.
+    /// preset. This is a cosmetic change -- no reload needed.
     @objc private func presetSwatchClicked(_ sender: ThemeSwatchButton) {
         SettingsManager.shared.currentTheme = .custom
         SettingsManager.shared.customBackgroundCSS = sender.preset.backgroundCSS
         SettingsManager.shared.customTextCSS = sender.preset.textCSS
         themePopup?.selectItem(at: ReaderTheme.custom.rawValue)
-        updateColorWellsVisibility()
+        updateColorRowsVisibility()
+        refreshPreview()
     }
 
     private func deletePreset(_ preset: SavedTheme) {
