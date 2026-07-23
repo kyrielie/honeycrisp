@@ -41,33 +41,41 @@ enum FontPresets {
     static var defaultStack: String { all[0].cssStack }
 }
 
-/// One appearance's colors for a single system-appearance mode (light or dark).
-/// All three are free-form CSS color strings ("#rrggbb"), not just background/text,
-/// since links need their own themeable color too.
-struct ThemeColorSet: Codable, Equatable {
-    var background: String
-    var text: String
-    var link: String
-}
+enum ReaderTheme: Int, CaseIterable {
+    case system = 0
+    case light
+    case dark
+    case sepia
+    case custom
 
-/// A fully user-editable appearance: a name plus one ThemeColorSet per system
-/// appearance mode. Replaces the old fixed `ReaderTheme` enum (System/Light/Dark/
-/// Sepia/Custom) and the old `SavedTheme` preset-on-top-of-.custom model — there's
-/// now exactly one kind of theme, and every one of them (including the seeded
-/// defaults) can be renamed, recolored, duplicated, and deleted. The light/dark
-/// split means a single theme auto-repaints when macOS's system appearance
-/// changes, rather than needing a separate "System Colors" special case.
-struct Theme: Codable, Identifiable, Equatable {
-    let id: UUID
-    var name: String
-    var light: ThemeColorSet
-    var dark: ThemeColorSet
+    var displayName: String {
+        switch self {
+        case .system: return "System Colors"
+        case .light:  return "Light"
+        case .dark:   return "Dark"
+        case .sepia:  return "Sepia"
+        case .custom: return "Custom"
+        }
+    }
 
-    init(id: UUID = UUID(), name: String, light: ThemeColorSet, dark: ThemeColorSet) {
-        self.id = id
-        self.name = name
-        self.light = light
-        self.dark = dark
+    var cssBackground: String {
+        switch self {
+        case .system: return "transparent"
+        case .light:  return "#ffffff"
+        case .dark:   return "#1c1c1e"
+        case .sepia:  return "#f4ecd8"
+        case .custom: return SettingsManager.shared.customBackgroundCSS
+        }
+    }
+
+    var cssText: String {
+        switch self {
+        case .system: return "var(--system-text)"
+        case .light:  return "#000000"
+        case .dark:   return "#e8e0d4"
+        case .sepia:  return "#433422"
+        case .custom: return SettingsManager.shared.customTextCSS
+        }
     }
 }
 
@@ -76,11 +84,21 @@ enum ReadingMode: Int, CaseIterable {
     case paginated = 1
 }
 
-/// Mirrors the old fixed ReaderTheme's raw values (system/light/dark/sepia/custom
-/// = 0-4). Kept only so `migrateLegacyThemes` can tell whether a pre-upgrade user
-/// had `.custom` selected; it has no other use and isn't exposed anywhere.
-private enum ReaderThemeLegacy: Int {
-    case system = 0, light, dark, sepia, custom
+/// A named custom background/text color pair, saved on top of `.custom`. Distinct
+/// from `ReaderTheme`'s fixed built-ins — presets are just quick-recall shortcuts for
+/// `customBackgroundCSS`/`customTextCSS`.
+struct SavedTheme: Codable, Identifiable, Equatable {
+    let id: UUID
+    var name: String
+    var backgroundCSS: String   // "#RRGGBB"
+    var textCSS: String
+
+    init(name: String, backgroundCSS: String, textCSS: String) {
+        self.id = UUID()
+        self.name = name
+        self.backgroundCSS = backgroundCSS
+        self.textCSS = textCSS
+    }
 }
 
 // MARK: - Manager
@@ -140,115 +158,27 @@ final class SettingsManager {
 
     // MARK: Theme
 
-    /// Seeded the first time `themes` is read with no stored value: Original
-    /// (system-appearance-following light/near-black), Quiet (dark surface,
-    /// muted text), Paper (warm off-white, sepia-adjacent). Order here is the
-    /// order shown in both the Appearance grid and the toolbar popover.
-    private static let seedThemes: [Theme] = [
-        Theme(name: "Original",
-              light: ThemeColorSet(background: "#ffffff", text: "#000000", link: "#0068da"),
-              dark:  ThemeColorSet(background: "#1c1c1e", text: "#e8e0d4", link: "#5aa9ff")),
-        Theme(name: "Quiet",
-              light: ThemeColorSet(background: "#2c2c2c", text: "#8a8a8a", link: "#7fb2e8"),
-              dark:  ThemeColorSet(background: "#1c1c1e", text: "#8a8a8a", link: "#7fb2e8")),
-        Theme(name: "Paper",
-              light: ThemeColorSet(background: "#f4ecd8", text: "#433422", link: "#8a5a2b"),
-              dark:  ThemeColorSet(background: "#2b2216", text: "#d8c9a8", link: "#c99a55")),
-    ]
-
-    /// JSON-array-in-UserDefaults, same pattern as HistoryManager.entries. Migrates
-    /// the old fixed ReaderTheme selection + single custom color pair into an
-    /// equivalent seeded theme the first time this is read post-upgrade, so
-    /// existing users don't lose their current look.
-    var themes: [Theme] {
-        get {
-            if let data = defaults.data(forKey: "readerThemes"),
-               let decoded = try? JSONDecoder().decode([Theme].self, from: data),
-               !decoded.isEmpty {
-                return decoded
-            }
-            let migrated = Self.migrateLegacyThemes(defaults: defaults)
-            themes = migrated
-            return migrated
-        }
-        set {
-            if let data = try? JSONEncoder().encode(newValue) {
-                defaults.set(data, forKey: "readerThemes")
-            }
-            notifyChange()
-        }
+    var currentTheme: ReaderTheme {
+        get { ReaderTheme(rawValue: defaults.integer(forKey: "readerTheme")) ?? .system }
+        set { defaults.set(newValue.rawValue, forKey: "readerTheme"); notifyCosmeticChange() }
     }
 
-    /// Builds the seed list, folding in the old `.custom` colors (if the user had
-    /// set any) as an extra "Custom" theme so that data isn't silently dropped.
-    private static func migrateLegacyThemes(defaults: UserDefaults) -> [Theme] {
-        var result = seedThemes
-        if defaults.object(forKey: "readerTheme") != nil,
-           ReaderThemeLegacy(rawValue: defaults.integer(forKey: "readerTheme")) == .custom {
-            let bg = defaults.string(forKey: "readerCustomBg") ?? "#ffffff"
-            let text = defaults.string(forKey: "readerCustomText") ?? "#000000"
-            let custom = ThemeColorSet(background: bg, text: text, link: "#0068da")
-            result.append(Theme(name: "Custom", light: custom, dark: custom))
-        }
-        return result
+    var customBackgroundCSS: String {
+        get { defaults.string(forKey: "readerCustomBg") ?? "#ffffff" }
+        set { defaults.set(newValue, forKey: "readerCustomBg"); notifyCosmeticChange() }
     }
 
-    /// Which theme is active, by id. Falls back to the first theme (and repairs
-    /// the stored id) if the previously-selected theme was deleted.
-    var currentThemeID: UUID {
-        get {
-            let list = themes
-            let stored = defaults.string(forKey: "readerCurrentThemeID").flatMap(UUID.init(uuidString:))
-            if let stored, list.contains(where: { $0.id == stored }) { return stored }
-            return list.first?.id ?? UUID()
-        }
-        set { defaults.set(newValue.uuidString, forKey: "readerCurrentThemeID"); notifyCosmeticChange() }
+    var customTextCSS: String {
+        get { defaults.string(forKey: "readerCustomText") ?? "#000000" }
+        set { defaults.set(newValue, forKey: "readerCustomText"); notifyCosmeticChange() }
     }
 
-    var currentTheme: Theme {
-        let list = themes
-        return list.first(where: { $0.id == currentThemeID }) ?? list[0]
-    }
+    /// Effective background CSS for the active theme (system/light/dark/sepia read
+    /// their fixed value, .custom reads customBackgroundCSS).
+    var effectiveBackgroundCSS: String { currentTheme.cssBackground }
 
-    /// True when NSApp's effective appearance is dark — used to pick which of a
-    /// theme's two ThemeColorSets is currently in effect. Read fresh each time
-    /// rather than cached, since the system can flip appearance at any moment.
-    private var systemIsDark: Bool {
-        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-    }
-
-    /// The active theme's color set for the current system appearance.
-    var effectiveColorSet: ThemeColorSet {
-        systemIsDark ? currentTheme.dark : currentTheme.light
-    }
-
-    var effectiveBackgroundCSS: String { effectiveColorSet.background }
-    var effectiveTextCSS: String { effectiveColorSet.text }
-    var effectiveLinkCSS: String { effectiveColorSet.link }
-
-    /// Persists an edited/renamed/recolored theme back into the list, matched by id.
-    func updateTheme(_ theme: Theme) {
-        var list = themes
-        guard let idx = list.firstIndex(where: { $0.id == theme.id }) else { return }
-        list[idx] = theme
-        themes = list
-    }
-
-    /// Appends a new theme (e.g. from the "+" tile) and makes it the active one.
-    func addTheme(_ theme: Theme) {
-        themes.append(theme)
-        currentThemeID = theme.id
-    }
-
-    /// Removes a theme. No-ops if it's the last remaining one. If the deleted
-    /// theme was active, falls back to the first remaining theme.
-    func deleteTheme(_ id: UUID) {
-        var list = themes
-        guard list.count > 1, let idx = list.firstIndex(where: { $0.id == id }) else { return }
-        list.remove(at: idx)
-        themes = list
-        if currentThemeID == id { currentThemeID = list[0].id }
-    }
+    /// Effective text CSS for the active theme.
+    var effectiveTextCSS: String { currentTheme.cssText }
 
     // MARK: Line height
 
@@ -382,17 +312,35 @@ final class SettingsManager {
         set { defaults.set(newValue, forKey: "readerAllowLinkClicks"); notifyCosmeticChange() }
     }
 
+    // MARK: Saved theme presets
+
+    /// JSON-array-in-UserDefaults, same pattern as HistoryManager.entries.
+    var savedThemes: [SavedTheme] {
+        get {
+            guard let data = defaults.data(forKey: "readerSavedThemes"),
+                  let decoded = try? JSONDecoder().decode([SavedTheme].self, from: data)
+            else { return [] }
+            return decoded
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: "readerSavedThemes")
+            }
+            notifyChange()
+        }
+    }
+
     // MARK: - Reset to defaults (Appearance tab)
 
     /// True only when at least one reader appearance/layout setting differs
     /// from its default — mirrors Ambrosia's `isReaderCustomized`, so the
     /// "Reset to Defaults" button is inert rather than an always-live
-    /// destructive action. The theme list itself is deliberately excluded —
-    /// there's no single "default" theme list to reset to, only which one
-    /// is currently selected.
+    /// destructive action. Saved theme presets are deliberately excluded,
+    /// same as Ambrosia's `savedThemes` — there's no "default" preset list to
+    /// reset to.
     var isReaderCustomized: Bool {
         fontFamily != FontPresets.defaultStack
-            || currentThemeID != themes.first?.id
+            || currentTheme != .system
             || lineHeight != 1.6
             || fontSizePercent != 100
             || maxWidth != 700
@@ -403,7 +351,7 @@ final class SettingsManager {
 
     func resetReaderToDefaults() {
         fontFamily = FontPresets.defaultStack
-        currentThemeID = themes.first?.id ?? currentThemeID
+        currentTheme = .system
         lineHeight = 1.6
         fontSizePercent = 100
         maxWidth = 700
