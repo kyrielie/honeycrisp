@@ -20,6 +20,7 @@ final class HistoryViewController: NSViewController {
 
     override func loadView() {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 480))
+        container.translatesAutoresizingMaskIntoConstraints = false
 
         // Header
         let headerLabel = NSTextField(labelWithString: "Recent Books")
