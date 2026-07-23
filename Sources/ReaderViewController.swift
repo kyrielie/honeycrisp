@@ -739,7 +739,7 @@ final class ReaderViewController: NSViewController {
     /// see EPUBParser.honeycrispPageInfo for how these values are derived.
     func didReceiveScrollPageInfo(page: Int, totalPages: Int, spineIndex: Int, spineCount: Int) {
         guard currentMode == .scroll else { return }
-        pageCountLabel?.stringValue = "\(page) of \(totalPages) · Ch \(spineIndex + 1) of \(spineCount)"
+        pageCountLabel?.stringValue = "\(spineIndex + 1)/\(spineCount)"
     }
 
     /// Paginated-mode counterpart, driven by spineDidLoad/positionUpdate.
@@ -749,7 +749,7 @@ final class ReaderViewController: NSViewController {
         guard currentMode == .paginated else { return }
         let spineCount = currentPackage?.spineURLs.count ?? 1
         let page = paginatedCurrentColumn + 1
-        pageCountLabel?.stringValue = "\(page) of \(paginatedTotalColumns) · Ch \(currentSpineIndex + 1) of \(spineCount)"
+        pageCountLabel?.stringValue = "\(page)/\(paginatedTotalColumns) \(currentSpineIndex + 1)/\(spineCount)"
     }
 
     // MARK: - Navigation
@@ -1136,11 +1136,10 @@ extension ReaderViewController: NSToolbarDelegate {
             label.translatesAutoresizingMaskIntoConstraints = false
             // Fix a reasonable width so it truncates gracefully
             label.widthAnchor.constraint(lessThanOrEqualToConstant: 340).isActive = true
+            label.widthAnchor.constraint(greaterThanOrEqualToConstant: 60).isActive = true
             titleLabel = label
             item.view = label
             item.label = ""
-            item.minSize = NSSize(width: 60, height: 24)
-            item.maxSize = NSSize(width: 340, height: 24)
             return item
 
         case .fontSize:
@@ -1175,11 +1174,10 @@ extension ReaderViewController: NSToolbarDelegate {
             label.lineBreakMode = .byTruncatingTail
             label.translatesAutoresizingMaskIntoConstraints = false
             label.widthAnchor.constraint(lessThanOrEqualToConstant: 180).isActive = true
+            label.widthAnchor.constraint(greaterThanOrEqualToConstant: 60).isActive = true
             pageCountLabel = label
             item.view = label
             item.label = ""
-            item.minSize = NSSize(width: 60, height: 24)
-            item.maxSize = NSSize(width: 180, height: 24)
             return item
 
         case .openSettings:
