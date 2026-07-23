@@ -225,29 +225,24 @@ final class GeneralSettingsViewController: NSViewController {
 //    for most people. Now opens the panel immediately on selection, in
 //    addition to the manual "Choose Font…" button for reopening it later.
 //  • Theme selection was a plain NSPopUpButton plus a separate row of tiny
-//    circular preset swatches. Replaced with a 2-column x 3-row grid of large
-//    Apple-Books-style swatches -- "Aa" rendered in the theme's own colors
-//    plus its name -- for the 5 ReaderTheme cases (System/Light/Dark/Sepia/
-//    Custom), with a 6th "+" cell to save the current custom colors as a new
-//    named preset. The smaller circular-swatch preset picker and color wells
-//    remain, now living directly under the grid and shown only when Custom is
-//    the active theme, since the grid only has room for one "Custom" slot but
-//    someone may have saved several presets.
+//    circular preset swatches, then later a fixed 2x3 grid of System/Light/
+//    Dark/Sepia/Custom with only .custom actually editable. Now every theme
+//    is a fully user-editable object (name + light/dark color pairs): the
+//    grid wraps to fill the panel's full width, a "+" tile adds new themes,
+//    and each swatch's own context menu handles rename/recolor/duplicate/
+//    delete -- see Theme/ThemeColorSet in SettingsManager.swift.
 
 final class AppearanceSettingsViewController: NSViewController {
 
     private var fontPopup: NSPopUpButton!
     private var fontFamilyField: NSTextField!   // free-form CSS font-family stack entry
     private var fontPickerButton: NSButton!     // opens NSFontPanel (replaces import button)
-    private var themeGrid: NSGridView!
-    private var themeButtons: [ReaderTheme: ThemeBigSwatchButton] = [:]
-    private var bgColorWell: NSColorWell!
-    private var textColorWell: NSColorWell!
+    private var themeGridContainer: NSStackView!  // vertical stack of full-width rows, wrapping
+    private var themeButtons: [UUID: ThemeBigSwatchButton] = [:]
     private var lineHeightStepper: NSStepper!
     private var lineHeightLabel: NSTextField!
     private var fontSizeStepper: NSStepper!
     private var fontSizeLabel: NSTextField!
-    private var presetsRow: NSStackView!
     private var maxWidthStepper: NSStepper!
     private var maxWidthLabel: NSTextField!
     private var paddingHStepper: NSStepper!
@@ -262,11 +257,6 @@ final class AppearanceSettingsViewController: NSViewController {
     private var grid: NSGridView!
     private var fontFamilyFieldRow: NSGridRow!
     private var fontPickerButtonRow: NSGridRow!
-    private var customColorsHeaderRow: NSGridRow!
-    private var bgColorGridRow: NSGridRow!
-    private var textColorGridRow: NSGridRow!
-    private var presetsGridRow: NSGridRow!
-    private var savePresetGridRow: NSGridRow!
 
     /// The currently previewed font name when the NSFontPanel is used
     private var pickedFontName: String = SettingsManager.shared.customFontName
@@ -290,29 +280,23 @@ final class AppearanceSettingsViewController: NSViewController {
         grid.column(at: 0).xPlacement = .leading
         grid.column(at: 1).xPlacement = .leading
 
-        addSectionHeader("Typography", to: grid)
+        // Themes first, no header — the grid is the section, stretched to fill
+        // the panel's full width (see makeThemeGrid). Every swatch is directly
+        // editable now (right-click, or double-click, for rename/recolor/
+        // duplicate/delete), so there's no separate "Custom" case or presets
+        // list living below it the way there used to be.
+        let themeGridRow = grid.addRow(with: [makeThemeGrid(), NSGridCell.emptyContentView])
+        themeGridRow.mergeCells(in: NSRange(location: 0, length: 2))
+        themeGridRow.cell(at: 0).xPlacement = .fill
+
+        // Typography, no header.
         grid.addRow(with: [label("Font:"), makeFontPopup()])
         fontFamilyFieldRow = grid.addRow(with: [NSGridCell.emptyContentView, makeFontFamilyField()])
         fontPickerButtonRow = grid.addRow(with: [NSGridCell.emptyContentView, makeFontPickerButton()])
         grid.addRow(with: [label("Font Size:"), makeFontSizeRow()])
         grid.addRow(with: [label("Line Height:"), makeLineHeightRow()])
 
-        addSectionHeader("Theme", to: grid)
-        let themeGridRow = grid.addRow(with: [makeThemeGrid(), NSGridCell.emptyContentView])
-        themeGridRow.mergeCells(in: NSRange(location: 0, length: 2))
-
-        customColorsHeaderRow = addSectionHeader("Custom Colors", to: grid)
-        bgColorWell = makeColorWell(action: #selector(bgColorChanged(_:)))
-        bgColorGridRow = grid.addRow(with: [label("Background:"), bgColorWell])
-        textColorWell = makeColorWell(action: #selector(textColorChanged(_:)))
-        textColorGridRow = grid.addRow(with: [label("Text Color:"), textColorWell])
-        presetsRow = makePresetsRow()
-        presetsGridRow = grid.addRow(with: [label("Saved Presets:"), presetsRow])
-        let savePresetButton = NSButton(title: "Save as Preset…", target: self, action: #selector(saveAsPreset(_:)))
-        savePresetButton.bezelStyle = .rounded
-        savePresetGridRow = grid.addRow(with: [NSGridCell.emptyContentView, savePresetButton])
-
-        addSectionHeader("Layout", to: grid)
+        // Layout, no header.
         grid.addRow(with: [label("Max Width:"), makeMaxWidthRow()])
         grid.addRow(with: [label("Horizontal Margin:"), makePaddingHRow()])
         grid.addRow(with: [label("Vertical Margin:"), makePaddingVRow()])
@@ -396,7 +380,6 @@ final class AppearanceSettingsViewController: NSViewController {
         self.view = root
 
         updateCustomModeVisibility()
-        updateCustomColorSectionVisibility()
         refreshThemeGridSelection()
         refreshPreview()
         NSLog("[Honeycrisp][Settings] AppearanceSettingsViewController.loadView done")
@@ -406,17 +389,6 @@ final class AppearanceSettingsViewController: NSViewController {
 
     private func label(_ text: String) -> NSTextField {
         NSTextField(labelWithString: text)
-    }
-
-    @discardableResult
-    private func addSectionHeader(_ title: String, to grid: NSGridView) -> NSGridRow {
-        let header = NSTextField(labelWithString: title)
-        header.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        header.textColor = .secondaryLabelColor
-        let row = grid.addRow(with: [header, NSGridCell.emptyContentView])
-        row.mergeCells(in: NSRange(location: 0, length: 2))
-        row.topPadding = grid.numberOfRows == 1 ? 0 : 14
-        return row
     }
 
     private func makeFontPopup() -> NSPopUpButton {
@@ -457,76 +429,70 @@ final class AppearanceSettingsViewController: NSViewController {
         }
     }
 
-    /// 2-column x 3-row grid of large theme swatches: the 5 ReaderTheme cases
-    /// (System/Light/Dark/Sepia/Custom), each showing "Aa" in the theme's own
-    /// colors plus its name, and a 6th "+" cell to save the current custom
-    /// colors as a new named preset.
-    private func makeThemeGrid() -> NSGridView {
-        let tGrid = NSGridView(numberOfColumns: 2, rows: 0)
-        tGrid.rowSpacing = 10
-        tGrid.columnSpacing = 10
-        tGrid.translatesAutoresizingMaskIntoConstraints = false
+    /// Every theme is directly editable now, so there's one grid, not a fixed
+    /// 5-case grid plus a separate presets row underneath. Rows wrap at 4 items
+    /// (themes + the trailing "+" tile) and each row uses .fillEqually so the
+    /// whole thing stretches to the panel's full width, per the Apple Books
+    /// reference. Rebuilt from scratch on any add/rename/duplicate/delete since
+    /// the item count itself can change, not just individual swatch contents.
+    private func makeThemeGrid() -> NSStackView {
+        let container = NSStackView()
+        container.orientation = .vertical
+        container.spacing = 10
+        container.translatesAutoresizingMaskIntoConstraints = false
+        themeGridContainer = container
+        rebuildThemeGrid()
+        return container
+    }
 
-        let cells: [NSView] = ReaderTheme.allCases.map { theme in
+    private func rebuildThemeGrid() {
+        guard let container = themeGridContainer else { return }
+        for v in container.arrangedSubviews { container.removeArrangedSubview(v); v.removeFromSuperview() }
+        themeButtons.removeAll()
+
+        let themes = SettingsManager.shared.themes
+        var cells: [NSView] = themes.map { theme in
             let button = ThemeBigSwatchButton(theme: theme)
             button.target = self
             button.action = #selector(themeSwatchClicked(_:))
-            themeButtons[theme] = button
+            let menu = NSMenu()
+            menu.addItem(withTitle: "Rename & Recolor…", action: #selector(editThemeMenuAction(_:)), keyEquivalent: "")
+            menu.addItem(withTitle: "Duplicate", action: #selector(duplicateThemeMenuAction(_:)), keyEquivalent: "")
+            if themes.count > 1 {
+                menu.addItem(withTitle: "Delete", action: #selector(deleteThemeMenuAction(_:)), keyEquivalent: "")
+            }
+            for item in menu.items { item.target = self; item.representedObject = theme.id }
+            button.menu = menu
+            themeButtons[theme.id] = button
             return button
-        } + [makeAddPresetSwatch()]
-
-        for pair in stride(from: 0, to: cells.count, by: 2) {
-            let right = pair + 1 < cells.count ? cells[pair + 1] : NSGridCell.emptyContentView
-            tGrid.addRow(with: [cells[pair], right])
         }
-        themeGrid = tGrid
-        return tGrid
+        cells.append(makeAddThemeTile())
+
+        let perRow = 4
+        for start in stride(from: 0, to: cells.count, by: perRow) {
+            let row = NSStackView(views: Array(cells[start..<min(start + perRow, cells.count)]))
+            row.orientation = .horizontal
+            row.spacing = 10
+            row.distribution = .fillEqually
+            container.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        }
+        refreshThemeGridSelection()
     }
 
-    private func makeAddPresetSwatch() -> NSView {
-        let button = NSButton(title: "", target: self, action: #selector(saveAsPreset(_:)))
+    private func makeAddThemeTile() -> NSView {
+        let button = NSButton(title: "", target: self, action: #selector(addThemeClicked(_:)))
         button.bezelStyle = .regularSquare
         button.isBordered = false
-        button.image = NSImage(systemSymbolName: "plus.circle", accessibilityDescription: "Add theme preset")
+        button.image = NSImage(systemSymbolName: "plus.circle", accessibilityDescription: "Add a new theme")
         button.imageScaling = .scaleProportionallyUpOrDown
         button.wantsLayer = true
         button.layer?.cornerRadius = 8
         button.layer?.borderWidth = 1
         button.layer?.borderColor = NSColor.separatorColor.cgColor
-        button.setAccessibilityLabel("Add a new theme preset")
-        button.widthAnchor.constraint(equalToConstant: ThemeBigSwatchButton.swatchSize.width).isActive = true
+        button.setAccessibilityLabel("Add a new theme")
         button.heightAnchor.constraint(equalToConstant: ThemeBigSwatchButton.swatchSize.height).isActive = true
         return button
-    }
-
-    private func makePresetsRow() -> NSStackView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = 8
-        rebuildPresetSwatches(in: row)
-        return row
-    }
-
-    private func rebuildPresetSwatches(in row: NSStackView) {
-        for v in row.arrangedSubviews { row.removeArrangedSubview(v); v.removeFromSuperview() }
-        for preset in SettingsManager.shared.savedThemes {
-            row.addArrangedSubview(makeSwatchButton(for: preset))
-        }
-    }
-
-    private func makeSwatchButton(for preset: SavedTheme) -> NSView {
-        let button = ThemeSwatchButton(preset: preset)
-        button.target = self
-        button.action = #selector(presetSwatchClicked(_:))
-        button.onDelete = { [weak self] in self?.deletePreset(preset) }
-        return button
-    }
-
-    private func makeColorWell(action: Selector) -> NSColorWell {
-        let well = NSColorWell()
-        well.target = self
-        well.action = action
-        return well
     }
 
     /// Line height is a unitless CSS multiplier (e.g. 1.6), not a pixel value --
@@ -662,29 +628,10 @@ final class AppearanceSettingsViewController: NSViewController {
         fontPickerButtonRow.isHidden = !isCustomFont
     }
 
-    /// The grid only has room for one "Custom" slot, but someone may have
-    /// several saved presets -- this section (color wells + saved-preset
-    /// swatches + save button) lives under the grid and is shown only while
-    /// Custom is the active theme, where it's actually relevant.
-    private func updateCustomColorSectionVisibility() {
-        let isCustomTheme = SettingsManager.shared.currentTheme == .custom
-        if let well = bgColorWell {
-            well.color = SettingsManager.color(fromCSS: SettingsManager.shared.customBackgroundCSS)
-        }
-        if let well = textColorWell {
-            well.color = SettingsManager.color(fromCSS: SettingsManager.shared.customTextCSS)
-        }
-        customColorsHeaderRow.isHidden = !isCustomTheme
-        bgColorGridRow.isHidden = !isCustomTheme
-        textColorGridRow.isHidden = !isCustomTheme
-        presetsGridRow.isHidden = !isCustomTheme
-        savePresetGridRow.isHidden = !isCustomTheme
-    }
-
     private func refreshThemeGridSelection() {
-        let current = SettingsManager.shared.currentTheme
-        for (theme, button) in themeButtons {
-            button.setSelected(theme == current)
+        let current = SettingsManager.shared.currentThemeID
+        for (id, button) in themeButtons {
+            button.setSelected(id == current)
         }
     }
 
@@ -696,19 +643,9 @@ final class AppearanceSettingsViewController: NSViewController {
     /// AppKit doesn't have a font by that name -- exact CSS font resolution is
     /// WebKit's job when actually rendering the book.
     private func refreshPreview() {
-        let theme = SettingsManager.shared.currentTheme
-        if theme == .system {
-            // cssBackground/cssText for .system are "transparent" and
-            // "var(--system-text)" -- valid CSS the book's WebKit view resolves
-            // itself, but not hex strings color(fromCSS:) can parse (it falls
-            // back to black for non-hex input, which would render as an
-            // unreadable black-on-black preview here).
-            previewBox.fillColor = .windowBackgroundColor
-            previewLabel.textColor = .labelColor
-        } else {
-            previewBox.fillColor = SettingsManager.color(fromCSS: theme.cssBackground)
-            previewLabel.textColor = SettingsManager.color(fromCSS: theme.cssText)
-        }
+        let colors = SettingsManager.shared.effectiveColorSet
+        previewBox.fillColor = SettingsManager.color(fromCSS: colors.background)
+        previewLabel.textColor = SettingsManager.color(fromCSS: colors.text)
 
         let px = Self.px(fromPercent: SettingsManager.shared.fontSizePercent)
         let firstFamily = SettingsManager.shared.fontFamily
@@ -784,19 +721,8 @@ final class AppearanceSettingsViewController: NSViewController {
     }
 
     @objc private func themeSwatchClicked(_ sender: ThemeBigSwatchButton) {
-        SettingsManager.shared.currentTheme = sender.theme
+        SettingsManager.shared.currentThemeID = sender.theme.id
         refreshThemeGridSelection()
-        updateCustomColorSectionVisibility()
-        refreshPreview()
-    }
-
-    @objc private func bgColorChanged(_ sender: NSColorWell) {
-        SettingsManager.shared.customBackgroundCSS = SettingsManager.cssHex(from: sender.color)
-        refreshPreview()
-    }
-
-    @objc private func textColorChanged(_ sender: NSColorWell) {
-        SettingsManager.shared.customTextCSS = SettingsManager.cssHex(from: sender.color)
         refreshPreview()
     }
 
@@ -856,49 +782,113 @@ final class AppearanceSettingsViewController: NSViewController {
         paddingVLabel.stringValue = "\(SettingsManager.shared.paddingV)px"
         linkClicksCheckbox.state = SettingsManager.shared.allowReaderLinkClicks ? .on : .off
         updateCustomModeVisibility()
-        updateCustomColorSectionVisibility()
         refreshPreview()
     }
 
-    /// Prompts for a name via an NSAlert with an accessory text field and
-    /// appends a SavedTheme built from the current custom colors. Reachable
-    /// both from the grid's "+" cell and the "Save as Preset…" button under
-    /// the color wells -- same action either way.
-    @objc private func saveAsPreset(_ sender: Any?) {
+    // MARK: - Theme add / edit / duplicate / delete
+
+    @objc private func addThemeClicked(_ sender: Any?) {
+        let base = SettingsManager.shared.themes.first
+        let light = base?.light ?? ThemeColorSet(background: "#ffffff", text: "#000000", link: "#0068da")
+        let dark = base?.dark ?? ThemeColorSet(background: "#1c1c1e", text: "#e8e0d4", link: "#5aa9ff")
+        var newTheme = Theme(name: "New Theme", light: light, dark: dark)
+        if presentThemeEditor(for: &newTheme, title: "Add Theme") {
+            SettingsManager.shared.addTheme(newTheme)
+            rebuildThemeGrid()
+            refreshPreview()
+        }
+    }
+
+    @objc private func editThemeMenuAction(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID,
+              var theme = SettingsManager.shared.themes.first(where: { $0.id == id })
+        else { return }
+        if presentThemeEditor(for: &theme, title: "Edit Theme") {
+            SettingsManager.shared.updateTheme(theme)
+            rebuildThemeGrid()
+            refreshPreview()
+        }
+    }
+
+    @objc private func duplicateThemeMenuAction(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID,
+              let original = SettingsManager.shared.themes.first(where: { $0.id == id })
+        else { return }
+        var copy = Theme(name: original.name + " Copy", light: original.light, dark: original.dark)
+        if presentThemeEditor(for: &copy, title: "Duplicate Theme") {
+            SettingsManager.shared.addTheme(copy)
+            rebuildThemeGrid()
+            refreshPreview()
+        }
+    }
+
+    @objc private func deleteThemeMenuAction(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        SettingsManager.shared.deleteTheme(id)
+        rebuildThemeGrid()
+        refreshPreview()
+    }
+
+    /// Sheet-style NSAlert (same pattern the old "Save as Preset…" alert used)
+    /// with a name field and six color wells: light/dark x background/text/
+    /// link. Mutates `theme` in place and returns whether Save was clicked.
+    @discardableResult
+    private func presentThemeEditor(for theme: inout Theme, title: String) -> Bool {
         let alert = NSAlert()
-        alert.messageText = "Save Theme Preset"
-        alert.informativeText = "Enter a name for this preset."
+        alert.messageText = title
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
 
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        alert.accessoryView = field
+        let container = NSStackView()
+        container.orientation = .vertical
+        container.alignment = .leading
+        container.spacing = 10
+        container.translatesAutoresizingMaskIntoConstraints = false
 
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
+        let nameField = NSTextField(string: theme.name)
+        nameField.placeholderString = "Theme name"
+        nameField.widthAnchor.constraint(equalToConstant: 280).isActive = true
+        container.addArrangedSubview(nameField)
 
-        let preset = SavedTheme(
-            name: name,
-            backgroundCSS: SettingsManager.shared.customBackgroundCSS,
-            textCSS: SettingsManager.shared.customTextCSS
+        func colorRow(_ label: String, _ initial: String) -> (NSStackView, NSColorWell) {
+            let row = NSStackView()
+            row.orientation = .horizontal
+            row.spacing = 8
+            let l = NSTextField(labelWithString: label)
+            l.widthAnchor.constraint(equalToConstant: 130).isActive = true
+            let well = NSColorWell()
+            well.color = SettingsManager.color(fromCSS: initial)
+            row.addArrangedSubview(l)
+            row.addArrangedSubview(well)
+            return (row, well)
+        }
+
+        let (lightBgRow, lightBgWell) = colorRow("Light Background:", theme.light.background)
+        let (lightTextRow, lightTextWell) = colorRow("Light Text:", theme.light.text)
+        let (lightLinkRow, lightLinkWell) = colorRow("Light Links:", theme.light.link)
+        let (darkBgRow, darkBgWell) = colorRow("Dark Background:", theme.dark.background)
+        let (darkTextRow, darkTextWell) = colorRow("Dark Text:", theme.dark.text)
+        let (darkLinkRow, darkLinkWell) = colorRow("Dark Links:", theme.dark.link)
+        for row in [lightBgRow, lightTextRow, lightLinkRow, darkBgRow, darkTextRow, darkLinkRow] {
+            container.addArrangedSubview(row)
+        }
+
+        alert.accessoryView = container
+        guard alert.runModal() == .alertFirstButtonReturn else { return false }
+
+        let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { theme.name = name }
+        theme.light = ThemeColorSet(
+            background: SettingsManager.cssHex(from: lightBgWell.color),
+            text: SettingsManager.cssHex(from: lightTextWell.color),
+            link: SettingsManager.cssHex(from: lightLinkWell.color)
         )
-        SettingsManager.shared.savedThemes.append(preset)
-        rebuildPresetSwatches(in: presetsRow)
-    }
-
-    @objc private func presetSwatchClicked(_ sender: ThemeSwatchButton) {
-        SettingsManager.shared.currentTheme = .custom
-        SettingsManager.shared.customBackgroundCSS = sender.preset.backgroundCSS
-        SettingsManager.shared.customTextCSS = sender.preset.textCSS
-        refreshThemeGridSelection()
-        updateCustomColorSectionVisibility()
-        refreshPreview()
-    }
-
-    private func deletePreset(_ preset: SavedTheme) {
-        SettingsManager.shared.savedThemes.removeAll { $0.id == preset.id }
-        rebuildPresetSwatches(in: presetsRow)
+        theme.dark = ThemeColorSet(
+            background: SettingsManager.cssHex(from: darkBgWell.color),
+            text: SettingsManager.cssHex(from: darkTextWell.color),
+            link: SettingsManager.cssHex(from: darkLinkWell.color)
+        )
+        return true
     }
 }
 
@@ -908,12 +898,12 @@ final class AppearanceSettingsViewController: NSViewController {
 /// background/text colors, with the theme's name below. Used in the 2x3 theme
 /// grid; selection is shown as an accent-colored ring.
 final class ThemeBigSwatchButton: NSButton {
-    let theme: ReaderTheme
+    let theme: Theme
     static let swatchSize = NSSize(width: 110, height: 84)
 
     private var isThemeSelected = false
 
-    init(theme: ReaderTheme) {
+    init(theme: Theme) {
         self.theme = theme
         super.init(frame: .zero)
         title = ""
@@ -921,8 +911,9 @@ final class ThemeBigSwatchButton: NSButton {
         bezelStyle = .regularSquare
         image = Self.swatchImage(for: theme, selected: false)
         imageScaling = .scaleProportionallyUpOrDown
-        setAccessibilityLabel(theme.displayName)
-        widthAnchor.constraint(equalToConstant: Self.swatchSize.width).isActive = true
+        setAccessibilityLabel(theme.name)
+        // No fixed-width constraint: the grid's .fillEqually rows stretch each
+        // swatch to fill the panel's full width, so only height is pinned.
         heightAnchor.constraint(equalToConstant: Self.swatchSize.height).isActive = true
     }
 
@@ -935,13 +926,16 @@ final class ThemeBigSwatchButton: NSButton {
         setAccessibilityValueDescription(selected ? "Selected" : nil)
     }
 
-    private static func swatchImage(for theme: ReaderTheme, selected: Bool) -> NSImage {
+    /// Rendered against the swatch's own light colors — the grid's meant to
+    /// show what each theme looks like on its own terms, not shift with the
+    /// window's momentary system appearance while browsing the list.
+    private static func swatchImage(for theme: Theme, selected: Bool) -> NSImage {
         let size = swatchSize
         let image = NSImage(size: size)
         image.lockFocus()
 
-        let bg: NSColor = theme == .system ? .windowBackgroundColor : SettingsManager.color(fromCSS: theme.cssBackground)
-        let text: NSColor = theme == .system ? .labelColor : SettingsManager.color(fromCSS: theme.cssText)
+        let bg = SettingsManager.color(fromCSS: theme.light.background)
+        let text = SettingsManager.color(fromCSS: theme.light.text)
 
         let swatchRect = NSRect(x: 1, y: 20, width: size.width - 2, height: size.height - 22)
         let path = NSBezierPath(roundedRect: swatchRect, xRadius: 8, yRadius: 8)
@@ -958,56 +952,13 @@ final class ThemeBigSwatchButton: NSButton {
         let aaSize = aa.size()
         aa.draw(at: NSPoint(x: swatchRect.midX - aaSize.width / 2, y: swatchRect.midY - aaSize.height / 2))
 
-        let name = NSAttributedString(string: theme.displayName, attributes: [
+        let name = NSAttributedString(string: theme.name, attributes: [
             .font: NSFont.systemFont(ofSize: 11),
             .foregroundColor: NSColor.labelColor,
         ])
         let nameSize = name.size()
         name.draw(at: NSPoint(x: size.width / 2 - nameSize.width / 2, y: 2))
 
-        image.unlockFocus()
-        return image
-    }
-}
-
-// MARK: - ThemeSwatchButton
-
-/// A small colored-circle-plus-name button representing one saved theme preset.
-/// Right-click shows a "Delete" context menu — standard AppKit pattern, no sheet
-/// needed for something this reversible.
-final class ThemeSwatchButton: NSButton {
-    let preset: SavedTheme
-    var onDelete: (() -> Void)?
-
-    init(preset: SavedTheme) {
-        self.preset = preset
-        super.init(frame: .zero)
-        title = preset.name
-        bezelStyle = .rounded
-        image = Self.swatchImage(background: preset.backgroundCSS, text: preset.textCSS)
-        imagePosition = .imageLeading
-
-        let menu = NSMenu()
-        menu.addItem(withTitle: "Delete", action: #selector(deleteSelf), keyEquivalent: "")
-        self.menu = menu
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    @objc private func deleteSelf() { onDelete?() }
-
-    private static func swatchImage(background: String, text: String) -> NSImage {
-        let size = NSSize(width: 14, height: 14)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        let bg = SettingsManager.color(fromCSS: background)
-        bg.setFill()
-        NSBezierPath(ovalIn: NSRect(origin: .zero, size: size)).fill()
-        let border = SettingsManager.color(fromCSS: text)
-        border.setStroke()
-        let path = NSBezierPath(ovalIn: NSRect(x: 0.5, y: 0.5, width: 13, height: 13))
-        path.lineWidth = 1
-        path.stroke()
         image.unlockFocus()
         return image
     }
