@@ -519,13 +519,20 @@ final class ReaderViewController: NSViewController {
     /// as the initial defaults this replaces.
     @objc private func applyCosmeticCSSUpdate() {
         let s = SettingsManager.shared
+        // fontFamily is free-form (Ambrosia-style) and most presets contain single
+        // quotes (e.g. "'Iowan Old Style', Georgia, serif"), so it can't be
+        // interpolated directly into the single-quoted JS string below — that
+        // breaks the JS (syntax error) and silently drops every var update below
+        // it, since evaluateJavaScript's completionHandler is nil here. Encode it
+        // as a proper JS string literal instead.
+        let fontFamilyLiteral = Self.jsStringLiteral(s.fontFamily)
         let js = """
         (function() {
           var el = document.getElementById('honeycrisp-vars');
           if (!el) return;
           el.textContent = ':root {' +
             '--reader-font-size:\(s.fontSizePercent)%;' +
-            '--reader-font-family:\(s.fontFamily);' +
+            '--reader-font-family:' + \(fontFamilyLiteral) + ';' +
             '--reader-bg:\(s.effectiveBackgroundCSS);' +
             '--reader-text:\(s.effectiveTextCSS);' +
             '--reader-line-height:\(s.lineHeight);' +
@@ -537,6 +544,18 @@ final class ReaderViewController: NSViewController {
         """
         webView.evaluateJavaScript(js, completionHandler: nil)
         applyWindowAppearance()
+    }
+
+    /// Encodes a Swift string as a safe JS string literal (JSON string syntax is
+    /// valid JS string syntax) — for values, like the free-form fontFamily CSS
+    /// stack, that may themselves contain quotes.
+    private static func jsStringLiteral(_ value: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: [value]),
+              let json = String(data: data, encoding: .utf8),
+              json.count >= 2
+        else { return "''" }
+        // json is `["value"]` — strip the surrounding array brackets to get `"value"`
+        return String(json.dropFirst().dropLast())
     }
 
     private func applyWindowAppearance() {
