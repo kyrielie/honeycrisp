@@ -33,7 +33,7 @@ final class TOCSidebarViewController: NSViewController {
         outlineView.backgroundColor = .clear
         outlineView.rowHeight = 28
         outlineView.indentationPerLevel = 14
-        outlineView.selectionHighlightStyle = .sourceList
+        outlineView.style = .sourceList
         outlineView.target = self
         outlineView.action = #selector(rowClicked(_:))
 
