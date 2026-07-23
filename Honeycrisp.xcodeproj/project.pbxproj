@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		6228A9A32F7593FD00A3C2B7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6228A9A22F7593FD00A3C2B7 /* Assets.xcassets */; };
+		6247C0453012045000625253 /* ThemePopoverViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6247C0443012045000625253 /* ThemePopoverViewController.swift */; };
 		628948362F7CA5A800A082DD /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628948332F7CA5A800A082DD /* SettingsWindowController.swift */; };
 		628948372F7CA5A800A082DD /* TOCSidebarViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628948352F7CA5A800A082DD /* TOCSidebarViewController.swift */; };
 		628948382F7CA5A800A082DD /* SearchBarViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628948322F7CA5A800A082DD /* SearchBarViewController.swift */; };
@@ -29,6 +30,7 @@
 
 /* Begin PBXFileReference section */
 		6228A9A22F7593FD00A3C2B7 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		6247C0443012045000625253 /* ThemePopoverViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemePopoverViewController.swift; sourceTree = "<group>"; };
 		628948322F7CA5A800A082DD /* SearchBarViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchBarViewController.swift; sourceTree = "<group>"; };
 		628948332F7CA5A800A082DD /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
 		628948342F7CA5A800A082DD /* TOCParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TOCParser.swift; sourceTree = "<group>"; };
@@ -65,6 +67,7 @@
 		62D788FE2F75CBEA006F67C1 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				6247C0443012045000625253 /* ThemePopoverViewController.swift */,
 				629B554130115F6A00E27089 /* KeyBinding.swift */,
 				629B554230115F6A00E27089 /* PaginationEngine.swift */,
 				629B554330115F6A00E27089 /* PaginationJS.swift */,
@@ -196,6 +199,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6247C0453012045000625253 /* ThemePopoverViewController.swift in Sources */,
 				62D788FF2F75CBEA006F67C1 /* HistoryViewController.swift in Sources */,
 				62D789002F75CBEA006F67C1 /* ReaderViewController.swift in Sources */,
 				62D789012F75CBEA006F67C1 /* ReaderWindowController.swift in Sources */,
