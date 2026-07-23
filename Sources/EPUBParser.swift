@@ -595,30 +595,30 @@ final class EPUBParser: NSObject {
     //
     // "Page" here means one window-height of scroll, matching paginated mode's
     // one-column-per-page convention. Scroll mode's document is the whole book
-    // merged into one continuous document (see buildScrollHTML), so page count
-    // is scoped to the current chapter, found via the .ql-chapter section whose
-    // top is at or above the current scroll position -- the same markers
-    // navigateToChapter already uses.
+    // merged into one continuous document (see buildScrollHTML), so page and
+    // totalPages are computed against the document as a whole -- current
+    // scroll position over total scrollable height -- not scoped to whichever
+    // chapter section the viewport happens to be in. spineIndex/spineCount
+    // (via the same .ql-chapter markers navigateToChapter uses) are reported
+    // alongside for callers that want chapter position separately.
 
     window.honeycrispPageInfo = function() {
       var sections = document.querySelectorAll('.ql-chapter');
       var viewTop  = window.scrollY;
       var winH     = Math.max(1, window.innerHeight);
-      var idx = 0, chapterTop = 0, chapterHeight = document.documentElement.scrollHeight;
+      var docHeight = Math.max(1, document.documentElement.scrollHeight);
+      var idx = 0;
 
       for (var i = 0; i < sections.length; i++) {
         var rect = sections[i].getBoundingClientRect();
         var top  = rect.top + window.scrollY;
         if (top <= viewTop + 1) {
           idx = i;
-          chapterTop = top;
-          chapterHeight = rect.height;
         }
       }
 
-      var localScroll = Math.max(0, viewTop - chapterTop);
-      var page        = Math.max(1, Math.round(localScroll / winH) + 1);
-      var totalPages  = Math.max(1, Math.ceil(chapterHeight / winH));
+      var page        = Math.max(1, Math.round(viewTop / winH) + 1);
+      var totalPages  = Math.max(1, Math.ceil(docHeight / winH));
 
       return JSON.stringify({
         page: Math.min(page, totalPages),

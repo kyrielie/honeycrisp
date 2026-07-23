@@ -298,8 +298,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Actions
 
     @objc func openSettingsAction(_ sender: Any?) {
-        SettingsWindowController.shared.showWindow(nil)
-        SettingsWindowController.shared.window?.makeKeyAndOrderFront(nil)
+        NSLog("[Honeycrisp][Settings] openSettingsAction called, sender=%@", String(describing: sender))
+        let controller = SettingsWindowController.shared
+        NSLog("[Honeycrisp][Settings] got SettingsWindowController.shared, window=%@", String(describing: controller.window))
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        if let w = controller.window {
+            NSLog("[Honeycrisp][Settings] after makeKeyAndOrderFront: isVisible=%@ isKeyWindow=%@ frame=%@ level=%d",
+                  String(w.isVisible), String(w.isKeyWindow), NSStringFromRect(w.frame), w.level.rawValue)
+        } else {
+            NSLog("[Honeycrisp][Settings] controller.window is nil after showWindow")
+        }
     }
 
     @objc private func openDocumentAction() {

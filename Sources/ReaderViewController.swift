@@ -737,9 +737,13 @@ final class ReaderViewController: NSViewController {
 
     /// Scroll mode's counterpart to the paginated column-based page count —
     /// see EPUBParser.honeycrispPageInfo for how these values are derived.
+    /// page/totalPages are whole-book (one "page" = one window-height of
+    /// scroll across the merged document); spineIndex/spineCount are
+    /// available but not shown here, matching paginated mode's leading
+    /// fraction being column-within-chapter rather than book-wide.
     func didReceiveScrollPageInfo(page: Int, totalPages: Int, spineIndex: Int, spineCount: Int) {
         guard currentMode == .scroll else { return }
-        pageCountLabel?.stringValue = "\(spineIndex + 1)/\(spineCount)"
+        pageCountLabel?.stringValue = "\(page)/\(totalPages)"
     }
 
     /// Paginated-mode counterpart, driven by spineDidLoad/positionUpdate.
@@ -972,6 +976,7 @@ final class ReaderViewController: NSViewController {
         // ("openSettingsAction:") is identical to AppDelegate's, so the chain
         // finds this method again before it ever reaches AppDelegate -- infinite
         // self-recursion and a stack overflow. Target AppDelegate directly.
+        NSLog("[Honeycrisp][Settings] toolbar gear button tapped, forwarding to AppDelegate")
         (NSApp.delegate as? AppDelegate)?.openSettingsAction(sender)
     }
 
