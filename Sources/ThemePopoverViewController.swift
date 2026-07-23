@@ -16,7 +16,7 @@ final class ThemePopoverViewController: NSViewController {
     private var rows: [ThemeRowView] = []
 
     override func loadView() {
-        let themes = ReaderTheme.allCases
+        let themes = SettingsManager.shared.themes
         let rowHeight: CGFloat = 36
         let headerHeight: CGFloat = 34
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 220, height: headerHeight + CGFloat(themes.count) * rowHeight + 8))
@@ -70,15 +70,15 @@ final class ThemePopoverViewController: NSViewController {
         refreshCheckmarks()
     }
 
-    private func select(_ theme: ReaderTheme) {
-        SettingsManager.shared.currentTheme = theme
+    private func select(_ theme: Theme) {
+        SettingsManager.shared.currentThemeID = theme.id
         refreshCheckmarks()
     }
 
     private func refreshCheckmarks() {
-        let current = SettingsManager.shared.currentTheme
+        let current = SettingsManager.shared.currentThemeID
         for row in rows {
-            row.setSelected(row.theme == current)
+            row.setSelected(row.theme.id == current)
         }
     }
 }
@@ -87,15 +87,15 @@ final class ThemePopoverViewController: NSViewController {
 
 private final class ThemeRowView: NSView {
 
-    let theme: ReaderTheme
-    private let onSelect: (ReaderTheme) -> Void
+    let theme: Theme
+    private let onSelect: (Theme) -> Void
 
     private let swatch = NSView()
     private let label = NSTextField(labelWithString: "")
     private let checkmark = NSImageView()
     private let button = NSButton()
 
-    init(theme: ReaderTheme, onSelect: @escaping (ReaderTheme) -> Void) {
+    init(theme: Theme, onSelect: @escaping (Theme) -> Void) {
         self.theme = theme
         self.onSelect = onSelect
         super.init(frame: .zero)
@@ -113,7 +113,7 @@ private final class ThemeRowView: NSView {
         swatch.translatesAutoresizingMaskIntoConstraints = false
         addSubview(swatch)
 
-        label.stringValue = theme.displayName
+        label.stringValue = theme.name
         label.font = NSFont.systemFont(ofSize: 13)
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
@@ -152,18 +152,13 @@ private final class ThemeRowView: NSView {
         ])
     }
 
-    /// Matches ReaderTheme.cssBackground; "system" and "custom" don't have a
-    /// single representative color, so the swatch falls back to something
-    /// reasonable rather than reproducing WebKit's CSS resolution here.
-    private func swatchColor(for theme: ReaderTheme) -> NSColor {
-        switch theme {
-        case .system: return .windowBackgroundColor
-        case .light:  return .white
-        case .dark:   return NSColor(calibratedWhite: 0.11, alpha: 1)
-        case .sepia:  return NSColor(calibratedRed: 0.957, green: 0.925, blue: 0.847, alpha: 1)
-        case .custom:
-            return NSColor(hexString: SettingsManager.shared.customBackgroundCSS) ?? .windowBackgroundColor
-        }
+    /// Every theme is now user-editable and carries its own background for both
+    /// system appearances, so the swatch just reads whichever one is currently
+    /// active -- no more per-fixed-case switch.
+    private func swatchColor(for theme: Theme) -> NSColor {
+        let isDark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let css = isDark ? theme.dark.background : theme.light.background
+        return NSColor(hexString: css) ?? .windowBackgroundColor
     }
 
     func setSelected(_ selected: Bool) {
