@@ -90,7 +90,6 @@ final class ReaderViewController: NSViewController {
     // MARK: - Layout
 
     private var splitView: NSSplitView!
-    private var sidebarContainer: NSView!
     private var contentContainer: NSView!
     private var searchOverlay: NSView!
     private var searchBarVisible = false
@@ -162,19 +161,7 @@ final class ReaderViewController: NSViewController {
         tocSidebar = TOCSidebarViewController()
         tocSidebar.delegate = self
 
-        sidebarContainer = NSView()
-        sidebarContainer.wantsLayer = true
-        sidebarContainer.translatesAutoresizingMaskIntoConstraints = false
-
         addChild(tocSidebar)
-        sidebarContainer.addSubview(tocSidebar.view)
-        tocSidebar.view.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            tocSidebar.view.leadingAnchor.constraint(equalTo: sidebarContainer.leadingAnchor),
-            tocSidebar.view.trailingAnchor.constraint(equalTo: sidebarContainer.trailingAnchor),
-            tocSidebar.view.topAnchor.constraint(equalTo: sidebarContainer.topAnchor),
-            tocSidebar.view.bottomAnchor.constraint(equalTo: sidebarContainer.bottomAnchor),
-        ])
 
         // ── Content (webView + search overlay) ───────────────────────────────
         contentContainer = NSView()
@@ -219,19 +206,8 @@ final class ReaderViewController: NSViewController {
         splitView.dividerStyle = .thin
         splitView.delegate = self
 
-        splitView.addArrangedSubview(sidebarContainer)
+        splitView.addArrangedSubview(tocSidebar.view)
         splitView.addArrangedSubview(contentContainer)
-
-        // Re-assert this after addArrangedSubview, not just at creation (see the
-        // translatesAutoresizingMaskIntoConstraints assignments above). NSSplitView,
-        // unlike NSStackView, does not manage Auto Layout for its arranged subviews --
-        // it's a frame/autoresizing-oriented container, and addArrangedSubview(_:)
-        // has been observed to reset this flag back to true on the view it takes,
-        // silently undoing the earlier assignment and reintroducing the
-        // autoresizing-mask-derived width==0/height==0 constraints this is meant to
-        // prevent.
-        sidebarContainer.translatesAutoresizingMaskIntoConstraints = false
-        contentContainer.translatesAutoresizingMaskIntoConstraints = false
 
         // ── Root ─────────────────────────────────────────────────────────────
         let root = NSVisualEffectView()
@@ -517,7 +493,7 @@ final class ReaderViewController: NSViewController {
     /// Returns whether the sidebar is currently expanded (not collapsed).
     private var isSidebarVisible: Bool {
         // NSSplitView considers a subview collapsed when its frame width is 0
-        return !splitView.isSubviewCollapsed(sidebarContainer)
+        return !splitView.isSubviewCollapsed(tocSidebar.view)
     }
 
     private func setSidebarVisible(_ visible: Bool, animated: Bool = true) {
@@ -1081,7 +1057,7 @@ extension ReaderViewController: SearchBarDelegate {
 extension ReaderViewController: NSSplitViewDelegate {
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMin: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { 160 }
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMax: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { 320 }
-    func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { subview === sidebarContainer }
+    func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { subview === tocSidebar.view }
     func splitView(_ splitView: NSSplitView, shouldCollapseSubview subview: NSView, forDoubleClickOnDividerAt dividerIndex: Int) -> Bool { true }
 }
 
