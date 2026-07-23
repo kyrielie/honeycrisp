@@ -600,8 +600,8 @@ final class AppearanceSettingsViewController: NSViewController {
 
         let currentPx = Self.px(fromPercent: SettingsManager.shared.fontSizePercent)
         let s = NSStepper()
-        s.minValue = Self.px(fromPercent: 50)    // matches fontSizePercent's stored clamp (50-300%)
-        s.maxValue = Self.px(fromPercent: 300)
+        s.minValue = Double(Self.px(fromPercent: 50))    // matches fontSizePercent's stored clamp (50-300%)
+        s.maxValue = Double(Self.px(fromPercent: 300))
         s.increment = 1
         s.integerValue = currentPx
         s.target = self
