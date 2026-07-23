@@ -203,11 +203,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let readingMenu = NSMenu(title: "Reading")
         readingMenuItem.submenu = readingMenu
 
-        // Rebuilt on every opening (via the delegate below) rather than once here,
-        // since themes can be renamed/added/deleted at any time from Settings or
-        // the toolbar popover — a static snapshot taken at launch would go stale.
         let themeMenu = NSMenu(title: "Theme")
-        themeMenu.delegate = self
+        for theme in ReaderTheme.allCases {
+            let item = NSMenuItem(title: theme.displayName, action: #selector(selectTheme(_:)), keyEquivalent: "")
+            item.tag = theme.rawValue
+            item.target = self
+            themeMenu.addItem(item)
+        }
         let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
         themeItem.submenu = themeMenu
         readingMenu.addItem(themeItem)
@@ -345,8 +347,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func selectTheme(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID else { return }
-        SettingsManager.shared.currentThemeID = id
+        guard let theme = ReaderTheme(rawValue: sender.tag) else { return }
+        SettingsManager.shared.currentTheme = theme
     }
 
     @objc private func selectColsPerScreen(_ sender: NSMenuItem) {
@@ -380,22 +382,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 // loaded. Picked up here because it's the same mechanism already needed for the
 // Paginated Mode checkmark, not separately scoped work.
 
-extension AppDelegate: NSMenuDelegate {
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.items.removeAll()
-        for theme in SettingsManager.shared.themes {
-            let item = NSMenuItem(title: theme.name, action: #selector(selectTheme(_:)), keyEquivalent: "")
-            item.representedObject = theme.id
-            item.target = self
-            menu.addItem(item)
-        }
-    }
-}
-
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(selectTheme(_:)) {
-            menuItem.state = (menuItem.representedObject as? UUID == SettingsManager.shared.currentThemeID) ? .on : .off
+            menuItem.state = (SettingsManager.shared.currentTheme.rawValue == menuItem.tag) ? .on : .off
             return true
         }
         if menuItem.action == #selector(selectColsPerScreen(_:)) {

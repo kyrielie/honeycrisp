@@ -682,7 +682,6 @@ final class EPUBParser: NSObject {
         --reader-font-family: ui-sans-serif, -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
         --reader-bg: transparent;
         --reader-text: var(--system-text);
-        --reader-link: -apple-system-blue;
         --reader-line-height: 1.6;
         --reader-max-width: 700px;
         --reader-padding-h: 24px;
@@ -761,7 +760,7 @@ final class EPUBParser: NSObject {
         word-break: break-all;
     }
     
-    a { color: var(--reader-link); pointer-events: var(--reader-link-pointer-events); }
+    a { color: -apple-system-blue; pointer-events: var(--reader-link-pointer-events); }
     
     * { 
         font-family: inherit !important; 
