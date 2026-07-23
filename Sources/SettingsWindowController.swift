@@ -105,6 +105,27 @@ final class GeneralSettingsViewController: NSViewController {
         indentHint.textColor = .secondaryLabelColor
         stack.addArrangedSubview(indentHint)
 
+        // Reading mode — moved here from the toolbar's paged/scroll toggle button
+        // (replaced there by the Settings gear icon). This mirrors the View-menu
+        // "Paginated Mode" item (⇧⌘P): it's per-window, session-only state, not a
+        // persisted default (see ReaderViewController.toggleReadingMode), so this
+        // checkbox reflects and drives whichever reader window is frontmost, and
+        // is refreshed on viewWillAppear rather than bound to SettingsManager.
+        let readingModeCheckbox = NSButton(
+            checkboxWithTitle: "Paginated Mode",
+            target: self,
+            action: #selector(toggleReadingMode(_:))
+        )
+        self.readingModeCheckbox = readingModeCheckbox
+        stack.addArrangedSubview(readingModeCheckbox)
+
+        let readingModeHint = NSTextField(wrappingLabelWithString:
+            "Show the book as fixed, swipeable columns instead of one continuous scroll. Applies to the frontmost reader window."
+        )
+        readingModeHint.font = NSFont.systemFont(ofSize: 11)
+        readingModeHint.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(readingModeHint)
+
         root.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
@@ -113,6 +134,44 @@ final class GeneralSettingsViewController: NSViewController {
         ])
 
         self.view = root
+    }
+
+    private weak var readingModeCheckbox: NSButton?
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        refreshReadingModeCheckbox()
+    }
+
+    private func refreshReadingModeCheckbox() {
+        guard let vc = frontmostReaderVC() else {
+            readingModeCheckbox?.state = .off
+            readingModeCheckbox?.isEnabled = false
+            return
+        }
+        readingModeCheckbox?.isEnabled = true
+        readingModeCheckbox?.state = vc.currentMode == .paginated ? .on : .off
+    }
+
+    /// Same lookup AppDelegate.readerVC() uses for the View-menu toggle. The
+    /// Settings window is a separate NSWindow, so NSApp.keyWindow at the moment
+    /// this fires is Settings itself, not the reader — mainWindow (the app's
+    /// most-recently-main document window) is the right lookup here instead.
+    private func frontmostReaderVC() -> ReaderViewController? {
+        NSApp.mainWindow?.contentViewController as? ReaderViewController
+    }
+
+    @objc private func toggleReadingMode(_ sender: NSButton) {
+        guard let vc = frontmostReaderVC() else {
+            refreshReadingModeCheckbox()
+            return
+        }
+        // toggleReadingMode(_:) finishes asynchronously (it round-trips through
+        // webView.evaluateJavaScript to capture the current scroll fraction before
+        // switching), so vc.currentMode is still the OLD mode right after this
+        // call returns. The checkbox's own just-set state is what the user
+        // intended and is correct here without waiting on that round-trip.
+        vc.toggleReadingMode(nil)
     }
 
     @objc private func toggleFormatForAO3(_ sender: NSButton) {

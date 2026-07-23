@@ -239,6 +239,14 @@ final class SettingsManager {
 
     // MARK: Pagination
 
+    /// Whether the toolbar's page-count label ("3 of 12 · Ch 2 of 20") is shown.
+    /// Pure display toggle, no re-render of reader content needed — uses the
+    /// generic notification rather than the cosmetic/structural ones.
+    var showPageCount: Bool {
+        get { defaults.object(forKey: "readerShowPageCount") == nil ? true : defaults.bool(forKey: "readerShowPageCount") }
+        set { defaults.set(newValue, forKey: "readerShowPageCount"); notifyChange() }
+    }
+
     /// Global default for which mode a reader window opens in. Deliberately not
     /// per-book — every window opens in whatever the current global default is,
     /// not read from or written to HistoryEntry.

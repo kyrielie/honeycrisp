@@ -11,7 +11,10 @@
 //  • Search: moved to menu bar (⌘F); debounced via a 0.3 s Timer
 //  • Search highlighting: window.searchText() now returns count AND highlights via
 //    CSS mark elements injected by the JS embedded in the HTML template
-//  • Settings button removed from toolbar (accessible only via menu bar)
+//  • Settings gear button back in the toolbar (replaces the old paged/scroll
+//    toggle button); reading-mode toggle itself moved into Settings' General tab
+//  • Page-count display added to the toolbar: "page/pages · chapter/chapters",
+//    scoped per spine item (see EPUBParser.honeycrispPageInfo, PaginationEngine.spineDidLoad)
 //  • "Format for AO3" rename propagated; EPUBParser receives updated flag name
 
 import AppKit
@@ -35,6 +38,17 @@ final class ReaderViewController: NSViewController {
     private(set) var currentMode: ReadingMode = .scroll
     private var paginationEngine: PaginationEngine?
     private var currentSpineIndex: Int = 0
+    // MARK: - Page count (menu bar display)
+    //
+    // "Page" is scoped per spine item / chapter (see EPUBParser.honeycrispPageInfo
+    // and PaginationEngine.spineDidLoad's totalCols) rather than a whole-book
+    // total: paginated mode only ever knows the column count of the currently
+    // loaded spine item (see loadSpineItem), and scroll mode's merged document
+    // has no cheap way to attribute an exact whole-book page count without a
+    // separate offscreen pre-pagination pass. Displayed as "page/pages · chapter/chapters".
+    private var paginatedCurrentColumn: Int = 0
+    private var paginatedTotalColumns: Int = 1
+    private weak var pageCountLabel: NSTextField?
     /// Flips true the first time `viewDidLayout()` runs with the view attached to
     /// a real window — guards the first paginated load against racing the
     /// window's first layout pass, ported from Ambrosia's `isLayoutReady`/
@@ -80,7 +94,6 @@ final class ReaderViewController: NSViewController {
     /// Weak refs to toolbar controls that need state updates
     private weak var floatButton: NSButton?
     private weak var historyButton: NSButton?
-    private weak var readingModeButton: NSButton?
     private weak var titleLabel: NSTextField?   // centered title in toolbar
 
     /// Debounce timer for search input
@@ -118,6 +131,7 @@ final class ReaderViewController: NSViewController {
         msgController.add(PositionMessageHandler(owner: self), name: "positionHandler")
         msgController.add(PageActionMessageHandler(owner: self), name: "pageAction")
         msgController.add(PositionUpdateMessageHandler(owner: self), name: "positionUpdate")
+        msgController.add(PageInfoMessageHandler(owner: self), name: "pageInfoHandler")
 
         webView = ReaderWebView(frame: NSRect(x: 0, y: 0, width: 780, height: 920), configuration: cfg)
         webView.navigationDelegate = self
@@ -126,6 +140,11 @@ final class ReaderViewController: NSViewController {
         webView.readerViewController = self
 
         paginationEngine = PaginationEngine(webView: webView)
+        paginationEngine?.spineDidLoad = { [weak self] totalCols in
+            guard let self else { return }
+            self.paginatedTotalColumns = totalCols
+            self.updatePageCountLabel()
+        }
 
         loadingIndicator = NSProgressIndicator()
         loadingIndicator.style = .spinning
@@ -224,7 +243,19 @@ final class ReaderViewController: NSViewController {
         NotificationCenter.default.addObserver(self,
             selector: #selector(scheduleStructuralReload),
             name: .readerStructuralSettingsChanged, object: nil)
+        NotificationCenter.default.addObserver(self,
+            selector: #selector(applyPageCountVisibility),
+            name: SettingsManager.settingsChangedNotification, object: nil)
         applyDynamicSettings()
+        applyPageCountVisibility()
+    }
+
+    /// Reflects SettingsManager.shared.showPageCount (Reading menu's "Show Page
+    /// Count" toggle). Hides the label itself rather than removing the toolbar
+    /// item outright — simpler than reconstructing toolbarDefaultItemIdentifiers
+    /// live, at the cost of leaving a small empty gap in the toolbar when hidden.
+    @objc private func applyPageCountVisibility() {
+        pageCountLabel?.isHidden = !SettingsManager.shared.showPageCount
     }
 
     override func viewDidAppear() {
@@ -293,9 +324,9 @@ final class ReaderViewController: NSViewController {
 
                     self.currentMode = SettingsManager.shared.defaultReadingMode
                     self.applyScrollbarVisibility()
-                    self.updateReadingModeButton()
                     if self.currentMode == .paginated {
                         self.installScrollWheelMonitorIfNeeded()
+                        self.installKeyDownMonitor()
                         if let saved = HistoryManager.shared.savedPosition(for: url) {
                             self.currentSpineIndex = min(saved.spineIndex, max(0, pkg.spineURLs.count - 1))
                             self.pendingPaginatedRestorePosition = saved.characterOffset > 0
@@ -408,8 +439,8 @@ final class ReaderViewController: NSViewController {
         }
     }
 
-    /// Wired to the View-menu "Paginated Mode" item (⇧⌘P) and the .readingModeToggle
-    /// toolbar button. Reloads the current content in the new mode at the
+    /// Wired to the View-menu "Paginated Mode" item (⇧⌘P) and the "Paginated Mode"
+    /// checkbox in Settings' General tab. Reloads the current content in the new mode at the
     /// equivalent fraction-based position. Mode isn't persisted per-file — nothing
     /// is written back to HistoryEntry here (SettingsManager.defaultReadingMode,
     /// the global default, is untouched by this toggle too; it only flips this
@@ -431,7 +462,6 @@ final class ReaderViewController: NSViewController {
                 self.applyScrollbarVisibility()
                 self.installScrollWheelMonitorIfNeeded()
                 self.installKeyDownMonitor()
-                self.updateReadingModeButton()
                 let fraction = (result as? Double) ?? 0
                 self.loadSpineItem(index: 0, restorePosition: .fraction(fraction), pkg: pkg)
             }
@@ -440,15 +470,8 @@ final class ReaderViewController: NSViewController {
             applyScrollbarVisibility()
             removeScrollWheelMonitor()
             removeKeyDownMonitor()
-            updateReadingModeButton()
             renderScrollContent(pkg: pkg)
         }
-    }
-
-    private func updateReadingModeButton() {
-        let isPaginated = currentMode == .paginated
-        readingModeButton?.contentTintColor = isPaginated ? .systemOrange : nil
-        readingModeButton?.toolTip = isPaginated ? "Scroll Mode" : "Paginated Mode"
     }
 
     // MARK: - Toolbar Title
@@ -680,8 +703,31 @@ final class ReaderViewController: NSViewController {
     /// PaginationJS posts this after every column navigation (page turn or
     /// restore). Reuses the same flushPositionSave path scroll mode's debounced
     /// scroll listener drives, rather than a separate paginated-only scheme.
-    func didReceivePositionUpdate() {
+    /// `column`/`totalColumns` (0-based column, total columns in the current
+    /// spine item) update the page-count display; nil if the JS payload
+    /// couldn't be parsed, in which case the label is simply left as-is.
+    func didReceivePositionUpdate(column: Int?, totalColumns: Int?) {
+        if let column { paginatedCurrentColumn = column }
+        if let totalColumns { paginatedTotalColumns = totalColumns }
+        updatePageCountLabel()
         flushPositionSave()
+    }
+
+    /// Scroll mode's counterpart to the paginated column-based page count —
+    /// see EPUBParser.honeycrispPageInfo for how these values are derived.
+    func didReceiveScrollPageInfo(page: Int, totalPages: Int, spineIndex: Int, spineCount: Int) {
+        guard currentMode == .scroll else { return }
+        pageCountLabel?.stringValue = "\(page) of \(totalPages) · Ch \(spineIndex + 1) of \(spineCount)"
+    }
+
+    /// Paginated-mode counterpart, driven by spineDidLoad/positionUpdate.
+    /// Spine index/count come from the currently loaded book's spine, same
+    /// values loadSpineItem/navigateSpine already track.
+    private func updatePageCountLabel() {
+        guard currentMode == .paginated else { return }
+        let spineCount = currentPackage?.spineURLs.count ?? 1
+        let page = paginatedCurrentColumn + 1
+        pageCountLabel?.stringValue = "\(page) of \(paginatedTotalColumns) · Ch \(currentSpineIndex + 1) of \(spineCount)"
     }
 
     // MARK: - Navigation
@@ -893,8 +939,13 @@ final class ReaderViewController: NSViewController {
         (view.window?.windowController as? ReaderWindowController)?.showOpenPanel()
     }
 
-    @objc private func readingModeToggleAction(_ sender: Any?) {
-        toggleReadingMode(sender)
+    /// Toolbar gear button — opens the same Settings window as the App menu's
+    /// "Settings…" (⌘,) item. Routed through the responder chain rather than
+    /// importing AppDelegate directly, matching how other cross-cutting actions
+    /// (e.g. Float on Top, ReaderWindowController.toggleFloat) are already
+    /// dispatched from this toolbar.
+    @objc private func openSettingsAction(_ sender: Any?) {
+        NSApp.sendAction(#selector(AppDelegate.openSettingsAction(_:)), to: nil, from: sender)
     }
 
     @objc private func floatAction(_ sender: Any?) {
@@ -1011,15 +1062,16 @@ extension ReaderViewController: WKNavigationDelegate {
 
 // MARK: - NSToolbarDelegate
 //
-// Toolbar items:  [openFile] [flexibleSpace] [titleLabel] [flexibleSpace] [fontSize] [history] [floatToggle]
+// Toolbar items:  [openFile] [flexibleSpace] [titleLabel] [flexibleSpace] [pageCount] [fontSize] [openSettings] [history] [floatToggle]
 //
-// Removed vs original: .toc, .search, .settings
-// Added:               .titleLabel (centered, truncated book title)
+// Removed vs original: .toc, .search, .readingModeToggle (moved into Settings' General tab)
+// Added:               .titleLabel (centered, truncated book title), .pageCount
+//                       (centered "page/pages · chapter/chapters"), .openSettings (gear icon)
 
 extension ReaderViewController: NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.openFile, .flexibleSpace, .titleLabel, .flexibleSpace, .fontSize, .readingModeToggle, .history, .floatToggle]
+        [.openFile, .flexibleSpace, .titleLabel, .flexibleSpace, .pageCount, .fontSize, .openSettings, .history, .floatToggle]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -1078,12 +1130,28 @@ extension ReaderViewController: NSToolbarDelegate {
             item.label = "History"
             return item
 
-        case .readingModeToggle:
+        case .pageCount:
+            // Non-interactive label, same pattern as .titleLabel: "3 of 12 · Ch 2 of 20".
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            let btn = makeToolbarButton(symbol: "rectangle.split.2x1", tooltip: "Paginated Mode", action: #selector(readingModeToggleAction(_:)))
-            readingModeButton = btn
+            let label = NSTextField(labelWithString: "")
+            label.font = NSFont.systemFont(ofSize: 11)
+            label.textColor = .secondaryLabelColor
+            label.alignment = .center
+            label.lineBreakMode = .byTruncatingTail
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.widthAnchor.constraint(lessThanOrEqualToConstant: 180).isActive = true
+            pageCountLabel = label
+            item.view = label
+            item.label = ""
+            item.minSize = NSSize(width: 60, height: 24)
+            item.maxSize = NSSize(width: 180, height: 24)
+            return item
+
+        case .openSettings:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            let btn = makeToolbarButton(symbol: "gearshape", tooltip: "Settings…", action: #selector(openSettingsAction(_:)))
             item.view = btn
-            item.label = "Pages"
+            item.label = "Settings"
             return item
 
         case .floatToggle:
@@ -1154,13 +1222,42 @@ private class PageActionMessageHandler: NSObject, WKScriptMessageHandler {
 /// Receives `{ fraction, column, totalColumns }` from PaginationJS's
 /// _postPositionUpdate, posted after every column navigation (page turn or
 /// restore). Triggers a position save via the same flushPositionSave path scroll
-/// mode's debounced scroll listener drives.
+/// mode's debounced scroll listener drives, and updates the page-count display.
 private class PositionUpdateMessageHandler: NSObject, WKScriptMessageHandler {
     weak var owner: ReaderViewController?
     init(owner: ReaderViewController) { self.owner = owner }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        owner?.didReceivePositionUpdate()
+        guard let str = message.body as? String,
+              let data = str.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            owner?.didReceivePositionUpdate(column: nil, totalColumns: nil)
+            return
+        }
+        let column = (dict["column"] as? NSNumber)?.intValue
+        let total  = (dict["totalColumns"] as? NSNumber)?.intValue
+        owner?.didReceivePositionUpdate(column: column, totalColumns: total)
+    }
+}
+
+/// Receives `{ page, totalPages, spineIndex, spineCount }` from
+/// EPUBParser's honeycrispPageInfo() (scroll mode only). Updates the
+/// page-count toolbar label.
+private class PageInfoMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var owner: ReaderViewController?
+    init(owner: ReaderViewController) { self.owner = owner }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let str = message.body as? String,
+              let data = str.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let page = (dict["page"] as? NSNumber)?.intValue,
+              let totalPages = (dict["totalPages"] as? NSNumber)?.intValue,
+              let spineIndex = (dict["spineIndex"] as? NSNumber)?.intValue,
+              let spineCount = (dict["spineCount"] as? NSNumber)?.intValue
+        else { return }
+        owner?.didReceiveScrollPageInfo(page: page, totalPages: totalPages, spineIndex: spineIndex, spineCount: spineCount)
     }
 }
 
@@ -1222,11 +1319,12 @@ final class ReaderWebView: WKWebView {
 // MARK: - Toolbar identifier extensions
 
 extension NSToolbarItem.Identifier {
-    static let openFile    = NSToolbarItem.Identifier("openFile")
-    static let titleLabel  = NSToolbarItem.Identifier("titleLabel")   // NEW: centered title
-    static let fontSize    = NSToolbarItem.Identifier("fontSize")
-    static let history     = NSToolbarItem.Identifier("history")
-    static let floatToggle = NSToolbarItem.Identifier("floatToggle")
-    static let readingModeToggle = NSToolbarItem.Identifier("readingModeToggle")
+    static let openFile     = NSToolbarItem.Identifier("openFile")
+    static let titleLabel   = NSToolbarItem.Identifier("titleLabel")   // NEW: centered title
+    static let pageCount    = NSToolbarItem.Identifier("pageCount")    // NEW: "3 of 12 · Ch 2 of 20"
+    static let fontSize     = NSToolbarItem.Identifier("fontSize")
+    static let history      = NSToolbarItem.Identifier("history")
+    static let floatToggle  = NSToolbarItem.Identifier("floatToggle")
+    static let openSettings = NSToolbarItem.Identifier("openSettings")  // NEW: replaces readingModeToggle
     // .toc, .search, .settings removed — now in menu bar only
 }
