@@ -29,6 +29,7 @@ final class SettingsWindowController: NSWindowController {
         )
         window.title = "Settings"
         window.center()
+        window.isReleasedWhenClosed = false
         super.init(window: window)
         window.contentViewController = SettingsTabViewController()
     }
