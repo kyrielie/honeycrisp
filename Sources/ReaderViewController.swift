@@ -243,6 +243,19 @@ final class ReaderViewController: NSViewController {
             name: SettingsManager.settingsChangedNotification, object: nil)
         applyDynamicSettings()
         applyPageCountVisibility()
+        // Every theme now carries both a light and dark ThemeColorSet (see
+        // SettingsManager.effectiveColorSet), so a system appearance flip changes
+        // the active theme's actual colors, not just the .system special case.
+        NSApp.addObserver(self, forKeyPath: "effectiveAppearance", options: [], context: nil)
+    }
+
+    override func observeValue(forKeyPath keyPath: String?, of object: Any?,
+                                change: [NSKeyValueChangeKey: Any]?, context: UnsafeMutableRawPointer?) {
+        if keyPath == "effectiveAppearance" {
+            applyCosmeticCSSUpdate()
+        } else {
+            super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
+        }
     }
 
     /// Reflects SettingsManager.shared.showPageCount (Reading menu's "Show Page
@@ -278,6 +291,7 @@ final class ReaderViewController: NSViewController {
         if let monitor = keyDownMonitor { NSEvent.removeMonitor(monitor) }
         securityScopedURL?.stopAccessingSecurityScopedResource()
         NotificationCenter.default.removeObserver(self)
+        NSApp.removeObserver(self, forKeyPath: "effectiveAppearance")
     }
 
     // MARK: - Security
@@ -579,6 +593,7 @@ final class ReaderViewController: NSViewController {
             '--reader-font-family:' + \(fontFamilyLiteral) + ';' +
             '--reader-bg:\(s.effectiveBackgroundCSS);' +
             '--reader-text:\(s.effectiveTextCSS);' +
+            '--reader-link:\(s.effectiveLinkCSS);' +
             '--reader-line-height:\(s.lineHeight);' +
             '--reader-max-width:\(s.maxWidth)px;' +
             '--reader-padding-h:\(s.paddingH)px;' +
@@ -609,11 +624,11 @@ final class ReaderViewController: NSViewController {
     }
 
     private func applyWindowAppearance() {
-        switch SettingsManager.shared.currentTheme {
-        case .system:                  NSApp.appearance = nil
-        case .dark:                    NSApp.appearance = NSAppearance(named: .darkAqua)
-        case .light, .sepia, .custom:  NSApp.appearance = NSAppearance(named: .aqua)
-        }
+        // Every theme now supplies both a light and a dark ThemeColorSet (see
+        // SettingsManager.effectiveColorSet), so the window always follows the
+        // system appearance rather than forcing aqua/darkAqua per theme the way
+        // the old fixed-case System/Light/Dark/Sepia/Custom model needed to.
+        NSApp.appearance = nil
     }
 
     /// Debounced (~0.15s) full reload for structural settings changes (formatting
@@ -1188,7 +1203,7 @@ extension ReaderViewController: NSToolbarDelegate {
 
         case .themePopover:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            let btn = makeToolbarButton(symbol: "gearshape", tooltip: "Theme…", action: #selector(showThemePopover(_:)))
+            let btn = makeToolbarButton(symbol: "circle.lefthalf.filled", tooltip: "Theme…", action: #selector(showThemePopover(_:)))
             item.view = btn
             item.label = "Theme"
             return item
