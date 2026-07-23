@@ -164,6 +164,7 @@ final class ReaderViewController: NSViewController {
 
         sidebarContainer = NSView()
         sidebarContainer.wantsLayer = true
+        sidebarContainer.translatesAutoresizingMaskIntoConstraints = false
 
         addChild(tocSidebar)
         sidebarContainer.addSubview(tocSidebar.view)
@@ -177,6 +178,7 @@ final class ReaderViewController: NSViewController {
 
         // ── Content (webView + search overlay) ───────────────────────────────
         contentContainer = NSView()
+        contentContainer.translatesAutoresizingMaskIntoConstraints = false
 
         contentContainer.addSubview(webView)
         webView.translatesAutoresizingMaskIntoConstraints = false
