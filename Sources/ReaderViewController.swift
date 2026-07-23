@@ -222,6 +222,17 @@ final class ReaderViewController: NSViewController {
         splitView.addArrangedSubview(sidebarContainer)
         splitView.addArrangedSubview(contentContainer)
 
+        // Re-assert this after addArrangedSubview, not just at creation (see the
+        // translatesAutoresizingMaskIntoConstraints assignments above). NSSplitView,
+        // unlike NSStackView, does not manage Auto Layout for its arranged subviews --
+        // it's a frame/autoresizing-oriented container, and addArrangedSubview(_:)
+        // has been observed to reset this flag back to true on the view it takes,
+        // silently undoing the earlier assignment and reintroducing the
+        // autoresizing-mask-derived width==0/height==0 constraints this is meant to
+        // prevent.
+        sidebarContainer.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.translatesAutoresizingMaskIntoConstraints = false
+
         // ── Root ─────────────────────────────────────────────────────────────
         let root = NSVisualEffectView()
         root.material = .contentBackground
