@@ -71,7 +71,6 @@ final class SearchBarViewController: NSViewController {
         NSLayoutConstraint.activate([
             searchField.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
             searchField.centerYAnchor.constraint(equalTo: root.centerYAnchor),
-            searchField.widthAnchor.constraint(equalToConstant: 180),
 
             resultLabel.leadingAnchor.constraint(equalTo: searchField.trailingAnchor, constant: 8),
             resultLabel.centerYAnchor.constraint(equalTo: root.centerYAnchor),

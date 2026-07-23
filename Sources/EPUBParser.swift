@@ -544,6 +544,21 @@ final class EPUBParser: NSObject {
       return count;
     };
 
+    // Seeks scroll mode to a given spine item at a given fraction (0.0-1.0)
+    // through that item's rendered height. Used when toggling from paginated
+    // mode back to scroll mode, to hand off the live in-session position
+    // (spine index + column fraction) rather than falling back to whatever
+    // was last persisted to HistoryEntry, which can be stale if the user
+    // toggles modes before the debounced position save has flushed.
+    window.honeycrispNavigateToChapterFraction = function(spineIndex, fraction) {
+      var section = document.getElementById('chapter-' + spineIndex);
+      if (!section) return;
+      var rect = section.getBoundingClientRect();
+      var top = rect.top + window.scrollY;
+      var targetY = top + Math.max(0, Math.min(1, fraction)) * rect.height;
+      window.scrollTo(0, Math.max(0, targetY));
+    };
+
     window.honeycrispNavigateToOffset = function(targetOffset) {
       var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
       var count = 0, node, lastNode = null;
@@ -613,11 +628,11 @@ final class EPUBParser: NSObject {
       });
     };
 
-    function reportPageInfo() {
+    window.reportPageInfo = function() {
       if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.pageInfoHandler) {
         window.webkit.messageHandlers.pageInfoHandler.postMessage(window.honeycrispPageInfo());
       }
-    }
+    };
 
     window.addEventListener('scroll', function() {
       clearTimeout(window._progressTimer);
@@ -626,6 +641,16 @@ final class EPUBParser: NSObject {
         reportPosition();
         reportPageInfo();
       }, 500);
+    }, { passive: true });
+
+    // totalPages depends on window.innerHeight, which a scroll event alone
+    // doesn't cover -- resizing the window without scrolling left the page
+    // counter stale until this listener was added.
+    window.addEventListener('resize', function() {
+      clearTimeout(window._resizeTimer);
+      window._resizeTimer = setTimeout(function() {
+        reportPageInfo();
+      }, 250);
     }, { passive: true });
 
     // Page info also needs an immediate read on load (before the first scroll

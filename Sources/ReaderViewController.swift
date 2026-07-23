@@ -67,6 +67,12 @@ final class ReaderViewController: NSViewController {
     private var keyDownMonitor: Any?
     private var resizeDebounceTimer: Timer?
     private var pendingPaginatedRestorePosition: RestorePosition = .start
+
+    /// Set just before switching from paginated mode to scroll mode, so
+    /// webView(_:didFinish:) can seek to the live paginated position instead
+    /// of falling back to restoreSavedPositionIfAvailable's possibly-stale
+    /// persisted HistoryEntry offset. Consumed and cleared on use.
+    private var pendingScrollRestore: (spineIndex: Int, fraction: Double)?
     private var securityScopedURL: URL?
 
     private static let readerHTMLFilename = "_ql_reader.html"
@@ -466,11 +472,21 @@ final class ReaderViewController: NSViewController {
                 self.loadSpineItem(index: 0, restorePosition: .fraction(fraction), pkg: pkg)
             }
         } else {
-            currentMode = .scroll
-            applyScrollbarVisibility()
-            removeScrollWheelMonitor()
-            removeKeyDownMonitor()
-            renderScrollContent(pkg: pkg)
+            let spineIndex = currentSpineIndex
+            let finishSwitch: (Double) -> Void = { [weak self] fraction in
+                guard let self else { return }
+                self.currentMode = .scroll
+                self.applyScrollbarVisibility()
+                self.removeScrollWheelMonitor()
+                self.removeKeyDownMonitor()
+                self.pendingScrollRestore = (spineIndex: spineIndex, fraction: fraction)
+                self.renderScrollContent(pkg: pkg)
+            }
+            if paginationEngine?.isReady == true {
+                paginationEngine!.currentFraction(completion: finishSwitch)
+            } else {
+                finishSwitch(0)
+            }
         }
     }
 
@@ -582,6 +598,12 @@ final class ReaderViewController: NSViewController {
         })();
         """
         webView.evaluateJavaScript(js, completionHandler: nil)
+        if currentMode == .scroll {
+            // Font size/line height/max width/padding all reflow the document,
+            // which changes chapterHeight and therefore page/totalPages -- the
+            // scroll listener won't fire on its own here, so recompute explicitly.
+            webView.evaluateJavaScript("window.reportPageInfo && window.reportPageInfo();", completionHandler: nil)
+        }
         applyWindowAppearance()
     }
 
@@ -945,7 +967,12 @@ final class ReaderViewController: NSViewController {
     /// (e.g. Float on Top, ReaderWindowController.toggleFloat) are already
     /// dispatched from this toolbar.
     @objc private func openSettingsAction(_ sender: Any?) {
-        NSApp.sendAction(#selector(AppDelegate.openSettingsAction(_:)), to: nil, from: sender)
+        // NOTE: must NOT use NSApp.sendAction(_:to: nil, from:) here. That walks
+        // the responder chain by selector name, and this method's own selector
+        // ("openSettingsAction:") is identical to AppDelegate's, so the chain
+        // finds this method again before it ever reaches AppDelegate -- infinite
+        // self-recursion and a stack overflow. Target AppDelegate directly.
+        (NSApp.delegate as? AppDelegate)?.openSettingsAction(sender)
     }
 
     @objc private func floatAction(_ sender: Any?) {
@@ -1052,7 +1079,15 @@ extension ReaderViewController: WKNavigationDelegate {
         applyCosmeticCSSUpdate()
         switch currentMode {
         case .scroll:
-            restoreSavedPositionIfAvailable()
+            if let restore = pendingScrollRestore {
+                pendingScrollRestore = nil
+                webView.evaluateJavaScript(
+                    "window.honeycrispNavigateToChapterFraction(\(restore.spineIndex), \(restore.fraction));",
+                    completionHandler: nil
+                )
+            } else {
+                restoreSavedPositionIfAvailable()
+            }
         case .paginated:
             paginationEngine?.setColsPerScreen(SettingsManager.shared.colsPerScreen)
             paginationEngine?.applyLayout(restorePosition: pendingPaginatedRestorePosition)
