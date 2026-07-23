@@ -634,12 +634,24 @@ final class EPUBParser: NSObject {
       }
     };
 
+    // reportPageInfo() is a pure in-memory read (no disk I/O), so it's driven
+    // by its own rAF-coalesced call rather than the 500ms debounce below --
+    // that debounce exists to throttle reportProgress()/reportPosition()'s
+    // disk writes, and folding reportPageInfo() into it left the toolbar page
+    // counter stale until 500ms after scrolling stopped.
+    var pageInfoRAFPending = false;
     window.addEventListener('scroll', function() {
+      if (!pageInfoRAFPending) {
+        pageInfoRAFPending = true;
+        requestAnimationFrame(function() {
+          pageInfoRAFPending = false;
+          reportPageInfo();
+        });
+      }
       clearTimeout(window._progressTimer);
       window._progressTimer = setTimeout(function() {
         reportProgress();
         reportPosition();
-        reportPageInfo();
       }, 500);
     }, { passive: true });
 
