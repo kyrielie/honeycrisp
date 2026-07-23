@@ -6,7 +6,16 @@
 //  • "Float on Top" moved to View menu (was already there, kept)
 //  • "Show book title in menu bar" setting removed — title is now always shown
 //    centered in the toolbar via ReaderViewController's .titleLabel toolbar item
-//  • Settings accessible only via App menu (⌘,), never via toolbar
+//  • "Paginated Mode" moved out of the toolbar into Settings' General tab; the
+//    View-menu item (⇧⌘P) is unchanged and still the fastest way to toggle it
+//  • Settings also reachable from the reader toolbar's new gear icon, not just ⌘,
+//  • Edit menu added (previously entirely absent — Cmd-C/V/A/Z in text fields
+//    like the in-book search field relied on undocumented default behavior
+//    without one; a first-responder Edit menu is what makes that reliable)
+//  • Window menu added (previously entirely absent; standard convention for a
+//    multi-window Mac app — Honeycrisp opens one ReaderWindowController per book)
+//  • Reading menu added: theme picker, columns-per-screen picker, font size
+//    +/-, and a "Show Page Count" toggle for the toolbar's new page-count label
 
 import AppKit
 import CoreServices
@@ -95,7 +104,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ))
         appMenu.addItem(.separator())
 
-        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettingsAction(_:)), keyEquivalent: ",")
         appMenu.addItem(settingsItem)
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -112,6 +121,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Close, like Quit and Settings, is a fixed system-level convention, not
         // something users are offered a rebind row for.
         fileMenu.addItem(NSMenuItem(title: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+
+        // ── Edit Menu ─────────────────────────────────────────────────────────
+        // Previously absent entirely. Standard items only — routed via the
+        // responder chain's default NSText/NSTextView handling, same as every
+        // other Mac app; nothing Honeycrisp-specific to wire here. Chiefly fixes
+        // Cmd-C/V/A/Z reliability in text fields like the in-book search field
+        // and Settings' custom-color hex fields, which depend on a first
+        // responder Edit menu existing to validate against.
+        let editMenuItem = NSMenuItem()
+        mainMenu.addItem(editMenuItem)
+        let editMenu = NSMenu(title: "Edit")
+        editMenuItem.submenu = editMenu
+        editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
+        let redoItem = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redoItem)
+        editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
 
         // ── View Menu ─────────────────────────────────────────────────────────
         let viewMenuItem = NSMenuItem()
@@ -160,6 +190,68 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Reflect any previously-saved rebinding immediately on launch, not only
         // after the next change.
+
+        // ── Reading Menu ──────────────────────────────────────────────────────
+        // Quick access to settings that previously required opening the Settings
+        // window. These mutate SettingsManager directly (same as the toolbar's
+        // own font-size control and Settings' own controls) and apply live via
+        // .readerCosmeticSettingsChanged / .readerStructuralSettingsChanged,
+        // which every open reader window already observes — no per-window
+        // forwarding needed here the way Search/TOC/Reading-mode-toggle need.
+        let readingMenuItem = NSMenuItem()
+        mainMenu.addItem(readingMenuItem)
+        let readingMenu = NSMenu(title: "Reading")
+        readingMenuItem.submenu = readingMenu
+
+        let themeMenu = NSMenu(title: "Theme")
+        for theme in ReaderTheme.allCases {
+            let item = NSMenuItem(title: theme.displayName, action: #selector(selectTheme(_:)), keyEquivalent: "")
+            item.tag = theme.rawValue
+            item.target = self
+            themeMenu.addItem(item)
+        }
+        let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
+        themeItem.submenu = themeMenu
+        readingMenu.addItem(themeItem)
+
+        let colsMenu = NSMenu(title: "Columns Per Screen")
+        for cols in ColsPerScreen.allCases {
+            let item = NSMenuItem(title: cols.label, action: #selector(selectColsPerScreen(_:)), keyEquivalent: "")
+            item.tag = cols.rawValue
+            item.target = self
+            colsMenu.addItem(item)
+        }
+        let colsItem = NSMenuItem(title: "Columns Per Screen", action: nil, keyEquivalent: "")
+        colsItem.submenu = colsMenu
+        readingMenu.addItem(colsItem)
+
+        readingMenu.addItem(.separator())
+        readingMenu.addItem(NSMenuItem(title: "Increase Font Size", action: #selector(increaseFontSize), keyEquivalent: "+"))
+        readingMenu.addItem(NSMenuItem(title: "Decrease Font Size", action: #selector(decreaseFontSize), keyEquivalent: "-"))
+
+        readingMenu.addItem(.separator())
+        let pageCountItem = NSMenuItem(title: "Show Page Count", action: #selector(toggleShowPageCount), keyEquivalent: "")
+        readingMenu.addItem(pageCountItem)
+
+        // ── Window Menu ───────────────────────────────────────────────────────
+        // Previously absent entirely. Standard convention for a multi-window Mac
+        // app — Honeycrisp opens one ReaderWindowController per book. NSApp
+        // populates the window list itself once this menu is assigned to
+        // NSApplication.windowsMenu; Minimize/Zoom/Bring All to Front are the
+        // fixed system items every app's Window menu carries.
+        let windowMenuItem = NSMenuItem()
+        mainMenu.addItem(windowMenuItem)
+        let windowMenu = NSMenu(title: "Window")
+        windowMenuItem.submenu = windowMenu
+        windowMenu.addItem(NSMenuItem(title: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
+        windowMenu.addItem(NSMenuItem(title: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: ""))
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(NSMenuItem(title: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: ""))
+        NSApp.windowsMenu = windowMenu
+
+        // Reflect any previously-saved rebinding immediately on launch, not only
+        // after the next change. Runs last since applyBindings walks the whole
+        // menu tree recursively.
         syncMenuShortcuts()
     }
 
@@ -205,7 +297,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Actions
 
-    @objc private func openSettings() {
+    @objc func openSettingsAction(_ sender: Any?) {
         SettingsWindowController.shared.showWindow(nil)
         SettingsWindowController.shared.window?.makeKeyAndOrderFront(nil)
     }
@@ -245,6 +337,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         readerVC()?.toggleReadingMode(nil)
     }
 
+    @objc private func selectTheme(_ sender: NSMenuItem) {
+        guard let theme = ReaderTheme(rawValue: sender.tag) else { return }
+        SettingsManager.shared.currentTheme = theme
+    }
+
+    @objc private func selectColsPerScreen(_ sender: NSMenuItem) {
+        guard let cols = ColsPerScreen(rawValue: sender.tag) else { return }
+        SettingsManager.shared.colsPerScreen = cols
+    }
+
+    @objc private func increaseFontSize() {
+        SettingsManager.shared.fontSizePercent = min(300, SettingsManager.shared.fontSizePercent + 10)
+    }
+
+    @objc private func decreaseFontSize() {
+        SettingsManager.shared.fontSizePercent = max(50, SettingsManager.shared.fontSizePercent - 10)
+    }
+
+    @objc private func toggleShowPageCount() {
+        SettingsManager.shared.showPageCount.toggle()
+    }
+
     // MARK: - Helpers
 
     private func readerVC() -> ReaderViewController? {
@@ -261,6 +375,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(selectTheme(_:)) {
+            menuItem.state = (SettingsManager.shared.currentTheme.rawValue == menuItem.tag) ? .on : .off
+            return true
+        }
+        if menuItem.action == #selector(selectColsPerScreen(_:)) {
+            menuItem.state = (SettingsManager.shared.colsPerScreen.rawValue == menuItem.tag) ? .on : .off
+            return true
+        }
+        if menuItem.action == #selector(toggleShowPageCount) {
+            menuItem.state = SettingsManager.shared.showPageCount ? .on : .off
+            return true
+        }
         guard let vc = readerVC() else {
             // No reader window/content: these don't apply yet.
             return menuItem.action != #selector(toggleReadingMode)
