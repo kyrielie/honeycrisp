@@ -13,14 +13,16 @@ xattr -d com.apple.quarantine /path/to/app
 ## Features
 
 - **Persistent windows** — stays open, unlike Quick Look
-- ~~**Multiple windows** — open several books simultaneously (File > Open, or ⌘O)~~ broken
+- **Multiple windows** — open several books simultaneously (File > Open, or ⌘O)
+- **Tabbed mode** - open multiple books as tabs in the same window
 - **Paginated mode** — one spine document per "page", navigate with ← → arrow keys
 - **Scroll mode** — all chapters merged into one continuous scroll
 - **Float on top** — pin any window above all others (⌘⇧T or toolbar pin button)
 - **Reading history** — recent books saved with open date, accessible via clock toolbar button
-- ~~**Opinionated typography** — Lora serif + warm parchment palette;~~ Dark, light and sepia only. All EPUB styling is ignored for a consistent reading experience
-- **Adjustable typography & layout** — font (presets or any CSS font stack), reading-column width, and margins, all in Settings > Appearance
+- **Themes** - save your prefered formatting as a theme
 - **Dark mode** — automatic, follows system appearance
+- **Page counter** - page / total pages (and spine / total spines in paged mode)
+- **Table of contents** - quickly flick through books
 
 ## Keyboard shortcuts
 
