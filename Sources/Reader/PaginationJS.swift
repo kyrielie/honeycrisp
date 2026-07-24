@@ -173,12 +173,20 @@ private let _pjsScrollAndPaging: String = #"""
         // content overflows (see qlColumnCount comment above), so the native
         // scroll clamp can land short of `target` — visible only on the
         // terminal column of a spine, where target actually reaches that edge.
-        // Measure the real shortfall and compensate visually by shifting the
-        // multicol container itself. html is the unfragmented column container
-        // (unlike body, which gets fragmented per-column) so this is a pure
-        // repaint offset, not a relayout.
+        // Measure the real shortfall and compensate visually by shifting
+        // rendered content left. This must be done on `body`, NOT
+        // `document.documentElement`: html is the element with
+        // `background-color: var(--reader-bg)` (see EPUBParser.readerCSS),
+        // and a CSS transform moves an element's paint -- background included
+        // -- so translating html left uncovers a strip of raw WKWebView/
+        // window background on the right edge (shows as a white bar on dark
+        // themes). body's own background is transparent, so translating it
+        // instead shifts the text without moving the themed background at
+        // all, and produces the identical geometric offset since body isn't
+        // independently fragmented for this purpose (a transform is a pure
+        // repaint offset applied after column layout either way).
         var shortfall = target - window.scrollX;
-        document.documentElement.style.transform = shortfall > 0
+        document.body.style.transform = shortfall > 0
             ? 'translateX(-' + shortfall + 'px)'
             : '';
     };

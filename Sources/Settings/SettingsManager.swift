@@ -62,18 +62,89 @@ struct Theme: Codable, Identifiable, Equatable {
     var name: String
     var light: ThemeColorSet
     var dark: ThemeColorSet
+    // Per-theme typography/layout -- each theme remembers its own font, size,
+    // line height, and margins now, not one setting shared across every theme.
+    // Added after Theme first shipped, so decoding falls back per-field for
+    // themes saved before these existed (SettingsManager.themes' getter also
+    // does a one-time migration pass that backfills these from the old
+    // *global* UserDefaults values instead of these hardcoded constants, so
+    // upgrading doesn't silently reset anyone's chosen look -- these
+    // per-field fallbacks here are just a safety net under that).
+    var fontFamily: String
+    var fontSizePercent: Int
+    var lineHeight: Double
+    var maxWidth: Int
+    var paddingH: Int
+    var paddingV: Int
+    // True only for the three seeded themes (Original/Quiet/Paper). Drives
+    // two things: deleteTheme(_:) refuses to remove these regardless of how
+    // many themes exist, and resetReaderToDefaults() knows to restore these
+    // from `seedThemes` rather than the shared "new custom theme" baseline.
+    // Defaults to false so existing persisted (pre-flag) themes -- which are
+    // all user-created by definition, since the seed themes are re-tagged
+    // by id below -- decode as non-default.
+    var isDefault: Bool
 
-    init(id: UUID = UUID(), name: String, light: ThemeColorSet, dark: ThemeColorSet) {
+    init(id: UUID = UUID(), name: String, light: ThemeColorSet, dark: ThemeColorSet,
+         fontFamily: String = FontPresets.defaultStack,
+         fontSizePercent: Int = 100,
+         lineHeight: Double = 1.6,
+         maxWidth: Int = 700,
+         paddingH: Int = 24,
+         paddingV: Int = 24,
+         isDefault: Bool = false) {
         self.id = id
         self.name = name
         self.light = light
         self.dark = dark
+        self.fontFamily = fontFamily
+        self.fontSizePercent = fontSizePercent
+        self.lineHeight = lineHeight
+        self.maxWidth = maxWidth
+        self.paddingH = paddingH
+        self.paddingV = paddingV
+        self.isDefault = isDefault
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, light, dark, fontFamily, fontSizePercent, lineHeight, maxWidth, paddingH, paddingV, isDefault
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        light = try c.decode(ThemeColorSet.self, forKey: .light)
+        dark = try c.decode(ThemeColorSet.self, forKey: .dark)
+        fontFamily = try c.decodeIfPresent(String.self, forKey: .fontFamily) ?? FontPresets.defaultStack
+        fontSizePercent = try c.decodeIfPresent(Int.self, forKey: .fontSizePercent) ?? 100
+        lineHeight = try c.decodeIfPresent(Double.self, forKey: .lineHeight) ?? 1.6
+        maxWidth = try c.decodeIfPresent(Int.self, forKey: .maxWidth) ?? 700
+        paddingH = try c.decodeIfPresent(Int.self, forKey: .paddingH) ?? 24
+        paddingV = try c.decodeIfPresent(Int.self, forKey: .paddingV) ?? 24
+        isDefault = try c.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
     }
 }
 
 enum ReadingMode: Int, CaseIterable {
     case scroll    = 0
     case paginated = 1
+}
+
+/// Where a newly-opened book's window lands relative to any existing reader
+/// window. Persisted like `defaultReadingMode`. AppKit's own automatic window
+/// tabbing is turned off at launch (see AppDelegate.applicationWillFinishLaunching)
+/// so this explicit setting is the only thing controlling tab-vs-window behavior.
+enum NewBookOpensIn: Int, CaseIterable {
+    case newWindow = 0
+    case newTab    = 1
+
+    var label: String {
+        switch self {
+        case .newWindow: return "New Window"
+        case .newTab: return "New Tab"
+        }
+    }
 }
 
 /// Mirrors the old fixed ReaderTheme's raw values (system/light/dark/sepia/custom
@@ -102,20 +173,12 @@ final class SettingsManager {
 
     // MARK: Font
 
-    /// Free-form CSS font-family stack (Ambrosia-style) — replaces the old
-    /// fixed `ReaderFont` enum. Migrates a legacy `readerFont` raw value (the
-    /// old enum's 0-3 range) into an equivalent CSS stack the first time this
-    /// is read, so existing users don't silently lose their chosen font on
-    /// upgrade.
+    /// Per-theme now -- see Theme.fontFamily's doc comment. Kept as the same
+    /// accessor every other call site (EPUBParser, ReaderViewController, the
+    /// Appearance tab) already uses; only the storage underneath moved.
     var fontFamily: String {
-        get {
-            if let stored = defaults.string(forKey: "readerFontFamily") { return stored }
-            if defaults.object(forKey: "readerFont") != nil {
-                return Self.migrateLegacyFontFamily(defaults: defaults)
-            }
-            return FontPresets.defaultStack
-        }
-        set { defaults.set(newValue, forKey: "readerFontFamily"); notifyCosmeticChange() }
+        get { currentTheme.fontFamily }
+        set { mutateCurrentTheme { $0.fontFamily = newValue }; notifyCosmeticChange() }
     }
 
     /// PostScript name of the font most recently chosen via NSFontPanel — kept
@@ -147,14 +210,35 @@ final class SettingsManager {
     private static let seedThemes: [Theme] = [
         Theme(name: "Original",
               light: ThemeColorSet(background: "#ffffff", text: "#000000", link: "#0068da"),
-              dark:  ThemeColorSet(background: "#1c1c1e", text: "#e8e0d4", link: "#5aa9ff")),
+              dark:  ThemeColorSet(background: "#1c1c1e", text: "#e8e0d4", link: "#5aa9ff"),
+              fontFamily: FontPresets.all.first { $0.id == "system" }!.cssStack,
+              isDefault: true),
         Theme(name: "Quiet",
               light: ThemeColorSet(background: "#2c2c2c", text: "#8a8a8a", link: "#7fb2e8"),
-              dark:  ThemeColorSet(background: "#1c1c1e", text: "#8a8a8a", link: "#7fb2e8")),
+              dark:  ThemeColorSet(background: "#1c1c1e", text: "#8a8a8a", link: "#7fb2e8"),
+              fontFamily: FontPresets.all.first { $0.id == "iowan" }!.cssStack,
+              isDefault: true),
         Theme(name: "Paper",
               light: ThemeColorSet(background: "#f4ecd8", text: "#433422", link: "#8a5a2b"),
-              dark:  ThemeColorSet(background: "#2b2216", text: "#d8c9a8", link: "#c99a55")),
+              dark:  ThemeColorSet(background: "#2b2216", text: "#d8c9a8", link: "#c99a55"),
+              fontFamily: FontPresets.all.first { $0.id == "georgia" }!.cssStack,
+              isDefault: true),
     ]
+
+    /// One-time migration for installs that persisted themes before `isDefault`
+    /// existed: re-tags any stored theme whose name still matches a seed
+    /// theme's name as default, so upgrading doesn't suddenly make Original/
+    /// Quiet/Paper deletable or exempt them from Reset to Defaults. Best-effort
+    /// only -- a user who had already renamed one of these before upgrading
+    /// won't get it re-tagged, same tradeoff as any name-based migration.
+    private static func backfillIsDefault(_ themes: [Theme]) -> [Theme] {
+        let seedNames = Set(seedThemes.map(\.name))
+        return themes.map { theme in
+            var t = theme
+            if seedNames.contains(theme.name) { t.isDefault = true }
+            return t
+        }
+    }
 
     /// JSON-array-in-UserDefaults, same pattern as HistoryManager.entries. Migrates
     /// the old fixed ReaderTheme selection + single custom color pair into an
@@ -165,6 +249,41 @@ final class SettingsManager {
             if let data = defaults.data(forKey: "readerThemes"),
                let decoded = try? JSONDecoder().decode([Theme].self, from: data),
                !decoded.isEmpty {
+                if !Self.dataHasPerThemeTypography(data) {
+                    // Pre-upgrade storage: every theme shared one global font/
+                    // size/line-height/margin setting. Backfill each theme
+                    // with whatever that global value currently is (not the
+                    // Theme initializer's hardcoded constants) so upgrading
+                    // doesn't silently reset anyone's chosen look, then
+                    // persist the backfilled version so this only runs once.
+                    let migrated = decoded.map { theme -> Theme in
+                        var t = theme
+                        t.fontFamily = self.defaults.string(forKey: "readerFontFamily")
+                            ?? (self.defaults.object(forKey: "readerFont") != nil
+                                ? Self.migrateLegacyFontFamily(defaults: self.defaults)
+                                : FontPresets.defaultStack)
+                        let storedSize = self.defaults.integer(forKey: "readerFontSize")
+                        t.fontSizePercent = storedSize == 0 ? 100 : storedSize
+                        let storedLineHeight = self.defaults.double(forKey: "readerLineHeight")
+                        t.lineHeight = storedLineHeight == 0 ? 1.6 : storedLineHeight
+                        let storedMaxWidth = self.defaults.integer(forKey: "readerMaxWidth")
+                        t.maxWidth = storedMaxWidth == 0 ? 700 : storedMaxWidth
+                        t.paddingH = self.defaults.object(forKey: "readerPaddingH") == nil ? 24 : self.defaults.integer(forKey: "readerPaddingH")
+                        t.paddingV = self.defaults.object(forKey: "readerPaddingV") == nil ? 24 : self.defaults.integer(forKey: "readerPaddingV")
+                        return t
+                    }
+                    if let data = try? JSONEncoder().encode(migrated) {
+                        defaults.set(data, forKey: "readerThemes")
+                    }
+                    return migrated
+                }
+                if !Self.dataHasIsDefaultFlag(data) {
+                    let migrated = Self.backfillIsDefault(decoded)
+                    if let data = try? JSONEncoder().encode(migrated) {
+                        defaults.set(data, forKey: "readerThemes")
+                    }
+                    return migrated
+                }
                 return decoded
             }
             let migrated = Self.migrateLegacyThemes(defaults: defaults)
@@ -183,6 +302,28 @@ final class SettingsManager {
             }
             notifyChange()
         }
+    }
+
+    /// Whether stored theme JSON already includes the per-theme typography
+    /// fields (added after Theme first shipped) -- checked on the raw JSON
+    /// rather than via decoding, since Theme's own Codable fallbacks would
+    /// otherwise mask "this hasn't been migrated yet" behind valid-looking
+    /// hardcoded defaults.
+    private static func dataHasPerThemeTypography(_ data: Data) -> Bool {
+        guard let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let first = array.first
+        else { return true }
+        return first["fontFamily"] != nil
+    }
+
+    /// Same pattern as `dataHasPerThemeTypography`, for the `isDefault` field
+    /// added afterward -- checked on raw JSON so Theme's own Codable fallback
+    /// (`?? false`) can't mask "this hasn't been migrated yet".
+    private static func dataHasIsDefaultFlag(_ data: Data) -> Bool {
+        guard let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let first = array.first
+        else { return true }
+        return first["isDefault"] != nil
     }
 
     /// Builds the seed list, folding in the old `.custom` colors (if the user had
@@ -246,11 +387,16 @@ final class SettingsManager {
         currentThemeID = theme.id
     }
 
-    /// Removes a theme. No-ops if it's the last remaining one. If the deleted
-    /// theme was active, falls back to the first remaining theme.
+    /// Removes a theme. No-ops if it's the last remaining one, or if it's one
+    /// of the three default themes (Original/Quiet/Paper) -- those can be
+    /// edited and reset, but never deleted. If the deleted theme was active,
+    /// falls back to the first remaining theme.
     func deleteTheme(_ id: UUID) {
         var list = themes
-        guard list.count > 1, let idx = list.firstIndex(where: { $0.id == id }) else { return }
+        guard list.count > 1,
+              let idx = list.firstIndex(where: { $0.id == id }),
+              !list[idx].isDefault
+        else { return }
         list.remove(at: idx)
         themes = list
         if currentThemeID == id { currentThemeID = list[0].id }
@@ -258,30 +404,18 @@ final class SettingsManager {
 
     // MARK: Line height
 
-    /// Body line-height multiplier, applied as the `--reader-line-height` CSS
-    /// variable. Default 1.6 matches the previously-hardcoded value exactly.
+    /// Per-theme now -- see Theme.lineHeight's doc comment.
     var lineHeight: Double {
-        get {
-            let stored = defaults.double(forKey: "readerLineHeight")
-            return stored == 0 ? 1.6 : stored
-        }
-        set {
-            defaults.set(min(2.4, max(1.2, newValue)), forKey: "readerLineHeight")
-            notifyCosmeticChange()
-        }
+        get { currentTheme.lineHeight }
+        set { mutateCurrentTheme { $0.lineHeight = min(2.4, max(1.2, newValue)) }; notifyCosmeticChange() }
     }
 
     // MARK: Font size
 
+    /// Per-theme now -- see Theme.fontSizePercent's doc comment.
     var fontSizePercent: Int {
-        get {
-            let stored = defaults.integer(forKey: "readerFontSize")
-            return stored == 0 ? 100 : stored
-        }
-        set {
-            defaults.set(min(300, max(50, newValue)), forKey: "readerFontSize")
-            notifyCosmeticChange()
-        }
+        get { currentTheme.fontSizePercent }
+        set { mutateCurrentTheme { $0.fontSizePercent = min(300, max(50, newValue)) }; notifyCosmeticChange() }
     }
 
     // MARK: Behaviour flags
@@ -336,6 +470,13 @@ final class SettingsManager {
         set { defaults.set(newValue.rawValue, forKey: "readerColsPerScreen"); notifyStructuralChange() }
     }
 
+    /// Whether opening a new book creates a new window or a new tab on the
+    /// frontmost reader window. See NewBookOpensIn's doc comment.
+    var newBookOpensIn: NewBookOpensIn {
+        get { NewBookOpensIn(rawValue: defaults.integer(forKey: "readerNewBookOpensIn")) ?? .newWindow }
+        set { defaults.set(newValue.rawValue, forKey: "readerNewBookOpensIn"); notifyChange() }
+    }
+
     // MARK: Reading-column geometry (ported from Ambrosia's ReaderPreferences)
     //
     // Structural, not cosmetic: in paginated mode these feed EPUBParser.
@@ -347,35 +488,38 @@ final class SettingsManager {
     // the debounced reload rather than an instant patch, but never see stale
     // geometry.
 
-    /// Reading-column max width in points. Default (700) matches the constant
+    /// Per-theme now -- see Theme.maxWidth's doc comment. Reading-column max
+    /// width in points. Default (700) matches the constant
     /// EPUBParser.paginatedColumnCSS previously hardcoded.
     var maxWidth: Int {
-        get {
-            let stored = defaults.integer(forKey: "readerMaxWidth")
-            return stored == 0 ? 700 : stored
-        }
-        set { defaults.set(max(320, min(1400, newValue)), forKey: "readerMaxWidth"); notifyStructuralChange() }
+        get { currentTheme.maxWidth }
+        set { mutateCurrentTheme { $0.maxWidth = max(320, min(1400, newValue)) }; notifyStructuralChange() }
     }
 
-    /// Horizontal reading margin in points. Default (24) matches the constant
-    /// previously hardcoded in EPUBParser.paginatedColumnCSS. 0 is a valid
-    /// margin, so presence (not value) of the stored default is what's checked.
+    /// Per-theme now -- see Theme.paddingH's doc comment. Horizontal reading
+    /// margin in points. Default (24) matches the constant previously
+    /// hardcoded in EPUBParser.paginatedColumnCSS.
     var paddingH: Int {
-        get {
-            defaults.object(forKey: "readerPaddingH") == nil ? 24 : defaults.integer(forKey: "readerPaddingH")
-        }
-        set { defaults.set(max(0, min(120, newValue)), forKey: "readerPaddingH"); notifyStructuralChange() }
+        get { currentTheme.paddingH }
+        set { mutateCurrentTheme { $0.paddingH = max(0, min(120, newValue)) }; notifyStructuralChange() }
     }
 
-    /// Vertical reading margin in points (paginated mode only — scroll mode's
-    /// vertical spacing comes from #content's own fixed top/bottom padding).
-    /// Default (24) matches the constant previously hardcoded in
-    /// EPUBParser.paginatedColumnCSS.
+    /// Per-theme now -- see Theme.paddingV's doc comment. Vertical reading
+    /// margin in points (paginated mode only — scroll mode's vertical spacing
+    /// comes from #content's own fixed top/bottom padding). Default (24)
+    /// matches the constant previously hardcoded in EPUBParser.paginatedColumnCSS.
     var paddingV: Int {
-        get {
-            defaults.object(forKey: "readerPaddingV") == nil ? 24 : defaults.integer(forKey: "readerPaddingV")
-        }
-        set { defaults.set(max(0, min(120, newValue)), forKey: "readerPaddingV"); notifyStructuralChange() }
+        get { currentTheme.paddingV }
+        set { mutateCurrentTheme { $0.paddingV = max(0, min(120, newValue)) }; notifyStructuralChange() }
+    }
+
+    /// Applies a mutation to the currently active theme and persists it.
+    /// Shared by every per-theme typography accessor above.
+    private func mutateCurrentTheme(_ mutate: (inout Theme) -> Void) {
+        var list = themes
+        guard let idx = list.firstIndex(where: { $0.id == currentThemeID }) else { return }
+        mutate(&list[idx])
+        themes = list
     }
 
     /// Whether in-book links are clickable. Off by default, matching Ambrosia —
@@ -390,31 +534,86 @@ final class SettingsManager {
 
     // MARK: - Reset to defaults (Appearance tab)
 
-    /// True only when at least one reader appearance/layout setting differs
-    /// from its default — mirrors Ambrosia's `isReaderCustomized`, so the
-    /// "Reset to Defaults" button is inert rather than an always-live
-    /// destructive action. The theme list itself is deliberately excluded —
-    /// there's no single "default" theme list to reset to, only which one
-    /// is currently selected.
+    /// The typography a freshly-created custom theme gets (see
+    /// SettingsWindowController.addThemeClicked's fallback when there's no
+    /// base theme to copy from) -- also what Reset to Defaults restores every
+    /// non-default theme to, since there's no per-custom-theme "default" to
+    /// go back to otherwise.
+    private static let customThemeDefaultFontFamily = FontPresets.defaultStack
+    private static let customThemeDefaultFontSizePercent = 100
+    private static let customThemeDefaultLineHeight = 1.6
+    private static let customThemeDefaultMaxWidth = 700
+    private static let customThemeDefaultPaddingH = 24
+    private static let customThemeDefaultPaddingV = 24
+
+    /// True only when at least one theme differs from its default (seed
+    /// values for the three default themes, the shared custom-theme baseline
+    /// for every other theme) or the global link-clicks flag is set --
+    /// mirrors Ambrosia's `isReaderCustomized`, so the "Reset to Defaults"
+    /// button is inert rather than an always-live destructive action.
     var isReaderCustomized: Bool {
-        fontFamily != FontPresets.defaultStack
-            || currentThemeID != themes.first?.id
-            || lineHeight != 1.6
-            || fontSizePercent != 100
-            || maxWidth != 700
-            || paddingH != 24
-            || paddingV != 24
-            || allowReaderLinkClicks != false
+        let list = themes
+        if allowReaderLinkClicks != false { return true }
+        let defaultThemesInOrder = list.filter(\.isDefault)
+        for theme in list {
+            if theme.isDefault {
+                guard let position = defaultThemesInOrder.firstIndex(where: { $0.id == theme.id }),
+                      position < Self.seedThemes.count
+                else { return true }
+                let seed = Self.seedThemes[position]
+                if theme.light != seed.light || theme.dark != seed.dark
+                    || theme.fontFamily != seed.fontFamily
+                    || theme.fontSizePercent != 100
+                    || theme.lineHeight != 1.6
+                    || theme.maxWidth != 700
+                    || theme.paddingH != 24
+                    || theme.paddingV != 24 {
+                    return true
+                }
+            } else {
+                if theme.fontFamily != Self.customThemeDefaultFontFamily
+                    || theme.fontSizePercent != Self.customThemeDefaultFontSizePercent
+                    || theme.lineHeight != Self.customThemeDefaultLineHeight
+                    || theme.maxWidth != Self.customThemeDefaultMaxWidth
+                    || theme.paddingH != Self.customThemeDefaultPaddingH
+                    || theme.paddingV != Self.customThemeDefaultPaddingV {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
+    /// Resets every theme to its default, not just the currently selected
+    /// one: each of the three default themes (Original/Quiet/Paper) goes back
+    /// to its own seeded colors/font/size/line-height/margins, and every
+    /// custom theme keeps its own name/colors but has its typography reset to
+    /// the shared new-theme baseline. Also resets the global link-clicks
+    /// flag. Selection itself is left alone -- whichever theme was active
+    /// stays active, just with its settings restored.
     func resetReaderToDefaults() {
-        fontFamily = FontPresets.defaultStack
-        currentThemeID = themes.first?.id ?? currentThemeID
-        lineHeight = 1.6
-        fontSizePercent = 100
-        maxWidth = 700
-        paddingH = 24
-        paddingV = 24
+        let list = themes
+        let defaultThemesInOrder = list.filter(\.isDefault)
+        let resetList: [Theme] = list.map { theme in
+            var t = theme
+            if theme.isDefault,
+               let position = defaultThemesInOrder.firstIndex(where: { $0.id == theme.id }),
+               position < Self.seedThemes.count {
+                let seed = Self.seedThemes[position]
+                t.light = seed.light
+                t.dark = seed.dark
+                t.fontFamily = seed.fontFamily
+            } else {
+                t.fontFamily = Self.customThemeDefaultFontFamily
+            }
+            t.fontSizePercent = theme.isDefault ? 100 : Self.customThemeDefaultFontSizePercent
+            t.lineHeight = theme.isDefault ? 1.6 : Self.customThemeDefaultLineHeight
+            t.maxWidth = theme.isDefault ? 700 : Self.customThemeDefaultMaxWidth
+            t.paddingH = theme.isDefault ? 24 : Self.customThemeDefaultPaddingH
+            t.paddingV = theme.isDefault ? 24 : Self.customThemeDefaultPaddingV
+            return t
+        }
+        themes = resetList
         allowReaderLinkClicks = false
     }
 

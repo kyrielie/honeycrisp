@@ -23,6 +23,12 @@ import CoreServices
 class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // Without this, AppKit's own automatic window tabbing (on by default)
+        // fights with the explicit "new window vs new tab" setting below, and
+        // is also where the automatic "Show Tab Bar" View-menu item comes from
+        // -- that item is entirely AppKit-owned and disappears once automatic
+        // tabbing is off, no manual menu-item removal needed or possible.
+        NSWindow.allowsAutomaticWindowTabbing = false
         NSAppleEventManager.shared().setEventHandler(
             self,
             andSelector: #selector(handleOpenEvent(_:withReplyEvent:)),
@@ -72,7 +78,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let epubURLs = urls.filter { $0.pathExtension.lowercased() == "epub" }
         for url in epubURLs {
             let wc = ReaderWindowController()
-            wc.showWindow(nil)
+            // "New tab" means a tab of the frontmost reader window, the same
+            // way Safari/Preview interpret it -- simplest option, and there's
+            // no other well-defined "existing window" to prefer. If there's no
+            // existing reader window, it's just a new window regardless of the
+            // setting: nothing to tab onto.
+            if SettingsManager.shared.newBookOpensIn == .newTab,
+               let existingWindow = NSApp.orderedWindows.first(where: { $0.windowController is ReaderWindowController }) {
+                wc.window.map { existingWindow.addTabbedWindow($0, ordered: .above) }
+                wc.showWindow(nil)
+            } else {
+                wc.showWindow(nil)
+            }
             wc.loadEPUB(at: url)
         }
     }
@@ -400,7 +417,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if menuItem.action == #selector(selectColsPerScreen(_:)) {
             menuItem.state = (SettingsManager.shared.colsPerScreen.rawValue == menuItem.tag) ? .on : .off
-            return true
+            // Only meaningful in paginated mode; grey it out in scroll mode (and
+            // when there's no reader window open at all to be consistent with).
+            return readerVC()?.currentMode == .paginated
         }
         if menuItem.action == #selector(toggleShowPageCount) {
             menuItem.state = SettingsManager.shared.showPageCount ? .on : .off
