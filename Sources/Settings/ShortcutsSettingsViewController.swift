@@ -2,10 +2,7 @@ import AppKit
 
 // MARK: - ShortcutsSettingsViewController
 
-final class ShortcutsSettingsViewController: NSViewController, SettingsPaneSizing {
-
-    var preferredPaneSize: NSSize?
-    let isResizableView = false
+final class ShortcutsSettingsViewController: NSViewController {
 
     private var conflictLabel: NSTextField!
     private var recorders: [RebindableAction: RecorderButton] = [:]
@@ -16,7 +13,7 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsPaneSizin
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = NSStackView.spacingUseDefault
+        stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(stack)
 
@@ -37,7 +34,6 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsPaneSizin
         stack.addArrangedSubview(conflictLabel)
 
         view = root
-        resolvePreferredPaneSize()
     }
 
     private func makeRow(for action: RebindableAction) -> NSStackView {
