@@ -13,6 +13,38 @@ struct EPUBPackage {
     let coverURL: URL?
 }
 
+/// Snapshot of the reader's cosmetic settings (font, size, theme colors,
+/// spacing, link clicks) at a single point in time -- everything
+/// `EPUBParser.readerVarsCSS` needs. Passed explicitly into
+/// buildScrollHTML/buildPageHTML at build time and reused as-is by
+/// ReaderViewController.applyCosmeticCSSUpdate for its live JS patch, so both
+/// paths are guaranteed to produce identical CSS from identical settings.
+struct ReaderCosmeticSettings {
+    var fontSizePercent: Int
+    var fontFamily: String
+    var backgroundCSS: String
+    var textCSS: String
+    var linkCSS: String
+    var lineHeight: Double
+    var maxWidth: Int
+    var paddingH: Int
+    var allowLinkClicks: Bool
+
+    static func current(from s: SettingsManager) -> ReaderCosmeticSettings {
+        ReaderCosmeticSettings(
+            fontSizePercent: s.fontSizePercent,
+            fontFamily: s.fontFamily,
+            backgroundCSS: s.effectiveBackgroundCSS,
+            textCSS: s.effectiveTextCSS,
+            linkCSS: s.effectiveLinkCSS,
+            lineHeight: s.lineHeight,
+            maxWidth: s.maxWidth,
+            paddingH: s.paddingH,
+            allowLinkClicks: s.allowReaderLinkClicks
+        )
+    }
+}
+
 enum EPUBParseError: Error, LocalizedError {
     case containerNotFound, opfNotFound, malformed, io
 
@@ -125,7 +157,7 @@ final class EPUBParser: NSObject {
 
     // MARK: - HTML building
 
-    func buildScrollHTML(from pkg: EPUBPackage, formatFirstChapter: Bool = false, removeParagraphIndents: Bool = false) throws -> String {
+    func buildScrollHTML(from pkg: EPUBPackage, cosmetics: ReaderCosmeticSettings, formatFirstChapter: Bool = false, removeParagraphIndents: Bool = false) throws -> String {
         var body = ""
         let base = pkg.rootFolder
         for i in pkg.spineURLs.indices {
@@ -145,7 +177,7 @@ final class EPUBParser: NSObject {
         <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style id="honeycrisp-vars">\(Self.readerVarsCSS)</style>
+            <style id="honeycrisp-vars">\(Self.readerVarsCSS(cosmetics))</style>
             <style>\(Self.readerCSS)</style>
         </head>
         <body>
@@ -167,6 +199,7 @@ final class EPUBParser: NSObject {
         viewportWidth: CGFloat,
         viewportHeight: CGFloat,
         colsPerScreen: ColsPerScreen,
+        cosmetics: ReaderCosmeticSettings,
         maxWidth: CGFloat = 700,
         paddingH: CGFloat = 24,
         paddingV: CGFloat = 24,
@@ -194,7 +227,7 @@ final class EPUBParser: NSObject {
         <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style id="honeycrisp-vars">\(Self.readerVarsCSS)</style>
+            <style id="honeycrisp-vars">\(Self.readerVarsCSS(cosmetics))</style>
             <style>\(Self.readerCSS)</style>
             <style>\(columnCSS)</style>
         </head>
@@ -675,27 +708,30 @@ final class EPUBParser: NSObject {
     /// The `:root` CSS custom properties, emitted into their own `<style id="honeycrisp-vars">`
     /// element so `applyCosmeticCSSUpdate` (in ReaderViewController) can replace just this
     /// element's textContent on a settings change, without touching the rest of the stylesheet.
-    static let readerVarsCSS = """
-    :root {
-        color-scheme: light dark;
-        --reader-font-size: 100%;
-        --reader-font-family: ui-sans-serif, -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
-        --reader-bg: transparent;
-        --reader-text: var(--system-text);
-        --reader-link: -apple-system-blue;
-        --reader-line-height: 1.6;
-        --reader-max-width: 700px;
-        --reader-padding-h: 24px;
-        --reader-link-pointer-events: none;
-        --system-text: CanvasText;
-    }
-
-    @media (prefers-color-scheme: dark) {
+    ///
+    /// This is a function of the actual current settings, not a static default —
+    /// buildScrollHTML/buildPageHTML bake real values in here at build time (same
+    /// treatment paginatedColumnCSS already gets), and applyCosmeticCSSUpdate's
+    /// live JS patch calls this exact function too, so there is one definition of
+    /// what the vars block contains, not two that can drift apart. Baking real
+    /// values in from the start also means there is no longer a static/default
+    /// frame to flash before the real ones land -- see ReaderCosmeticSettings.
+    static func readerVarsCSS(_ c: ReaderCosmeticSettings) -> String {
+        """
         :root {
-            --system-text: #e8e0d4;
+            color-scheme: light dark;
+            --reader-font-size: \(c.fontSizePercent)%;
+            --reader-font-family: \(c.fontFamily);
+            --reader-bg: \(c.backgroundCSS);
+            --reader-text: \(c.textCSS);
+            --reader-link: \(c.linkCSS);
+            --reader-line-height: \(c.lineHeight);
+            --reader-max-width: \(c.maxWidth)px;
+            --reader-padding-h: \(c.paddingH)px;
+            --reader-link-pointer-events: \(c.allowLinkClicks ? "auto" : "none");
         }
+        """
     }
-    """
 
     static let readerCSS = """
     /* Search highlight colours */

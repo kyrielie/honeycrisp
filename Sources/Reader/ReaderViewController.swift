@@ -372,7 +372,8 @@ final class ReaderViewController: NSViewController {
             // "Format for AO3" maps to the same formatFirstChapter flag in SettingsManager
             let format = SettingsManager.shared.formatFirstChapter
             let removeIndents = SettingsManager.shared.removeParagraphIndents
-            let html = try parser.buildScrollHTML(from: pkg, formatFirstChapter: format, removeParagraphIndents: removeIndents)
+            let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared)
+            let html = try parser.buildScrollHTML(from: pkg, cosmetics: cosmetics, formatFirstChapter: format, removeParagraphIndents: removeIndents)
             let indexURL = pkg.rootFolder.appendingPathComponent(Self.readerHTMLFilename)
             try html.write(to: indexURL, atomically: true, encoding: .utf8)
             webView.loadFileURL(indexURL, allowingReadAccessTo: pkg.rootFolder)
@@ -401,11 +402,13 @@ final class ReaderViewController: NSViewController {
             let parser = EPUBParser()
             let format = SettingsManager.shared.formatFirstChapter
             let removeIndents = SettingsManager.shared.removeParagraphIndents
+            let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared)
             let bounds = webView.bounds.isEmpty ? NSRect(x: 0, y: 0, width: 780, height: 920) : webView.bounds
             let html = try parser.buildPageHTML(
                 from: pkg, spineIndex: index,
                 viewportWidth: bounds.width, viewportHeight: bounds.height,
                 colsPerScreen: SettingsManager.shared.colsPerScreen,
+                cosmetics: cosmetics,
                 maxWidth: CGFloat(SettingsManager.shared.maxWidth),
                 paddingH: CGFloat(SettingsManager.shared.paddingH),
                 paddingV: CGFloat(SettingsManager.shared.paddingV),
@@ -451,12 +454,17 @@ final class ReaderViewController: NSViewController {
     /// Wired to the View-menu "Paginated Mode" item (⇧⌘P) and the "Paginated Mode"
     /// checkbox in Settings' General tab. Reloads the current content in the new mode at the
     /// equivalent fraction-based position. Mode isn't persisted per-file — nothing
-    /// is written back to HistoryEntry here (SettingsManager.defaultReadingMode,
-    /// the global default, is untouched by this toggle too; it only flips this
-    /// window's currentMode for its current session).
+    /// is written back to HistoryEntry here — but it IS written back to
+    /// SettingsManager.defaultReadingMode, the global default, so the next book
+    /// (and the next window) opens in whatever mode the user last chose. Written
+    /// immediately, at the moment the toggle fires, rather than waiting for the
+    /// async mode-switch below to complete: the user's intent is decided the
+    /// moment they click, and this keeps the new global default consistent with
+    /// currentMode even if the window is closed mid-transition.
     @objc func toggleReadingMode(_ sender: Any?) {
         guard let pkg = currentPackage else { return }
         let goingTo: ReadingMode = currentMode == .scroll ? .paginated : .scroll
+        SettingsManager.shared.defaultReadingMode = goingTo
 
         if goingTo == .paginated {
             // Scroll mode's own progress fraction (scrollY / scrollHeight) becomes
@@ -573,32 +581,16 @@ final class ReaderViewController: NSViewController {
 
     /// JS-only live patch of the `#honeycrisp-vars` `<style>` element's textContent —
     /// no reload, so scroll position and any other DOM state survive a font/theme/
-    /// line-height tweak. `EPUBParser.readerVarsCSS` defines the same custom properties
-    /// as the initial defaults this replaces.
+    /// line-height tweak. Builds the replacement CSS with the exact same
+    /// `EPUBParser.readerVarsCSS` function buildScrollHTML/buildPageHTML use for the
+    /// initial paint, so this can't drift from what a fresh load would produce.
     @objc private func applyCosmeticCSSUpdate() {
-        let s = SettingsManager.shared
-        // fontFamily is free-form (Ambrosia-style) and most presets contain single
-        // quotes (e.g. "'Iowan Old Style', Georgia, serif"), so it can't be
-        // interpolated directly into the single-quoted JS string below — that
-        // breaks the JS (syntax error) and silently drops every var update below
-        // it, since evaluateJavaScript's completionHandler is nil here. Encode it
-        // as a proper JS string literal instead.
-        let fontFamilyLiteral = Self.jsStringLiteral(s.fontFamily)
+        let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared)
+        let cssLiteral = Self.jsStringLiteral(EPUBParser.readerVarsCSS(cosmetics))
         let js = """
         (function() {
           var el = document.getElementById('honeycrisp-vars');
-          if (!el) return;
-          el.textContent = ':root {' +
-            '--reader-font-size:\(s.fontSizePercent)%;' +
-            '--reader-font-family:' + \(fontFamilyLiteral) + ';' +
-            '--reader-bg:\(s.effectiveBackgroundCSS);' +
-            '--reader-text:\(s.effectiveTextCSS);' +
-            '--reader-link:\(s.effectiveLinkCSS);' +
-            '--reader-line-height:\(s.lineHeight);' +
-            '--reader-max-width:\(s.maxWidth)px;' +
-            '--reader-padding-h:\(s.paddingH)px;' +
-            '--reader-link-pointer-events:\(s.allowReaderLinkClicks ? "auto" : "none");' +
-          '}';
+          if (el) el.textContent = \(cssLiteral);
         })();
         """
         webView.evaluateJavaScript(js, completionHandler: nil)
@@ -608,7 +600,13 @@ final class ReaderViewController: NSViewController {
             // scroll listener won't fire on its own here, so recompute explicitly.
             webView.evaluateJavaScript("window.reportPageInfo && window.reportPageInfo();", completionHandler: nil)
         }
-        applyWindowAppearance()
+        // applyWindowAppearance() is NOT called here. It sets NSApp.appearance,
+        // which is itself observed via KVO on effectiveAppearance (see viewDidLoad)
+        // and routes back into this method -- calling it from this hot path is an
+        // infinite recursion (NSApp.appearance = nil -> KVO fires even though the
+        // value didn't change -> observeValue -> applyCosmeticCSSUpdate -> ...).
+        // Every theme now supplies both light and dark colors, so the window's
+        // appearance only ever needs to be set once, from applyDynamicSettings.
     }
 
     /// Encodes a Swift string as a safe JS string literal (JSON string syntax is
@@ -1092,9 +1090,11 @@ extension ReaderViewController: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // The initial HTML bakes in the readerVarsCSS defaults, not the user's actual
-        // saved values — apply them now via the same path settings changes use, so
-        // there's one definition of "what the CSS vars should be", not two.
+        // The initial HTML already bakes real settings in via ReaderCosmeticSettings
+        // (see buildScrollHTML/buildPageHTML), so this is normally a no-op re-write
+        // of the same values -- kept as a safety re-sync in case a setting changed
+        // in the (synchronous build, async load) window between building the HTML
+        // and this callback firing.
         applyCosmeticCSSUpdate()
         switch currentMode {
         case .scroll:

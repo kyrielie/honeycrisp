@@ -8,47 +8,47 @@
 
 /* Begin PBXBuildFile section */
 		6228A9A32F7593FD00A3C2B7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6228A9A22F7593FD00A3C2B7 /* Assets.xcassets */; };
-		6247C0453012045000625253 /* ThemePopoverViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6247C0443012045000625253 /* ThemePopoverViewController.swift */; };
-		628948362F7CA5A800A082DD /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628948332F7CA5A800A082DD /* SettingsWindowController.swift */; };
-		628948372F7CA5A800A082DD /* TOCSidebarViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628948352F7CA5A800A082DD /* TOCSidebarViewController.swift */; };
-		628948382F7CA5A800A082DD /* SearchBarViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628948322F7CA5A800A082DD /* SearchBarViewController.swift */; };
-		628948392F7CA5A800A082DD /* TOCParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628948342F7CA5A800A082DD /* TOCParser.swift */; };
-		629B554530115F6A00E27089 /* PaginationJS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 629B554330115F6A00E27089 /* PaginationJS.swift */; };
-		629B554630115F6A00E27089 /* ShortcutsSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 629B554430115F6A00E27089 /* ShortcutsSettingsViewController.swift */; };
-		629B554730115F6A00E27089 /* PaginationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 629B554230115F6A00E27089 /* PaginationEngine.swift */; };
-		629B554830115F6A00E27089 /* KeyBinding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 629B554130115F6A00E27089 /* KeyBinding.swift */; };
-		62D788FF2F75CBEA006F67C1 /* HistoryViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62D788FA2F75CBEA006F67C1 /* HistoryViewController.swift */; };
-		62D789002F75CBEA006F67C1 /* ReaderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62D788FB2F75CBEA006F67C1 /* ReaderViewController.swift */; };
-		62D789012F75CBEA006F67C1 /* ReaderWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62D788FC2F75CBEA006F67C1 /* ReaderWindowController.swift */; };
-		62D789022F75CBEA006F67C1 /* HistoryManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62D788F92F75CBEA006F67C1 /* HistoryManager.swift */; };
-		62D789032F75CBEA006F67C1 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62D788FD2F75CBEA006F67C1 /* SettingsManager.swift */; };
-		62D789042F75CBEA006F67C1 /* EPUBParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62D788F62F75CBEA006F67C1 /* EPUBParser.swift */; };
-		62D789052F75CBEA006F67C1 /* EPUBReaderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62D788F82F75CBEA006F67C1 /* EPUBReaderApp.swift */; };
-		62D789062F75CBEA006F67C1 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62D788F52F75CBEA006F67C1 /* AppDelegate.swift */; };
+		6244369430132DD30071E040 /* SearchBarViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244369030132DD30071E040 /* SearchBarViewController.swift */; };
+		6244369530132DD30071E040 /* ShortcutsSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244368E30132DD30071E040 /* ShortcutsSettingsViewController.swift */; };
+		6244369630132DD30071E040 /* HistoryManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244368030132DD30071E040 /* HistoryManager.swift */; };
+		6244369730132DD30071E040 /* TOCParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244368430132DD30071E040 /* TOCParser.swift */; };
+		6244369830132DD30071E040 /* EPUBParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244368330132DD30071E040 /* EPUBParser.swift */; };
+		6244369930132DD30071E040 /* EPUBReaderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244367E30132DD30071E040 /* EPUBReaderApp.swift */; };
+		6244369A30132DD30071E040 /* ReaderWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244368930132DD30071E040 /* ReaderWindowController.swift */; };
+		6244369B30132DD30071E040 /* ReaderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244368830132DD30071E040 /* ReaderViewController.swift */; };
+		6244369C30132DD30071E040 /* ThemePopoverViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244369130132DD30071E040 /* ThemePopoverViewController.swift */; };
+		6244369D30132DD30071E040 /* TOCSidebarViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244369230132DD30071E040 /* TOCSidebarViewController.swift */; };
+		6244369E30132DD30071E040 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244368C30132DD30071E040 /* SettingsManager.swift */; };
+		6244369F30132DD30071E040 /* KeyBinding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244368B30132DD30071E040 /* KeyBinding.swift */; };
+		624436A030132DD30071E040 /* PaginationJS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244368730132DD30071E040 /* PaginationJS.swift */; };
+		624436A130132DD30071E040 /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244368D30132DD30071E040 /* SettingsWindowController.swift */; };
+		624436A230132DD30071E040 /* HistoryViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244368130132DD30071E040 /* HistoryViewController.swift */; };
+		624436A330132DD30071E040 /* PaginationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244368630132DD30071E040 /* PaginationEngine.swift */; };
+		624436A430132DD30071E040 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6244367D30132DD30071E040 /* AppDelegate.swift */; };
 		A008 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = P001 /* ZIPFoundation */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		6228A9A22F7593FD00A3C2B7 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		6247C0443012045000625253 /* ThemePopoverViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemePopoverViewController.swift; sourceTree = "<group>"; };
-		628948322F7CA5A800A082DD /* SearchBarViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchBarViewController.swift; sourceTree = "<group>"; };
-		628948332F7CA5A800A082DD /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
-		628948342F7CA5A800A082DD /* TOCParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TOCParser.swift; sourceTree = "<group>"; };
-		628948352F7CA5A800A082DD /* TOCSidebarViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TOCSidebarViewController.swift; sourceTree = "<group>"; };
+		6244367D30132DD30071E040 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		6244367E30132DD30071E040 /* EPUBReaderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBReaderApp.swift; sourceTree = "<group>"; };
+		6244368030132DD30071E040 /* HistoryManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryManager.swift; sourceTree = "<group>"; };
+		6244368130132DD30071E040 /* HistoryViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryViewController.swift; sourceTree = "<group>"; };
+		6244368330132DD30071E040 /* EPUBParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBParser.swift; sourceTree = "<group>"; };
+		6244368430132DD30071E040 /* TOCParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TOCParser.swift; sourceTree = "<group>"; };
+		6244368630132DD30071E040 /* PaginationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaginationEngine.swift; sourceTree = "<group>"; };
+		6244368730132DD30071E040 /* PaginationJS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaginationJS.swift; sourceTree = "<group>"; };
+		6244368830132DD30071E040 /* ReaderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderViewController.swift; sourceTree = "<group>"; };
+		6244368930132DD30071E040 /* ReaderWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderWindowController.swift; sourceTree = "<group>"; };
+		6244368B30132DD30071E040 /* KeyBinding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyBinding.swift; sourceTree = "<group>"; };
+		6244368C30132DD30071E040 /* SettingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManager.swift; sourceTree = "<group>"; };
+		6244368D30132DD30071E040 /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
+		6244368E30132DD30071E040 /* ShortcutsSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsSettingsViewController.swift; sourceTree = "<group>"; };
+		6244369030132DD30071E040 /* SearchBarViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchBarViewController.swift; sourceTree = "<group>"; };
+		6244369130132DD30071E040 /* ThemePopoverViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemePopoverViewController.swift; sourceTree = "<group>"; };
+		6244369230132DD30071E040 /* TOCSidebarViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TOCSidebarViewController.swift; sourceTree = "<group>"; };
 		6296C13A2F759E7900C6E6B2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; name = Info.plist; path = Honeycrisp/Info.plist; sourceTree = "<group>"; };
-		629B554130115F6A00E27089 /* KeyBinding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyBinding.swift; sourceTree = "<group>"; };
-		629B554230115F6A00E27089 /* PaginationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaginationEngine.swift; sourceTree = "<group>"; };
-		629B554330115F6A00E27089 /* PaginationJS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaginationJS.swift; sourceTree = "<group>"; };
-		629B554430115F6A00E27089 /* ShortcutsSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsSettingsViewController.swift; sourceTree = "<group>"; };
-		62D788F52F75CBEA006F67C1 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		62D788F62F75CBEA006F67C1 /* EPUBParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBParser.swift; sourceTree = "<group>"; };
 		62D788F72F75CBEA006F67C1 /* EPUBReader.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = EPUBReader.entitlements; sourceTree = "<group>"; };
-		62D788F82F75CBEA006F67C1 /* EPUBReaderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBReaderApp.swift; sourceTree = "<group>"; };
-		62D788F92F75CBEA006F67C1 /* HistoryManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryManager.swift; sourceTree = "<group>"; };
-		62D788FA2F75CBEA006F67C1 /* HistoryViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryViewController.swift; sourceTree = "<group>"; };
-		62D788FB2F75CBEA006F67C1 /* ReaderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderViewController.swift; sourceTree = "<group>"; };
-		62D788FC2F75CBEA006F67C1 /* ReaderWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderWindowController.swift; sourceTree = "<group>"; };
-		62D788FD2F75CBEA006F67C1 /* SettingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManager.swift; sourceTree = "<group>"; };
 		PROD /* Honeycrisp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Honeycrisp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -64,27 +64,75 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		6244367F30132DD30071E040 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				6244367D30132DD30071E040 /* AppDelegate.swift */,
+				6244367E30132DD30071E040 /* EPUBReaderApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		6244368230132DD30071E040 /* History */ = {
+			isa = PBXGroup;
+			children = (
+				6244368030132DD30071E040 /* HistoryManager.swift */,
+				6244368130132DD30071E040 /* HistoryViewController.swift */,
+			);
+			path = History;
+			sourceTree = "<group>";
+		};
+		6244368530132DD30071E040 /* Parsing */ = {
+			isa = PBXGroup;
+			children = (
+				6244368330132DD30071E040 /* EPUBParser.swift */,
+				6244368430132DD30071E040 /* TOCParser.swift */,
+			);
+			path = Parsing;
+			sourceTree = "<group>";
+		};
+		6244368A30132DD30071E040 /* Reader */ = {
+			isa = PBXGroup;
+			children = (
+				6244368630132DD30071E040 /* PaginationEngine.swift */,
+				6244368730132DD30071E040 /* PaginationJS.swift */,
+				6244368830132DD30071E040 /* ReaderViewController.swift */,
+				6244368930132DD30071E040 /* ReaderWindowController.swift */,
+			);
+			path = Reader;
+			sourceTree = "<group>";
+		};
+		6244368F30132DD30071E040 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				6244368B30132DD30071E040 /* KeyBinding.swift */,
+				6244368C30132DD30071E040 /* SettingsManager.swift */,
+				6244368D30132DD30071E040 /* SettingsWindowController.swift */,
+				6244368E30132DD30071E040 /* ShortcutsSettingsViewController.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		6244369330132DD30071E040 /* Sidebar */ = {
+			isa = PBXGroup;
+			children = (
+				6244369030132DD30071E040 /* SearchBarViewController.swift */,
+				6244369130132DD30071E040 /* ThemePopoverViewController.swift */,
+				6244369230132DD30071E040 /* TOCSidebarViewController.swift */,
+			);
+			path = Sidebar;
+			sourceTree = "<group>";
+		};
 		62D788FE2F75CBEA006F67C1 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
-				6247C0443012045000625253 /* ThemePopoverViewController.swift */,
-				629B554130115F6A00E27089 /* KeyBinding.swift */,
-				629B554230115F6A00E27089 /* PaginationEngine.swift */,
-				629B554330115F6A00E27089 /* PaginationJS.swift */,
-				629B554430115F6A00E27089 /* ShortcutsSettingsViewController.swift */,
-				628948322F7CA5A800A082DD /* SearchBarViewController.swift */,
-				628948332F7CA5A800A082DD /* SettingsWindowController.swift */,
-				628948342F7CA5A800A082DD /* TOCParser.swift */,
-				628948352F7CA5A800A082DD /* TOCSidebarViewController.swift */,
-				62D788F52F75CBEA006F67C1 /* AppDelegate.swift */,
-				62D788F62F75CBEA006F67C1 /* EPUBParser.swift */,
+				6244367F30132DD30071E040 /* App */,
+				6244368230132DD30071E040 /* History */,
+				6244368530132DD30071E040 /* Parsing */,
+				6244368A30132DD30071E040 /* Reader */,
+				6244368F30132DD30071E040 /* Settings */,
+				6244369330132DD30071E040 /* Sidebar */,
 				62D788F72F75CBEA006F67C1 /* EPUBReader.entitlements */,
-				62D788F82F75CBEA006F67C1 /* EPUBReaderApp.swift */,
-				62D788F92F75CBEA006F67C1 /* HistoryManager.swift */,
-				62D788FA2F75CBEA006F67C1 /* HistoryViewController.swift */,
-				62D788FB2F75CBEA006F67C1 /* ReaderViewController.swift */,
-				62D788FC2F75CBEA006F67C1 /* ReaderWindowController.swift */,
-				62D788FD2F75CBEA006F67C1 /* SettingsManager.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -199,23 +247,23 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				6247C0453012045000625253 /* ThemePopoverViewController.swift in Sources */,
-				62D788FF2F75CBEA006F67C1 /* HistoryViewController.swift in Sources */,
-				62D789002F75CBEA006F67C1 /* ReaderViewController.swift in Sources */,
-				62D789012F75CBEA006F67C1 /* ReaderWindowController.swift in Sources */,
-				62D789022F75CBEA006F67C1 /* HistoryManager.swift in Sources */,
-				628948362F7CA5A800A082DD /* SettingsWindowController.swift in Sources */,
-				628948372F7CA5A800A082DD /* TOCSidebarViewController.swift in Sources */,
-				629B554530115F6A00E27089 /* PaginationJS.swift in Sources */,
-				629B554630115F6A00E27089 /* ShortcutsSettingsViewController.swift in Sources */,
-				629B554730115F6A00E27089 /* PaginationEngine.swift in Sources */,
-				629B554830115F6A00E27089 /* KeyBinding.swift in Sources */,
-				628948382F7CA5A800A082DD /* SearchBarViewController.swift in Sources */,
-				628948392F7CA5A800A082DD /* TOCParser.swift in Sources */,
-				62D789032F75CBEA006F67C1 /* SettingsManager.swift in Sources */,
-				62D789042F75CBEA006F67C1 /* EPUBParser.swift in Sources */,
-				62D789052F75CBEA006F67C1 /* EPUBReaderApp.swift in Sources */,
-				62D789062F75CBEA006F67C1 /* AppDelegate.swift in Sources */,
+				6244369430132DD30071E040 /* SearchBarViewController.swift in Sources */,
+				6244369530132DD30071E040 /* ShortcutsSettingsViewController.swift in Sources */,
+				6244369630132DD30071E040 /* HistoryManager.swift in Sources */,
+				6244369730132DD30071E040 /* TOCParser.swift in Sources */,
+				6244369830132DD30071E040 /* EPUBParser.swift in Sources */,
+				6244369930132DD30071E040 /* EPUBReaderApp.swift in Sources */,
+				6244369A30132DD30071E040 /* ReaderWindowController.swift in Sources */,
+				6244369B30132DD30071E040 /* ReaderViewController.swift in Sources */,
+				6244369C30132DD30071E040 /* ThemePopoverViewController.swift in Sources */,
+				6244369D30132DD30071E040 /* TOCSidebarViewController.swift in Sources */,
+				6244369E30132DD30071E040 /* SettingsManager.swift in Sources */,
+				6244369F30132DD30071E040 /* KeyBinding.swift in Sources */,
+				624436A030132DD30071E040 /* PaginationJS.swift in Sources */,
+				624436A130132DD30071E040 /* SettingsWindowController.swift in Sources */,
+				624436A230132DD30071E040 /* HistoryViewController.swift in Sources */,
+				624436A330132DD30071E040 /* PaginationEngine.swift in Sources */,
+				624436A430132DD30071E040 /* AppDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
