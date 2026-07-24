@@ -8,7 +8,6 @@ final class ShortcutsSettingsViewController: NSViewController {
     private var recorders: [RebindableAction: RecorderButton] = [:]
 
     override func loadView() {
-        NSLog("[Honeycrisp][Settings] ShortcutsSettingsViewController.loadView start")
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 260))
 
         let stack = NSStackView()
@@ -25,10 +24,8 @@ final class ShortcutsSettingsViewController: NSViewController {
         ])
 
         for action in RebindableAction.allCases {
-            NSLog("[Honeycrisp][Settings] Shortcuts: building row for %@", action.rawValue)
             stack.addArrangedSubview(makeRow(for: action))
         }
-        NSLog("[Honeycrisp][Settings] Shortcuts: all rows built")
 
         conflictLabel = NSTextField(labelWithString: "")
         conflictLabel.font = NSFont.systemFont(ofSize: 11)
@@ -37,7 +34,6 @@ final class ShortcutsSettingsViewController: NSViewController {
         stack.addArrangedSubview(conflictLabel)
 
         view = root
-        NSLog("[Honeycrisp][Settings] ShortcutsSettingsViewController.loadView done")
     }
 
     private func makeRow(for action: RebindableAction) -> NSStackView {

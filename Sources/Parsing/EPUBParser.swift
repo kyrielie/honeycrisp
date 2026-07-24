@@ -46,7 +46,7 @@ struct ReaderCosmeticSettings {
 }
 
 enum EPUBParseError: Error, LocalizedError {
-    case containerNotFound, opfNotFound, malformed, io
+    case containerNotFound, opfNotFound, malformed, io, drmProtected
 
     var errorDescription: String? {
         switch self {
@@ -54,6 +54,7 @@ enum EPUBParseError: Error, LocalizedError {
         case .opfNotFound:       return "Could not locate the OPF package file"
         case .malformed:         return "EPUB spine is empty or malformed"
         case .io:                return "I/O error while reading EPUB"
+        case .drmProtected:      return "This EPUB is protected (DRM) and can't be opened by Honeycrisp."
         }
     }
 }
@@ -78,6 +79,17 @@ final class EPUBParser: NSObject {
 
     func parsePackage(at extractedRoot: URL) throws -> EPUBPackage {
         let fm = FileManager.default
+
+        // DRM-protected EPUBs (Adobe ADEPT, most library-loan formats, etc.) carry
+        // a META-INF/encryption.xml manifest listing which resources are encrypted.
+        // Checked first, before container.xml/OPF parsing, so a DRM'd file gets a
+        // clear, specific error instead of falling through to .malformed/.opfNotFound
+        // once the encrypted OPF or spine content fails to parse as plain XML/XHTML.
+        let encryptionURL = extractedRoot.appendingPathComponent("META-INF/encryption.xml")
+        if fm.fileExists(atPath: encryptionURL.path) {
+            throw EPUBParseError.drmProtected
+        }
+
         let containerURL = extractedRoot.appendingPathComponent("META-INF/container.xml")
 
         if fm.fileExists(atPath: containerURL.path) {
