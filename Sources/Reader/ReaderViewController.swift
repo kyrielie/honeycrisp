@@ -40,12 +40,19 @@ final class ReaderViewController: NSViewController {
     private var currentSpineIndex: Int = 0
     // MARK: - Page count (menu bar display)
     //
-    // "Page" is scoped per spine item / chapter (see EPUBParser.honeycrispPageInfo
-    // and PaginationEngine.spineDidLoad's totalCols) rather than a whole-book
-    // total: paginated mode only ever knows the column count of the currently
-    // loaded spine item (see loadSpineItem), and scroll mode's merged document
-    // has no cheap way to attribute an exact whole-book page count without a
-    // separate offscreen pre-pagination pass. Displayed as "page/pages · chapter/chapters".
+    // "Page" is scoped per spine item / chapter for PAGINATED mode only (see
+    // PaginationEngine.spineDidLoad's totalCols): paginated mode only ever
+    // knows the column count of the currently loaded spine item (see
+    // loadSpineItem), since column CSS is baked into one spine item's HTML at
+    // a time and a whole-book column count would need a separate offscreen
+    // pre-pagination pass across every spine item.
+    //
+    // Scroll mode does NOT share this limitation: its merged document (see
+    // buildScrollHTML) makes scrollHeight the whole book's rendered height,
+    // so EPUBParser.honeycrispPageInfo already computes a true whole-book
+    // page/totalPages via ceil(scrollHeight/innerHeight) — see
+    // didReceiveScrollPageInfo below, which displays that value directly.
+    // Displayed as "page/pages · chapter/chapters".
     private var paginatedCurrentColumn: Int = 0
     private var paginatedTotalColumns: Int = 1
     private weak var pageCountLabel: NSTextField?
@@ -503,10 +510,14 @@ final class ReaderViewController: NSViewController {
 
     // MARK: - Toolbar Title
 
-    /// Sets the centered title label in the toolbar (truncated to a reasonable length).
+    /// Sets the centered title label in the toolbar (truncated to a reasonable length)
+    /// and the window's real title. The titlebar itself still doesn't show text --
+    /// ReaderWindowController.setupWindow sets titleVisibility = .hidden -- but
+    /// NSWindow.title as a model value is read independently of that by the Window
+    /// menu, Mission Control, and VoiceOver, so it needs to be the real title, not
+    /// permanently blank.
     private func setToolbarTitle(_ title: String) {
-        // Ensure the window title is always blank — we only show it in the toolbar
-        view.window?.title = ""
+        view.window?.title = title
         titleLabel?.stringValue = title
     }
 
@@ -983,7 +994,6 @@ final class ReaderViewController: NSViewController {
     /// "Ambrosia > Settings…" was a no-op even after the toolbar button itself
     /// was fixed.
     @objc private func showThemePopover(_ sender: NSButton) {
-        NSLog("[Honeycrisp][Settings] toolbar gear button tapped, showing theme popover")
         let themeVC = ThemePopoverViewController()
 
         let popover = NSPopover()
@@ -1173,6 +1183,15 @@ extension ReaderViewController: NSToolbarDelegate {
                 trackingMode: .momentary, target: self, action: #selector(adjustFontSize(_:))
             )
             seg.segmentStyle = .separated
+            seg.setAccessibilityLabel("Font Size")
+            // Per-segment tooltips so VoiceOver / hover can distinguish the
+            // two icon-only segments individually, not just the control's
+            // overall label -- same reasoning as makeToolbarButton's
+            // setAccessibilityLabel below. setToolTip(forSegment:), not
+            // setLabel(forSegment:), since these segments are icon-only and
+            // setLabel would render visible text alongside the icons.
+            seg.setToolTip("Decrease Font Size", forSegment: 0)
+            seg.setToolTip("Increase Font Size", forSegment: 1)
             item.view = seg
             item.label = "Font Size"
             return item
@@ -1229,6 +1248,12 @@ extension ReaderViewController: NSToolbarDelegate {
         btn.toolTip = tooltip
         btn.isBordered = false
         btn.setButtonType(.momentaryPushIn)
+        // VoiceOver reads the control's own accessibility label over the
+        // underlying NSImage's accessibilityDescription when both exist, and
+        // an NSButton doesn't reliably inherit the image's description as its
+        // own label -- set it explicitly, matching the pattern
+        // SettingsWindowController already uses for its own controls.
+        btn.setAccessibilityLabel(tooltip)
         return btn
     }
 }

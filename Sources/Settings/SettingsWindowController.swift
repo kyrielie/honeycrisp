@@ -21,7 +21,6 @@ final class SettingsWindowController: NSWindowController {
     static let shared = SettingsWindowController()
 
     private init() {
-        NSLog("[Honeycrisp][Settings] SettingsWindowController.init start")
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 420),
             styleMask: [.titled, .closable, .resizable],
@@ -34,9 +33,7 @@ final class SettingsWindowController: NSWindowController {
         window.minSize = NSSize(width: 420, height: 320)
         window.maxSize = NSSize(width: 720, height: 900)
         super.init(window: window)
-        NSLog("[Honeycrisp][Settings] SettingsWindowController.init: window created, assigning contentViewController")
         window.contentViewController = SettingsTabViewController()
-        NSLog("[Honeycrisp][Settings] SettingsWindowController.init done")
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -48,7 +45,6 @@ final class SettingsTabViewController: NSTabViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        NSLog("[Honeycrisp][Settings] SettingsTabViewController.viewDidLoad start")
 
         // Typography tab intentionally removed.
         let tabSpecs: [(() -> NSViewController, String, String)] = [
@@ -59,16 +55,12 @@ final class SettingsTabViewController: NSTabViewController {
         ]
 
         for (makeVC, label, symbol) in tabSpecs {
-            NSLog("[Honeycrisp][Settings] constructing tab: %@", label)
             let vc = makeVC()
-            NSLog("[Honeycrisp][Settings] constructed tab: %@, adding NSTabViewItem", label)
             let item = NSTabViewItem(viewController: vc)
             item.label = label
             item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
             addTabViewItem(item)
-            NSLog("[Honeycrisp][Settings] added tab: %@", label)
         }
-        NSLog("[Honeycrisp][Settings] SettingsTabViewController.viewDidLoad done, tabViewItems.count=%d", tabViewItems.count)
     }
 }
 
@@ -85,7 +77,6 @@ final class FlippedView: NSView {
 final class GeneralSettingsViewController: NSViewController {
 
     override func loadView() {
-        NSLog("[Honeycrisp][Settings] GeneralSettingsViewController.loadView start")
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 200))
 
         let stack = NSStackView()
@@ -194,7 +185,6 @@ final class GeneralSettingsViewController: NSViewController {
         ])
 
         self.view = root
-        NSLog("[Honeycrisp][Settings] GeneralSettingsViewController.loadView done")
     }
 
     private weak var readingModeCheckbox: NSButton?
@@ -335,7 +325,6 @@ final class AppearanceSettingsViewController: NSViewController {
     private static let baseFontSizePx: Double = 16
 
     override func loadView() {
-        NSLog("[Honeycrisp][Settings] AppearanceSettingsViewController.loadView start")
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 480))
 
         // ── Form grid ────────────────────────────────────────────────────────
@@ -447,7 +436,6 @@ final class AppearanceSettingsViewController: NSViewController {
         updateCustomModeVisibility()
         refreshThemeGridSelection()
         refreshPreview()
-        NSLog("[Honeycrisp][Settings] AppearanceSettingsViewController.loadView done")
     }
 
     /// Belt-and-suspenders on top of `clipContainer` being flipped: also
@@ -1333,7 +1321,6 @@ final class HistorySettingsViewController: NSViewController {
     private var tableView: NSTableView!
 
     override func loadView() {
-        NSLog("[Honeycrisp][Settings] HistorySettingsViewController.loadView start")
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 320))
 
         let scrollView = NSScrollView()
@@ -1380,7 +1367,6 @@ final class HistorySettingsViewController: NSViewController {
             self, selector: #selector(reload),
             name: SettingsManager.settingsChangedNotification, object: nil
         )
-        NSLog("[Honeycrisp][Settings] HistorySettingsViewController.loadView done")
     }
 
     @objc private func reload() { tableView.reloadData() }

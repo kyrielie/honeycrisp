@@ -52,6 +52,16 @@ xattr -d com.apple.quarantine /path/to/app
 - **Page counter** - page / total pages (and spine / total spines in paged mode)
 - **Table of contents** - quickly flick through books
 
+## Non-goals
+
+These are intentional scope boundaries, not missing features:
+
+- **No library view** — File > Open, drag-drop, and the History popover are the only ways to open a book. Honeycrisp is a reader, not a library manager; see [ambrosia](https://github.com/kyrielie/ambrosia) for that.
+- **No cross-library full-text search** — search is scoped to the currently open book only.
+- **No publisher CSS** — Honeycrisp deliberately strips inline/publisher styling and applies its own reader CSS (Lora typeface, warm paper palette). This is by design, not a rendering bug.
+- **No "share quote"** — without a metadata parser for title/author/ISBN, there's nothing reliable to attribute a quote to, so this isn't offered.
+- **No per-window/per-book reading mode** — paginated vs. scroll mode is a single global default (Settings' General tab); every window and every book opens in whichever mode was last chosen.
+
 ## Keyboard shortcuts
 
 | Key | Action |
