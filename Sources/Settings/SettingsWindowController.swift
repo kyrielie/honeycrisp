@@ -23,7 +23,7 @@ final class SettingsWindowController: NSWindowController {
     private init() {
         NSLog("[Honeycrisp][Settings] SettingsWindowController.init start")
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 420),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
@@ -86,7 +86,7 @@ final class GeneralSettingsViewController: NSViewController {
 
     override func loadView() {
         NSLog("[Honeycrisp][Settings] GeneralSettingsViewController.loadView start")
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 200))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 200))
 
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -346,6 +346,12 @@ final class AppearanceSettingsViewController: NSViewController {
         grid.column(at: 0).xPlacement = .leading
         grid.column(at: 1).xPlacement = .leading
 
+        // Appearance mode -- overrides the system's light/dark setting for
+        // the whole app (window chrome plus whichever of each theme's two
+        // ThemeColorSets is in effect). "System" just tracks the OS, same as
+        // before this control existed.
+        grid.addRow(with: [label("Appearance:"), makeAppearanceModeControl()])
+
         // Themes first, no header — the grid is the section, stretched to fill
         // the panel's full width (see makeThemeGrid). Every swatch is directly
         // editable now (right-click, or double-click, for rename/recolor/
@@ -469,6 +475,30 @@ final class AppearanceSettingsViewController: NSViewController {
 
     private func label(_ text: String) -> NSTextField {
         NSTextField(labelWithString: text)
+    }
+
+    private func makeAppearanceModeControl() -> NSSegmentedControl {
+        let modes = AppearanceMode.allCases
+        let control = NSSegmentedControl(
+            labels: modes.map(\.displayName),
+            trackingMode: .selectOne,
+            target: self,
+            action: #selector(appearanceModeChanged(_:))
+        )
+        control.selectedSegment = modes.firstIndex(of: SettingsManager.shared.appearanceMode) ?? 0
+        control.setAccessibilityLabel("Appearance")
+        return control
+    }
+
+    @objc private func appearanceModeChanged(_ sender: NSSegmentedControl) {
+        let modes = AppearanceMode.allCases
+        guard sender.selectedSegment >= 0, sender.selectedSegment < modes.count else { return }
+        SettingsManager.shared.appearanceMode = modes[sender.selectedSegment]
+        // The bottom preview box is keyed off effective light/dark, which
+        // just changed. The theme grid swatches above always render each
+        // theme's own *light* colors regardless of appearance mode (see
+        // ThemeBigSwatchButton.swatchImage), so they don't need a rebuild.
+        refreshPreview()
     }
 
     private func makeFontPopup() -> NSPopUpButton {
@@ -1247,15 +1277,16 @@ final class ThemeBigSwatchButton: NSButton {
         setAccessibilityLabel(theme.name)
     }
 
-    /// Rendered against the swatch's own light colors — the grid's meant to
-    /// show what each theme looks like on its own terms, not shift with the
-    /// window's momentary system appearance while browsing the list.
+    /// Rendered against the swatch's own light colors and its own font — the
+    /// grid's meant to show what each theme looks like on its own terms, not
+    /// shift with the window's momentary system appearance while browsing the
+    /// list, and not all show whichever theme happens to be currently active.
     /// Same best-effort CSS-stack-to-NSFont resolution as
     /// AppearanceSettingsViewController.refreshPreview: takes the first family
-    /// name in the user's configured font stack and falls back to the system
-    /// font if AppKit doesn't have a font by that name.
-    private static func previewFont(ofSize size: CGFloat) -> NSFont {
-        let firstFamily = SettingsManager.shared.fontFamily
+    /// name in the theme's own font stack and falls back to the system font
+    /// if AppKit doesn't have a font by that name.
+    private static func previewFont(for theme: Theme, ofSize size: CGFloat) -> NSFont {
+        let firstFamily = theme.fontFamily
             .split(separator: ",").first?
             .trimmingCharacters(in: CharacterSet(charactersIn: " '\"")) ?? ""
         return NSFont(name: firstFamily, size: size) ?? NSFont.systemFont(ofSize: size, weight: .medium)
@@ -1278,7 +1309,7 @@ final class ThemeBigSwatchButton: NSButton {
         path.stroke()
 
         let aa = NSAttributedString(string: "Aa", attributes: [
-            .font: Self.previewFont(ofSize: 26),
+            .font: Self.previewFont(for: theme, ofSize: 26),
             .foregroundColor: text,
         ])
         let aaSize = aa.size()
@@ -1303,7 +1334,7 @@ final class HistorySettingsViewController: NSViewController {
 
     override func loadView() {
         NSLog("[Honeycrisp][Settings] HistorySettingsViewController.loadView start")
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 300))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 320))
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -1317,7 +1348,7 @@ final class HistorySettingsViewController: NSViewController {
         tableView.usesAlternatingRowBackgroundColors = true
 
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("history"))
-        col.width = 440
+        col.width = 480
         tableView.addTableColumn(col)
         tableView.dataSource = self
         tableView.delegate = self
@@ -1332,13 +1363,15 @@ final class HistorySettingsViewController: NSViewController {
         root.addSubview(clearBtn)
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: root.topAnchor, constant: 10),
-            scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
-            scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
-            scrollView.bottomAnchor.constraint(equalTo: clearBtn.topAnchor, constant: -10),
+            // 20pt insets, matching every other settings tab, instead of the
+            // 10pt this tab used to use on its own.
+            scrollView.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
+            scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            scrollView.bottomAnchor.constraint(equalTo: clearBtn.topAnchor, constant: -12),
 
             clearBtn.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            clearBtn.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -10)
+            clearBtn.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20)
         ])
 
         self.view = root

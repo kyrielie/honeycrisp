@@ -7,6 +7,22 @@
 
 import AppKit
 
+/// Overrides the window chrome / system-level light-or-dark appearance,
+/// independent of each theme's own light/dark ThemeColorSet (which still
+/// follows whichever of these is effectively in use). "System" is the
+/// default and existing behavior -- just track the OS.
+enum AppearanceMode: String, CaseIterable {
+    case system, light, dark
+
+    var displayName: String {
+        switch self {
+        case .system: return "System"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+}
+
 // MARK: - Models
 
 /// A named font-family CSS stack offered in the Appearance settings font
@@ -530,6 +546,31 @@ final class SettingsManager {
     var allowReaderLinkClicks: Bool {
         get { defaults.bool(forKey: "readerAllowLinkClicks") }
         set { defaults.set(newValue, forKey: "readerAllowLinkClicks"); notifyCosmeticChange() }
+    }
+
+    /// Whether the app follows the system's light/dark setting or overrides
+    /// it. Setting this both persists the choice and immediately re-applies
+    /// it to NSApp -- `systemIsDark`/`effectiveColorSet` above don't need any
+    /// changes since they read NSApp.effectiveAppearance, which itself
+    /// reflects whatever NSApp.appearance is set to below.
+    var appearanceMode: AppearanceMode {
+        get { AppearanceMode(rawValue: defaults.string(forKey: "appearanceMode") ?? "") ?? .system }
+        set {
+            defaults.set(newValue.rawValue, forKey: "appearanceMode")
+            Self.applyAppearanceOverride(newValue)
+            notifyCosmeticChange()
+        }
+    }
+
+    /// Pushes the given mode onto NSApp. Called both from the appearanceMode
+    /// setter above and once at launch (see AppDelegate) so a persisted
+    /// override is already in effect before the first window appears.
+    static func applyAppearanceOverride(_ mode: AppearanceMode) {
+        switch mode {
+        case .system: NSApp.appearance = nil
+        case .light:  NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark:   NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
     }
 
     // MARK: - Reset to defaults (Appearance tab)
