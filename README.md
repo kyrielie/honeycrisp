@@ -1,11 +1,36 @@
 # Honeycrisp Reader
-<img width="1024" height="1024" alt="honeycrispicon" src="https://github.com/user-attachments/assets/acacb149-273b-4ade-92b4-69538ee41796" />
+
+<p align="center">
+  <img src="Assets.xcassets/AppIcon.appiconset/icon-mac-256x256.png" alt="Honeycrisp Reader icon" width="128">
+</p>
 
 A native macOS EPUB reader built with AppKit + WebKit, inspired by this [EPUBQuickLook plugin](https://github.com/arytek/epub-quicklook-extension).
 
 Built using claude and gemini because I hate swift.
 
-Download release to try, might have to bypass macos gatekeeper because I didn't sign it.
+## Screenshots
+
+### Reader
+
+<img src="screenshots/01.png" alt="Honeycrisp Reader main reading view" width="900" />
+
+### Settings
+
+<table>
+<tr>
+<td><img src="screenshots/02.png" alt="Settings - General tab" width="260"></td>
+<td><img src="screenshots/03.png" alt="Settings - Appearance tab" width="260"></td>
+<td><img src="screenshots/04.png" alt="Settings - Advanced tab" width="260"></td>
+</tr>
+</table>
+
+
+## Installation
+
+Download release to try, try to open then click open anyways in Settings / Privacy & Security
+
+Or bypass macos gatekeeper.
+
 ```bash
 xattr -d com.apple.quarantine /path/to/app
 ```
