@@ -29,6 +29,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // -- that item is entirely AppKit-owned and disappears once automatic
         // tabbing is off, no manual menu-item removal needed or possible.
         NSWindow.allowsAutomaticWindowTabbing = false
+        SettingsManager.applyAppearanceOverride(SettingsManager.shared.appearanceMode)
         NSAppleEventManager.shared().setEventHandler(
             self,
             andSelector: #selector(handleOpenEvent(_:withReplyEvent:)),

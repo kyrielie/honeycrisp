@@ -9,7 +9,7 @@ final class ShortcutsSettingsViewController: NSViewController {
 
     override func loadView() {
         NSLog("[Honeycrisp][Settings] ShortcutsSettingsViewController.loadView start")
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 260))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 260))
 
         let stack = NSStackView()
         stack.orientation = .vertical
