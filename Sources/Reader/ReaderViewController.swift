@@ -746,6 +746,33 @@ final class ReaderViewController: NSViewController {
         if let totalColumns { paginatedTotalColumns = totalColumns }
         updatePageCountLabel()
         flushPositionSave()
+        reportPaginatedProgress(column: column, totalColumns: totalColumns)
+    }
+
+    /// Paginated-mode counterpart to scroll mode's reportProgress() JS. Scroll
+    /// mode reports whole-document percent directly from the DOM; paginated
+    /// mode only ever sees one spine item at a time, so whole-book percent is
+    /// assembled from currentSpineIndex/spineCount (spine/totalspine) and this
+    /// item's own column/totalColumns (page/totalpage).
+    ///
+    /// Deliberately NOT using PaginationJS's qlProgressFraction()/`fraction`
+    /// field here: that value is viewport-relative, meant for page-turning
+    /// ("is there another screen to page to"), and short-circuits to a flat
+    /// 1.0 whenever a whole spine item fits on one screen -- which is most
+    /// short chapters. Combined with currentSpineIndex, that pinned percent to
+    /// 100% as soon as the last such spine item loaded, independent of actual
+    /// read position. column/totalColumns is the raw, un-adjusted page count
+    /// within the spine item and doesn't have that failure mode.
+    ///
+    /// Approximate by design -- spine items aren't equal length, so this
+    /// treats each spine item as an equal-sized slice of the book -- matching
+    /// the existing tolerance for imprecision when switching reading modes.
+    private func reportPaginatedProgress(column: Int?, totalColumns: Int?) {
+        guard let column, let totalColumns, totalColumns > 0, let pkg = currentPackage else { return }
+        let spineCount = max(1, pkg.spineURLs.count)
+        let withinSpineFraction = min(1.0, Double(column + 1) / Double(totalColumns))
+        let percent = Int(((Double(currentSpineIndex) + withinSpineFraction) / Double(spineCount)) * 100)
+        didReceiveProgress(percent)
     }
 
     /// Scroll mode's counterpart to the paginated column-based page count —

@@ -55,7 +55,10 @@ final class HistoryManager {
     static let shared = HistoryManager()
 
     private let key = "EPUBReaderHistory"
-    private let maxEntries = 50
+    /// Ceiling for persisted history. The toolbar popover shows only the 5 most
+    /// recent (HistoryViewController.reload); Settings' history pane shows all
+    /// stored entries up to this cap.
+    private let maxEntries = 100
 
     private(set) var entries: [HistoryEntry] = []
 
