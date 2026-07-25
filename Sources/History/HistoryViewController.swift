@@ -5,9 +5,13 @@ import AppKit
 
 final class HistoryViewController: NSViewController {
 
+    /// Popover shows only the most recent entries and never scrolls -- Settings'
+    /// history pane (HistorySettingsViewController) is the place for the full,
+    /// scrollable, up-to-100-entry list.
+    static let maxDisplayedEntries = 5
+
     private let onOpen: (URL) -> Void
     private var tableView: NSTableView!
-    private var scrollView: NSScrollView!
     private var emptyLabel: NSTextField!
     private var entries: [HistoryEntry] = []
 
@@ -19,7 +23,10 @@ final class HistoryViewController: NSViewController {
     required init?(coder: NSCoder) { fatalError() }
 
     override func loadView() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 480))
+        // Height is fully determined by the constraint chain below (header +
+        // separator + fixed 5-row tableView), so this initial frame height is
+        // just a placeholder before layout runs.
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 360))
         container.translatesAutoresizingMaskIntoConstraints = false
 
         // Header
@@ -41,6 +48,13 @@ final class HistoryViewController: NSViewController {
         container.addSubview(sep)
 
         // Table
+        // No enclosing NSScrollView: this list is a fixed maxDisplayedEntries
+        // rows and never scrolls, and an NSClipView sized to exactly
+        // N*rowHeight was still clipping the last row (NSClipView/NSScrollView
+        // add their own insets that don't net out to a clean multiple of
+        // rowHeight). Adding the table view straight into the popover sidesteps
+        // that entirely -- its height is pinned below to exactly N*rowHeight,
+        // so there's nothing to clip against.
         tableView = NSTableView()
         tableView.headerView = nil
         tableView.backgroundColor = .clear
@@ -49,19 +63,14 @@ final class HistoryViewController: NSViewController {
         tableView.selectionHighlightStyle = .regular
         tableView.doubleAction = #selector(openSelectedEntry(_:))
         tableView.target = self
+        tableView.translatesAutoresizingMaskIntoConstraints = false
 
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("main"))
         col.isEditable = false
         tableView.addTableColumn(col)
         tableView.dataSource = self
         tableView.delegate = self
-
-        scrollView = NSScrollView()
-        scrollView.documentView = tableView
-        scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = false
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(scrollView)
+        container.addSubview(tableView)
 
         // Empty state
         emptyLabel = NSTextField(labelWithString: "No books opened yet")
@@ -82,13 +91,17 @@ final class HistoryViewController: NSViewController {
             sep.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             sep.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
-            scrollView.topAnchor.constraint(equalTo: sep.bottomAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            tableView.topAnchor.constraint(equalTo: sep.bottomAnchor),
+            tableView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            // Fixed to exactly maxDisplayedEntries rows.
+            tableView.heightAnchor.constraint(
+                equalToConstant: CGFloat(Self.maxDisplayedEntries) * tableView.rowHeight
+            ),
 
             emptyLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
         ])
 
         self.view = container
@@ -99,10 +112,10 @@ final class HistoryViewController: NSViewController {
         // tableView and emptyLabel are initialised before we touch them.
         _ = self.view
 
-        entries = HistoryManager.shared.entries
+        entries = Array(HistoryManager.shared.entries.prefix(Self.maxDisplayedEntries))
         tableView.reloadData()
         emptyLabel.isHidden = !entries.isEmpty
-        scrollView.isHidden = entries.isEmpty
+        tableView.isHidden = entries.isEmpty
     }
 
     @objc private func openSelectedEntry(_ sender: Any?) {
@@ -112,8 +125,29 @@ final class HistoryViewController: NSViewController {
     }
 
     private func openEntry(_ entry: HistoryEntry) {
+        HistoryEntryOpener.open(entry, onOpen: onOpen, onRemoved: { [weak self] in self?.reload() })
+    }
+
+    @objc private func clearHistory(_ sender: Any?) {
+        HistoryManager.shared.clearAll()
+        reload()
+    }
+}
+
+// MARK: - HistoryEntryOpener
+//
+// Shared resolve/open/missing-file logic for HistoryEntry rows, used by both
+// the toolbar popover (HistoryViewController, opens in the current window)
+// and the Settings history pane (HistorySettingsViewController, opens in a
+// new window) -- factored out so the two lists' bookmark-resolution and
+// missing-file handling can't drift apart.
+enum HistoryEntryOpener {
+    /// Resolves the entry's URL (bookmark data, falling back to the raw path),
+    /// handles security-scoped access around the call to `onOpen`, and shows a
+    /// "File Not Found" alert (offering removal) if the file can't be located.
+    static func open(_ entry: HistoryEntry, onOpen: (URL) -> Void, onRemoved: () -> Void) {
         guard let url = HistoryManager.shared.resolveURL(for: entry) else {
-            showMissingFileAlert(entry: entry)
+            showMissingFileAlert(for: entry, onRemoved: onRemoved)
             return
         }
         let didStart = url.startAccessingSecurityScopedResource()
@@ -121,12 +155,7 @@ final class HistoryViewController: NSViewController {
         if didStart { url.stopAccessingSecurityScopedResource() }
     }
 
-    @objc private func clearHistory(_ sender: Any?) {
-        HistoryManager.shared.clearAll()
-        reload()
-    }
-
-    private func showMissingFileAlert(entry: HistoryEntry) {
+    private static func showMissingFileAlert(for entry: HistoryEntry, onRemoved: () -> Void) {
         let alert = NSAlert()
         alert.messageText = "File Not Found"
         alert.informativeText = "\u{201C}\(entry.title)\u{201D} could not be located. It may have been moved or deleted."
@@ -134,7 +163,7 @@ final class HistoryViewController: NSViewController {
         alert.addButton(withTitle: "Cancel")
         if alert.runModal() == .alertFirstButtonReturn {
             HistoryManager.shared.remove(id: entry.id)
-            reload()
+            onRemoved()
         }
     }
 }

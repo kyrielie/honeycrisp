@@ -1709,6 +1709,27 @@ extension HistorySettingsViewController: NSTableViewDataSource, NSTableViewDeleg
         cell.configure(with: entry)
         return cell
     }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { true }
+
+    // Unlike the toolbar popover (which opens in the current reader window),
+    // clicking a book here opens it in a brand-new window -- Settings isn't
+    // tied to any single open book the way the popover is. Mirrors the
+    // ReaderWindowController-per-book pattern AppDelegate.application(open:)
+    // already uses for Finder/dock opens.
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        let row = tableView.selectedRow
+        let entries = HistoryManager.shared.entries
+        guard row >= 0, row < entries.count else { return }
+        let entry = entries[row]
+        HistoryEntryOpener.open(entry, onOpen: { url in
+            let wc = ReaderWindowController()
+            wc.showWindow(nil)
+            wc.loadEPUB(at: url)
+        }, onRemoved: { [weak self] in
+            self?.tableView.reloadData()
+        })
+    }
 }
 
 final class HistorySettingsCellView: NSTableCellView {
