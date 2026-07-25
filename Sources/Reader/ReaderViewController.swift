@@ -156,6 +156,23 @@ final class ReaderViewController: NSViewController {
             guard let self else { return }
             self.paginatedTotalColumns = totalCols
             self.updatePageCountLabel()
+            // Reveal the freshly-loaded spine only now that its restore
+            // position has been applied (see loadSpineItem's isHidden = true).
+            // Without this, a full-document reload always paints at column 0
+            // first, then jumps to the real column once applyLayout's restore
+            // runs — visible as a one-frame flash of the wrong page, most
+            // noticeable navigating backward into a spine restored at .end.
+            self.webView.isHidden = false
+        }
+        // .start/.end/.fraction restores don't come back through the
+        // positionUpdate WKScriptMessageHandler (see PaginationEngine.
+        // applyLayout) — only .characterOffset does, via qlNavigateToOffset.
+        // positionDidChange is PaginationEngine's synchronous report of the
+        // column those other restores landed on; route it through the same
+        // path as message-handler-driven updates so paginatedCurrentColumn
+        // never goes stale after a spine load.
+        paginationEngine?.positionDidChange = { [weak self] column, total in
+            self?.didReceivePositionUpdate(column: column, totalColumns: total)
         }
 
         loadingIndicator = NSProgressIndicator()
@@ -374,6 +391,11 @@ final class ReaderViewController: NSViewController {
     }
 
     private func renderScrollContent(pkg: EPUBPackage) {
+        // Defensive: loadSpineItem hides the webview until its spine's restore
+        // completes (see loadSpineItem/spineDidLoad). If reading mode is
+        // toggled away from paginated before that fires, nothing else would
+        // ever flip isHidden back.
+        webView.isHidden = false
         do {
             let parser = EPUBParser()
             // "Format for AO3" maps to the same formatFirstChapter flag in SettingsManager
@@ -405,6 +427,13 @@ final class ReaderViewController: NSViewController {
         }
         currentSpineIndex = index
         pendingPaginatedRestorePosition = restorePosition
+        // Hidden until PaginationEngine.spineDidLoad fires (after this spine's
+        // restore position has actually been applied). loadFileURL always
+        // paints the new document at column 0 first; without this, that
+        // untranslated column 0 is visible for a frame before the JS-side
+        // scrollTo lands on the real restore column — the "wrong page"
+        // flicker, worst going backward into a spine restored at .end.
+        webView.isHidden = true
         do {
             let parser = EPUBParser()
             let format = SettingsManager.shared.formatFirstChapter
@@ -425,6 +454,7 @@ final class ReaderViewController: NSViewController {
             try html.write(to: indexURL, atomically: true, encoding: .utf8)
             webView.loadFileURL(indexURL, allowingReadAccessTo: pkg.rootFolder)
         } catch {
+            webView.isHidden = false
             showError(error)
         }
     }

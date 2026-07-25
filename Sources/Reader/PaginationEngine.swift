@@ -130,15 +130,41 @@ final class PaginationEngine: NSObject {
 
             self.isReady = true
 
+            // Every case except .characterOffset drives the WebKit-side scroll
+            // helpers (qlScrollToColumn/qlScrollToFraction) directly, and those
+            // JS functions do NOT post a `positionUpdate` message back to Swift
+            // (only qlNavigateToOffset does, for the .characterOffset case).
+            // Without positionDidChange firing here, paginatedCurrentColumn in
+            // ReaderViewController would keep whatever value it held from the
+            // PREVIOUS spine item, producing a stale page count immediately
+            // after a spine load (e.g. "16/1" on a freshly-loaded 1-column
+            // spine because the reader was on column 15 of the last spine).
+            // Compute/derive the resulting column for each case and report it
+            // so the label and progress bar are correct as soon as the spine
+            // loads, not just after the next manual page turn.
             switch self.pendingRestorePosition {
             case .start:
                 self.scrollToColumn(0)
+                self.positionDidChange?(0, totalCols)
             case .end:
-                self.scrollToColumn(totalCols - 1)
+                let lastColumn = max(0, totalCols - 1)
+                self.scrollToColumn(lastColumn)
+                self.positionDidChange?(lastColumn, totalCols)
             case .fraction(let fraction):
                 self.scrollToFraction(fraction)
+                // Mirrors qlScrollToFraction's own column math exactly (see
+                // PaginationJS._pjsScrollAndPaging) so the reported column
+                // matches what the JS side actually scrolls to.
+                let clamped = max(0, min(1, fraction))
+                let denom = totalCols - self.colsPerScreen
+                let column = denom > 0 ? Int((clamped * Double(denom)).rounded()) : 0
+                self.positionDidChange?(max(0, min(column, max(0, totalCols - 1))), totalCols)
             case .characterOffset(let offset):
                 self.scrollToOffset(offset)
+                // qlNavigateToOffset posts its own `positionUpdate` message
+                // once the marker-based scroll completes, so no synchronous
+                // report is needed (or possible — the resulting column isn't
+                // known until that JS call finishes).
             }
 
             self.spineDidLoad?(totalCols)

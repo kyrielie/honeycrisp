@@ -12,6 +12,7 @@ final class HistoryViewController: NSViewController {
 
     private let onOpen: (URL) -> Void
     private var tableView: NSTableView!
+    private var scrollView: NSScrollView!
     private var emptyLabel: NSTextField!
     private var entries: [HistoryEntry] = []
 
@@ -24,8 +25,8 @@ final class HistoryViewController: NSViewController {
 
     override func loadView() {
         // Height is fully determined by the constraint chain below (header +
-        // separator + fixed 5-row tableView), so this initial frame height is
-        // just a placeholder before layout runs.
+        // separator + fixed-height scrollView), so this initial frame height
+        // is just a placeholder before layout runs.
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 360))
         container.translatesAutoresizingMaskIntoConstraints = false
 
@@ -48,13 +49,6 @@ final class HistoryViewController: NSViewController {
         container.addSubview(sep)
 
         // Table
-        // No enclosing NSScrollView: this list is a fixed maxDisplayedEntries
-        // rows and never scrolls, and an NSClipView sized to exactly
-        // N*rowHeight was still clipping the last row (NSClipView/NSScrollView
-        // add their own insets that don't net out to a clean multiple of
-        // rowHeight). Adding the table view straight into the popover sidesteps
-        // that entirely -- its height is pinned below to exactly N*rowHeight,
-        // so there's nothing to clip against.
         tableView = NSTableView()
         tableView.headerView = nil
         tableView.backgroundColor = .clear
@@ -63,14 +57,23 @@ final class HistoryViewController: NSViewController {
         tableView.selectionHighlightStyle = .regular
         tableView.doubleAction = #selector(openSelectedEntry(_:))
         tableView.target = self
-        tableView.translatesAutoresizingMaskIntoConstraints = false
 
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("main"))
         col.isEditable = false
         tableView.addTableColumn(col)
         tableView.dataSource = self
         tableView.delegate = self
-        container.addSubview(tableView)
+
+        scrollView = NSScrollView()
+        scrollView.documentView = tableView
+        // Capped at maxDisplayedEntries (5) rows, so this never needs to
+        // scroll -- no scroller, no bounce.
+        scrollView.hasVerticalScroller = false
+        scrollView.verticalScrollElasticity = .none
+        scrollView.horizontalScrollElasticity = .none
+        scrollView.drawsBackground = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(scrollView)
 
         // Empty state
         emptyLabel = NSTextField(labelWithString: "No books opened yet")
@@ -91,17 +94,21 @@ final class HistoryViewController: NSViewController {
             sep.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             sep.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
-            tableView.topAnchor.constraint(equalTo: sep.bottomAnchor),
-            tableView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            // Fixed to exactly maxDisplayedEntries rows.
-            tableView.heightAnchor.constraint(
-                equalToConstant: CGFloat(Self.maxDisplayedEntries) * tableView.rowHeight
+            scrollView.topAnchor.constraint(equalTo: sep.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            // maxDisplayedEntries rows plus a small buffer -- exactly
+            // N*rowHeight was clipping the bottom of the 5th row in practice
+            // (NSClipView/NSScrollView add their own insets that don't net
+            // out to a clean multiple of rowHeight), so pad past that rather
+            // than relying on the math coming out exact.
+            scrollView.heightAnchor.constraint(
+                equalToConstant: CGFloat(Self.maxDisplayedEntries) * tableView.rowHeight + 8
             ),
 
             emptyLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
         ])
 
         self.view = container
@@ -115,7 +122,7 @@ final class HistoryViewController: NSViewController {
         entries = Array(HistoryManager.shared.entries.prefix(Self.maxDisplayedEntries))
         tableView.reloadData()
         emptyLabel.isHidden = !entries.isEmpty
-        tableView.isHidden = entries.isEmpty
+        scrollView.isHidden = entries.isEmpty
     }
 
     @objc private func openSelectedEntry(_ sender: Any?) {
