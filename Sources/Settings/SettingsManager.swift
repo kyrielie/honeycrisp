@@ -538,13 +538,18 @@ final class SettingsManager {
         themes = list
     }
 
-    /// Whether in-book links are clickable. Off by default, matching Ambrosia —
-    /// most in-EPUB links are internal cross-references (footnotes, TOC) that
-    /// are more often accidental-click hazards than useful navigation in a
-    /// reader that already has its own TOC sidebar. Purely a CSS
-    /// pointer-events toggle, so this is cosmetic, not structural.
+    /// Whether in-book links are clickable -- both internal cross-references
+    /// (footnotes, TOC entries) and external http/https links, which
+    /// ReaderViewController's WKNavigationDelegate intercepts and opens in the
+    /// user's default browser via NSWorkspace.shared.open(_:), not inside the
+    /// reader itself. On by default: most readers expect tapping a link in a
+    /// book to actually go somewhere, and silently no-oping every link
+    /// (including ones the author intended to open externally) was a more
+    /// surprising default than an occasional accidental click on an internal
+    /// cross-reference. Purely a CSS pointer-events toggle, so this is
+    /// cosmetic, not structural.
     var allowReaderLinkClicks: Bool {
-        get { defaults.bool(forKey: "readerAllowLinkClicks") }
+        get { defaults.object(forKey: "readerAllowLinkClicks") == nil ? true : defaults.bool(forKey: "readerAllowLinkClicks") }
         set { defaults.set(newValue, forKey: "readerAllowLinkClicks"); notifyCosmeticChange() }
     }
 
@@ -589,19 +594,19 @@ final class SettingsManager {
 
     /// True only when at least one theme differs from its default (seed
     /// values for the three default themes, the shared custom-theme baseline
-    /// for every other theme) or the global link-clicks flag is set --
-    /// mirrors Ambrosia's `isReaderCustomized`, so the "Reset to Defaults"
-    /// button is inert rather than an always-live destructive action.
+    /// for every other theme), one of the three default themes is missing
+    /// entirely (deleted before deleteTheme() protected them), or the global
+    /// link-clicks flag is set -- mirrors Ambrosia's `isReaderCustomized`, so
+    /// the "Reset to Defaults" button is inert rather than an always-live
+    /// destructive action.
     var isReaderCustomized: Bool {
         let list = themes
-        if allowReaderLinkClicks != false { return true }
-        let defaultThemesInOrder = list.filter(\.isDefault)
+        if allowReaderLinkClicks != true { return true }
+        let existingDefaultNames = Set(list.filter(\.isDefault).map(\.name))
+        if Self.seedThemes.contains(where: { !existingDefaultNames.contains($0.name) }) { return true }
         for theme in list {
             if theme.isDefault {
-                guard let position = defaultThemesInOrder.firstIndex(where: { $0.id == theme.id }),
-                      position < Self.seedThemes.count
-                else { return true }
-                let seed = Self.seedThemes[position]
+                guard let seed = Self.seedThemes.first(where: { $0.name == theme.name }) else { return true }
                 if theme.light != seed.light || theme.dark != seed.dark
                     || theme.fontFamily != seed.fontFamily
                     || theme.fontSizePercent != 100
@@ -627,23 +632,41 @@ final class SettingsManager {
 
     /// Resets every theme to its default, not just the currently selected
     /// one: each of the three default themes (Original/Quiet/Paper) goes back
-    /// to its own seeded colors/font/size/line-height/margins, and every
-    /// custom theme keeps its own name/colors but has its typography reset to
-    /// the shared new-theme baseline. Also resets the global link-clicks
-    /// flag. Selection itself is left alone -- whichever theme was active
-    /// stays active, just with its settings restored.
+    /// to its own seeded colors/font/size/line-height/margins -- re-adding
+    /// any of the three that had been deleted before deleteTheme() protected
+    /// them -- and every custom theme keeps its own name/colors but has its
+    /// typography reset to the shared new-theme baseline. Custom themes are
+    /// never re-created if deleted. Also resets the global link-clicks flag.
+    /// Selection itself is left alone -- whichever theme was active stays
+    /// active, just with its settings restored (unless it no longer exists,
+    /// e.g. it was one of the just-restored defaults, in which case it's
+    /// simply added back rather than reselected).
     func resetReaderToDefaults() {
-        let list = themes
-        let defaultThemesInOrder = list.filter(\.isDefault)
+        var list = themes
+
+        // Restore any of the three default themes (Original/Quiet/Paper) that
+        // got deleted before deleteTheme() protected them -- re-added as fresh
+        // copies, in seed order, ahead of whatever's already there. Existing
+        // custom themes are left alone, whether or not they're also missing
+        // one of their own.
+        let existingDefaultNames = Set(list.filter(\.isDefault).map(\.name))
+        let missingSeeds = Self.seedThemes.filter { !existingDefaultNames.contains($0.name) }
+        if !missingSeeds.isEmpty {
+            list.insert(contentsOf: missingSeeds, at: 0)
+        }
+
         let resetList: [Theme] = list.map { theme in
             var t = theme
-            if theme.isDefault,
-               let position = defaultThemesInOrder.firstIndex(where: { $0.id == theme.id }),
-               position < Self.seedThemes.count {
-                let seed = Self.seedThemes[position]
-                t.light = seed.light
-                t.dark = seed.dark
-                t.fontFamily = seed.fontFamily
+            if theme.isDefault {
+                // Matched by name, not position: defaultThemesInOrder[i] <->
+                // seedThemes[i] silently mismatched colors whenever one
+                // default had been deleted, since the remaining defaults
+                // would shift positions relative to seedThemes.
+                if let seed = Self.seedThemes.first(where: { $0.name == theme.name }) {
+                    t.light = seed.light
+                    t.dark = seed.dark
+                    t.fontFamily = seed.fontFamily
+                }
             } else {
                 t.fontFamily = Self.customThemeDefaultFontFamily
             }
@@ -655,7 +678,25 @@ final class SettingsManager {
             return t
         }
         themes = resetList
-        allowReaderLinkClicks = false
+        allowReaderLinkClicks = true
+    }
+
+    /// Resets every settings tab, not just Appearance's themes: General's
+    /// behaviour flags, the reader/theme settings resetReaderToDefaults()
+    /// already covers, and every keyboard shortcut back to its
+    /// RebindableAction.defaultBinding. Backs the "Reset All to Defaults"
+    /// button on the General tab.
+    func resetAllToDefaults() {
+        formatFirstChapter = false
+        removeFirstLine = false
+        enlargeSecondLine = false
+        removeParagraphIndents = false
+        showPageCount = true
+        defaultReadingMode = .scroll
+        colsPerScreen = .one
+        newBookOpensIn = .newWindow
+        resetReaderToDefaults()
+        keyBindings = Dictionary(uniqueKeysWithValues: RebindableAction.allCases.map { ($0, $0.defaultBinding) })
     }
 
     // MARK: -
