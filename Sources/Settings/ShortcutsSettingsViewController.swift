@@ -2,18 +2,22 @@ import AppKit
 
 // MARK: - ShortcutsSettingsViewController
 
-final class ShortcutsSettingsViewController: NSViewController {
+final class ShortcutsSettingsViewController: NSViewController, SettingsPaneSizing {
+
+    var preferredPaneSize: NSSize?
+    let isResizableView = false
 
     private var conflictLabel: NSTextField!
     private var recorders: [RebindableAction: RecorderButton] = [:]
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 260))
+        let root = NSView(frame: NSRect(origin: .zero, size: SettingsPaneMetrics.size))
 
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 10
+        // No explicit spacing override: NSStackView's own default (8pt) is
+        // already AppKit's standard control spacing.
         stack.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(stack)
 
@@ -34,6 +38,25 @@ final class ShortcutsSettingsViewController: NSViewController {
         stack.addArrangedSubview(conflictLabel)
 
         view = root
+        resolvePreferredPaneSize()
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(reloadBindings),
+            name: .keyBindingsChanged, object: nil
+        )
+    }
+
+    /// Refreshes every row's recorder title from SettingsManager. Needed
+    /// because this tab's rows are built once in loadView() and NSTabViewController
+    /// keeps this view controller alive across tab switches rather than
+    /// recreating it -- so a change made elsewhere (General's "Reset All to
+    /// Defaults") needs an explicit nudge, not just a re-visit of this tab.
+    @objc private func reloadBindings() {
+        let bindings = SettingsManager.shared.keyBindings
+        for (action, recorder) in recorders {
+            recorder.updateTitle(binding: bindings[action])
+        }
+        conflictLabel.isHidden = true
     }
 
     private func makeRow(for action: RebindableAction) -> NSStackView {

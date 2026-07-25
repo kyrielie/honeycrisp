@@ -11,27 +11,86 @@
 //  • "Format first chapter" checkbox renamed to "Format for AO3"
 //  • CustomFontStore and its disk-copy logic are retained so existing persisted
 //    custom font names continue to work, but are no longer populated by file import
+//
+// CHANGES (pre-Ventura AppKit polish pass, per docs/honeycrisp-settings-window-plan.md):
+//  • Window is closable-only by default; .resizable is added/removed per pane via
+//    SettingsPanelWindow.resetWindowBehavior()/addResizableBehavior(). None of the
+//    four current panes opt into isResizableView, but the machinery matches the
+//    reference implementation so a future pane can flip it on.
+//  • Tab switches now animate the window to each pane's preferred size, anchored at
+//    the top-left (not the bottom), respecting Reduce Motion, with duration scaled
+//    to the size delta — replaces the old fixed 520x420 frame that was too tall for
+//    General and relied on Appearance's internal scroll view to paper over being too
+//    short for its content.
+//  • Window title, Window-menu entry, and Dock miniwindow title all update together
+//    on every tab switch instead of staying hardcoded to "Settings".
+//  • Window frame is autosaved so Settings reopens where the user left it.
+//  • Per-tab pane sizes are cached after first resolution so switching back to an
+//    already-visited tab animates directly to the cached size.
 
 import AppKit
 import UniformTypeIdentifiers
 
+// MARK: - Pane sizing protocol
+
+/// Conformed to by every settings pane so the tab controller can ask each one for
+/// its preferred window content size and whether it wants a resizable window.
+/// Mirrors SettingsPaneViewController's preferredPaneSize/isResizableView from the
+/// MacAppSettingsUI reference (see macos-settings-window-guide.md §3.2).
+protocol SettingsPaneSizing: AnyObject {
+    var preferredPaneSize: NSSize? { get set }
+    var isResizableView: Bool { get }
+}
+
+extension SettingsPaneSizing where Self: NSViewController {
+    /// Resolve Auto Layout and capture the resulting frame size as the pane's
+    /// preferred size. Each pane's loadView() already constructs its root NSView
+    /// with an explicit, designed frame size, so this mostly just captures that
+    /// value — but it goes through layoutSubtreeIfNeeded() first so a pane whose
+    /// height becomes constraint-driven in the future resolves correctly too.
+    func resolvePreferredPaneSize() {
+        view.layoutSubtreeIfNeeded()
+        preferredPaneSize = view.frame.size
+    }
+}
+
 // MARK: - Window Controller
+
+/// Every settings pane's fixed content size. All four tabs report this exact
+/// same size (rather than each measuring its own content) so the window
+/// never visibly resizes when switching tabs -- previously each pane
+/// reported its own real content height, and NSTabViewController's own
+/// toolbar-style tab switching resizes the window to match, which read as
+/// "responsive" resizing the person didn't want. 560pt tall matches what
+/// Appearance (the tallest tab) actually needs; shorter tabs just have
+/// blank space below their content instead of a shorter window.
+enum SettingsPaneMetrics {
+    static let size = NSSize(width: 520, height: 560)
+}
 
 final class SettingsWindowController: NSWindowController {
     static let shared = SettingsWindowController()
 
     private init() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 420),
-            styleMask: [.titled, .closable, .resizable],
+        let window = SettingsPanelWindow(
+            contentRect: NSRect(origin: .zero, size: SettingsPaneMetrics.size),
+            styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
         window.title = "Settings"
         window.center()
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 420, height: 320)
-        window.maxSize = NSSize(width: 720, height: 900)
+        window.minSize = SettingsPaneMetrics.size
+        window.maxSize = SettingsPaneMetrics.size
+        // Matches the toolbar tab style (SettingsTabViewController.tabStyle =
+        // .toolbar): the compact "preference window" toolbar appearance rather
+        // than a full-size document-window toolbar, with the standard hairline
+        // separator under it.
+        window.toolbarStyle = .preference
+        window.titlebarSeparatorStyle = .automatic
+        // Reopen wherever the user last left it, instead of always re-centering.
+        window.setFrameAutosaveName("SettingsWindow")
         super.init(window: window)
         window.contentViewController = SettingsTabViewController()
     }
@@ -39,12 +98,87 @@ final class SettingsWindowController: NSWindowController {
     required init?(coder: NSCoder) { fatalError() }
 }
 
+// MARK: - Settings Window (chrome + animated per-pane resize)
+
+/// NSWindow subclass carrying the AppKit-level chrome behavior from
+/// macos-settings-window-guide.md §2: closable-only by default with opt-in
+/// resizability per pane, and a top-left-anchored, Reduce-Motion-aware animated
+/// resize between panes with duration scaled to the size delta.
+final class SettingsPanelWindow: NSWindow {
+
+    func resetWindowBehavior() {
+        styleMask.insert([.titled, .closable])
+        styleMask.remove(.resizable)
+    }
+
+    func addResizableBehavior() {
+        styleMask.insert(.resizable)
+    }
+
+    private var reduceMotionIfNeeded: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    /// Anchors growth/shrink at the top-left so the toolbar stays put while the
+    /// content below it changes size, matching System Settings. Skips the
+    /// animation entirely (snaps) when Reduce Motion is enabled.
+    func setWindowSize(_ size: NSSize, animateIfPossible: Bool, completion: (() -> Void)? = nil) {
+        let contentFrame = frameRect(forContentRect: NSRect(origin: .zero, size: size))
+        let heightDiff = frame.height - contentFrame.height
+        let newFrame = NSRect(
+            origin: NSPoint(x: frame.origin.x, y: frame.origin.y + heightDiff),
+            size: contentFrame.size
+        )
+
+        if animateIfPossible && !reduceMotionIfNeeded {
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.allowsImplicitAnimation = true
+                ctx.duration = animationResizeTime(newFrame)
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                setFrame(newFrame, display: true)
+            }, completionHandler: { completion?() })
+        } else {
+            setFrame(newFrame, display: true)
+            completion?()
+        }
+    }
+
+    /// Scaled to the size delta so a tiny content change doesn't take as long as a
+    /// huge one, rather than a single fixed duration for every resize.
+    override func animationResizeTime(_ newFrame: NSRect) -> TimeInterval {
+        let minDuration: TimeInterval = 0.2
+        let maxDuration: TimeInterval = 0.7
+        let maxDiff = max(abs(newFrame.width - frame.width), abs(newFrame.height - frame.height))
+        let referenceLength = NSScreen.main?.frame.height ?? 800
+        let ratio = min(maxDiff / referenceLength, 1.0)
+        return minDuration + (maxDuration - minDuration) * ratio
+    }
+}
+
 // MARK: - Tab View Controller
 
 final class SettingsTabViewController: NSTabViewController {
 
+    /// The toolbar's own minimum content width, captured once after the first
+    /// tab is actually on screen and laid out -- more accurate than guessing a
+    /// constant, and this is what every pane's target width gets clamped to
+    /// (see resolvedSize(for:identifier:) below) to avoid a one-frame flicker.
+    private var minimumContentWidth: CGFloat?
+
+    /// Every pane sized so far, keyed by tab identifier — avoids re-resolving
+    /// Auto Layout when switching back to an already-visited tab.
+    private var cachedPaneSizes: [String: NSSize] = [:]
+
     override func viewDidLoad() {
         super.viewDidLoad()
+
+        // Large icon+label buttons in a unified toolbar -- the actual
+        // pre-Ventura "classic System Settings" tab look
+        // (macos-settings-window-guide.md §1A). The default tabStyle is
+        // .segmentedControlOnTop, which renders as a small pill-shaped
+        // control -- that's why the tab selectors looked unchanged despite
+        // everything else in the previous pass.
+        tabStyle = .toolbar
 
         // Typography tab intentionally removed.
         let tabSpecs: [(() -> NSViewController, String, String)] = [
@@ -58,9 +192,88 @@ final class SettingsTabViewController: NSTabViewController {
             let vc = makeVC()
             let item = NSTabViewItem(viewController: vc)
             item.label = label
+            item.identifier = label
             item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
             addTabViewItem(item)
         }
+    }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        // First presentation: size and title the window for whichever tab
+        // NSTabViewController selected by default (the first one), without
+        // animating — there's nothing on screen yet to animate from.
+        if let item = tabView.selectedTabViewItem {
+            applyWindowBehavior(for: item, animate: false)
+        }
+    }
+
+    override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+        super.tabView(tabView, didSelect: tabViewItem)
+        guard let tabViewItem else { return }
+        applyWindowBehavior(for: tabViewItem, animate: true)
+    }
+
+    private func applyWindowBehavior(for tabViewItem: NSTabViewItem, animate: Bool) {
+        guard let window = view.window as? SettingsPanelWindow else { return }
+        guard let pane = tabViewItem.viewController as? (NSViewController & SettingsPaneSizing) else { return }
+
+        setWindowTitle(with: tabViewItem)
+
+        if pane.isResizableView {
+            window.addResizableBehavior()
+        } else {
+            window.resetWindowBehavior()
+        }
+
+        let identifier = (tabViewItem.identifier as? String) ?? tabViewItem.label
+        let size = resolvedSize(for: pane, identifier: identifier)
+        window.setWindowSize(size, animateIfPossible: animate)
+    }
+
+    private func resolvedSize(for pane: NSViewController & SettingsPaneSizing, identifier: String) -> NSSize {
+        if let cached = cachedPaneSizes[identifier] {
+            return cached
+        }
+        if pane.preferredPaneSize == nil {
+            pane.resolvePreferredPaneSize()
+        }
+        var size = pane.preferredPaneSize ?? pane.view.frame.size
+        size.width = max(size.width, currentMinimumContentWidth())
+        cachedPaneSizes[identifier] = size
+        return size
+    }
+
+    /// The toolbar imposes its own minimum content width once it's actually on
+    /// screen with all four tab items in place; read it from the window's
+    /// contentLayoutRect (which excludes the toolbar's own chrome) rather than
+    /// guessing a constant. Falls back to 520 -- the width every pane's
+    /// loadView() was actually designed around -- before the window has been
+    /// shown even once.
+    private func currentMinimumContentWidth() -> CGFloat {
+        if let minimumContentWidth { return minimumContentWidth }
+        guard let window = view.window, window.isVisible else { return 520 }
+        let measured = window.contentLayoutRect.width
+        guard measured > 0 else { return 520 }
+        minimumContentWidth = measured
+        return measured
+    }
+
+    /// Updates the title bar text, the Window menu entry, and the Dock miniwindow
+    /// title together — leaving the Window menu stale is the common bug the guide
+    /// calls out, so all three are set from this one call site.
+    private func setWindowTitle(with tabViewItem: NSTabViewItem?) {
+        guard let window = view.window else { return }
+        let defaultWindowTitle = "Settings"
+        window.title = tabViewItem?.label ?? defaultWindowTitle
+
+        let windowTitle = tabViewItem.map { "\(defaultWindowTitle) — \($0.label)" } ?? defaultWindowTitle
+        if window.isVisible {
+            NSApp.changeWindowsItem(window, title: windowTitle, filename: false)
+        } else {
+            NSApp.removeWindowsItem(window)
+        }
+        window.miniwindowTitle = windowTitle
     }
 }
 
@@ -74,15 +287,19 @@ final class FlippedView: NSView {
     override var isFlipped: Bool { true }
 }
 
-final class GeneralSettingsViewController: NSViewController {
+final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing {
+
+    var preferredPaneSize: NSSize?
+    let isResizableView = false
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 200))
+        let root = NSView(frame: NSRect(origin: .zero, size: SettingsPaneMetrics.size))
 
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 16
+        // No explicit spacing override: NSStackView's own default (8pt) is
+        // already AppKit's standard control spacing.
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         // "Format for AO3" (renamed from "Format first chapter")
@@ -93,6 +310,7 @@ final class GeneralSettingsViewController: NSViewController {
         )
         formatCheckbox.state = SettingsManager.shared.formatFirstChapter ? .on : .off
         stack.addArrangedSubview(formatCheckbox)
+        self.formatCheckbox = formatCheckbox
 
         // Descriptive hint
         let hint = NSTextField(wrappingLabelWithString:
@@ -109,6 +327,7 @@ final class GeneralSettingsViewController: NSViewController {
         )
         indentCheckbox.state = SettingsManager.shared.removeParagraphIndents ? .on : .off
         stack.addArrangedSubview(indentCheckbox)
+        self.indentCheckbox = indentCheckbox
 
         let indentHint = NSTextField(wrappingLabelWithString:
             "Strips leading whitespace used to fake first-line indentation in some books."
@@ -150,7 +369,7 @@ final class GeneralSettingsViewController: NSViewController {
         stack.addArrangedSubview(linkClicksCheckbox)
 
         let linkClicksHint = NSTextField(wrappingLabelWithString:
-            "Lets in-book links (footnotes, tables of contents, cross-references) be clicked. Off by default."
+            "Lets in-book links be clicked -- both internal cross-references (footnotes, table of contents) and external links, which open in your default browser. On by default."
         )
         linkClicksHint.font = NSFont.systemFont(ofSize: 11)
         linkClicksHint.textColor = .secondaryLabelColor
@@ -169,6 +388,7 @@ final class GeneralSettingsViewController: NSViewController {
         )
         newBookControl.selectedSegment = SettingsManager.shared.newBookOpensIn.rawValue
         stack.addArrangedSubview(newBookControl)
+        self.newBookControl = newBookControl
 
         let newBookHint = NSTextField(wrappingLabelWithString:
             "Whether opening another book creates a separate window or a tab on the frontmost reader window."
@@ -177,18 +397,44 @@ final class GeneralSettingsViewController: NSViewController {
         newBookHint.textColor = .secondaryLabelColor
         stack.addArrangedSubview(newBookHint)
 
+        let divider = NSBox()
+        divider.boxType = .separator
+        stack.addArrangedSubview(divider)
+        stack.setCustomSpacing(20, after: newBookHint)
+        divider.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        let resetButton = NSButton(
+            title: "Reset All to Defaults…",
+            target: self,
+            action: #selector(resetAllToDefaultsClicked(_:))
+        )
+        resetButton.bezelStyle = .rounded
+        stack.addArrangedSubview(resetButton)
+        stack.setCustomSpacing(16, after: divider)
+
+        let resetHint = NSTextField(wrappingLabelWithString:
+            "Resets every tab -- General, Appearance, History display, and Shortcuts -- back to its original defaults. History entries themselves aren't affected."
+        )
+        resetHint.font = NSFont.systemFont(ofSize: 11)
+        resetHint.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(resetHint)
+
         root.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20)
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
         ])
 
         self.view = root
+        resolvePreferredPaneSize()
     }
 
     private weak var readingModeCheckbox: NSButton?
     private weak var linkClicksCheckbox: NSButton?
+    private weak var formatCheckbox: NSButton?
+    private weak var indentCheckbox: NSButton?
+    private weak var newBookControl: NSSegmentedControl?
 
     override func viewWillAppear() {
         super.viewWillAppear()
@@ -247,6 +493,34 @@ final class GeneralSettingsViewController: NSViewController {
         guard let mode = NewBookOpensIn(rawValue: sender.selectedSegment) else { return }
         SettingsManager.shared.newBookOpensIn = mode
     }
+
+    @objc private func resetAllToDefaultsClicked(_ sender: NSButton) {
+        let alert = NSAlert()
+        alert.messageText = "Reset All Settings to Defaults?"
+        alert.informativeText = "This resets General, Appearance, History display, and Shortcuts back to their original defaults. History entries themselves aren't affected. This can't be undone."
+        alert.addButton(withTitle: "Reset All")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        SettingsManager.shared.resetAllToDefaults()
+
+        // History observes SettingsManager.settingsChangedNotification directly
+        // and refreshes from it; Shortcuts observes .keyBindingsChanged (see
+        // ShortcutsSettingsViewController.reloadBindings). General's own
+        // controls need a direct nudge since the reset action originates here,
+        // in the same view. Appearance re-syncs on next reappearance, but only
+        // when the *selected* theme ID has changed -- a reset leaves the
+        // current theme selected, so if Appearance is already loaded it can
+        // keep showing stale values until the user picks a different theme and
+        // back; a real fix belongs in AppearanceSettingsViewController's own
+        // refresh gating, not here.
+        formatCheckbox?.state = SettingsManager.shared.formatFirstChapter ? .on : .off
+        indentCheckbox?.state = SettingsManager.shared.removeParagraphIndents ? .on : .off
+        linkClicksCheckbox?.state = SettingsManager.shared.allowReaderLinkClicks ? .on : .off
+        newBookControl?.selectedSegment = SettingsManager.shared.newBookOpensIn.rawValue
+        refreshReadingModeCheckbox()
+    }
 }
 
 // MARK: - Appearance Settings
@@ -282,7 +556,10 @@ final class GeneralSettingsViewController: NSViewController {
 //    and each swatch's own context menu handles rename/recolor/duplicate/
 //    delete -- see Theme/ThemeColorSet in SettingsManager.swift.
 
-final class AppearanceSettingsViewController: NSViewController {
+final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizing {
+
+    var preferredPaneSize: NSSize?
+    let isResizableView = false
 
     private var fontPopup: NSPopUpButton!
     private var fontFamilyField: NSTextField!   // free-form CSS font-family stack entry
@@ -325,7 +602,7 @@ final class AppearanceSettingsViewController: NSViewController {
     private static let baseFontSizePx: Double = 16
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 480))
+        let root = NSView(frame: NSRect(origin: .zero, size: SettingsPaneMetrics.size))
 
         // ── Form grid ────────────────────────────────────────────────────────
         grid = NSGridView(numberOfColumns: 2, rows: 0)
@@ -416,6 +693,16 @@ final class AppearanceSettingsViewController: NSViewController {
         scrollView.drawsBackground = false
         scrollView.documentView = clipContainer
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // A scroll view pinned flush to the window's top edge, directly under
+        // a .preference-style toolbar, gets a translucent "scroll edge effect"
+        // material from AppKit when its content scrolls -- that's the visible
+        // color difference versus the other tabs (none of which have a scroll
+        // view touching the top edge the same way). Not needed here since this
+        // tab's toolbar-adjacent area is a static header, not scrolling
+        // content that benefits from the effect.
+        if #available(macOS 13.3, *) {
+            scrollView.automaticallyAdjustsContentInsets = false
+        }
         self.scrollView = scrollView
 
         root.addSubview(scrollView)
@@ -432,6 +719,12 @@ final class AppearanceSettingsViewController: NSViewController {
         ])
 
         self.view = root
+        // Appearance's real content (theme grid + typography + preview) is taller
+        // than the shared pane height (SettingsPaneMetrics.size, same for every
+        // tab now), especially with many themes -- the internal NSScrollView
+        // handles
+        // whatever doesn't fit.
+        resolvePreferredPaneSize()
 
         updateCustomModeVisibility()
         refreshThemeGridSelection()
@@ -657,6 +950,10 @@ final class AppearanceSettingsViewController: NSViewController {
         let plus = NSImageView(image: NSImage(systemSymbolName: "plus", accessibilityDescription: nil) ?? NSImage())
         plus.contentTintColor = .secondaryLabelColor
         plus.translatesAutoresizingMaskIntoConstraints = false
+        // Decorative: the enclosing button already carries the accessibility
+        // label "Add a new theme" (see below), so exposing this glyph too would
+        // have VoiceOver read the same thing twice.
+        plus.setAccessibilityElement(false)
         box.addSubview(plus)
 
         NSLayoutConstraint.activate([
@@ -845,12 +1142,24 @@ final class AppearanceSettingsViewController: NSViewController {
 
     // MARK: - Actions
 
+    /// Re-renders the current theme's own swatch thumbnail in place. Font
+    /// changes (popup, free-form field, NSFontPanel) mutate currentTheme via
+    /// SettingsManager but, unlike the color wells and name field, weren't
+    /// nudging the swatch grid at all -- the "Aa" thumbnail kept showing the
+    /// old font until something else (e.g. clicking a theme swatch) rebuilt
+    /// the grid from fresh data.
+    private func refreshCurrentThemeSwatch() {
+        let theme = SettingsManager.shared.currentTheme
+        themeButtons[theme.id]?.refresh(with: theme)
+    }
+
     @objc private func fontChanged(_ sender: NSPopUpButton) {
         let idx = sender.indexOfSelectedItem
         if idx < FontPresets.all.count {
             SettingsManager.shared.fontFamily = FontPresets.all[idx].cssStack
             updateCustomModeVisibility()
             refreshPreview()
+            refreshCurrentThemeSwatch()
         } else {
             // "Custom…" selected -- reveal the free-form field and open the
             // font panel immediately, since that's the more discoverable path
@@ -868,6 +1177,7 @@ final class AppearanceSettingsViewController: NSViewController {
         guard !value.isEmpty else { return }
         SettingsManager.shared.fontFamily = value
         refreshPreview()
+        refreshCurrentThemeSwatch()
     }
 
     @objc private func openFontPanel(_ sender: Any?) {
@@ -904,6 +1214,7 @@ final class AppearanceSettingsViewController: NSViewController {
         selectFontPopupItem(forCurrentFontFamily: SettingsManager.shared.fontFamily)
         updateCustomModeVisibility()
         refreshPreview()
+        refreshCurrentThemeSwatch()
     }
 
     @objc private func themeSwatchClicked(_ sender: ThemeBigSwatchButton) {
@@ -1317,11 +1628,14 @@ final class ThemeBigSwatchButton: NSButton {
 
 // MARK: - History Settings
 
-final class HistorySettingsViewController: NSViewController {
+final class HistorySettingsViewController: NSViewController, SettingsPaneSizing {
+
+    var preferredPaneSize: NSSize?
+    let isResizableView = false
     private var tableView: NSTableView!
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 320))
+        let root = NSView(frame: NSRect(origin: .zero, size: SettingsPaneMetrics.size))
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -1362,6 +1676,11 @@ final class HistorySettingsViewController: NSViewController {
         ])
 
         self.view = root
+        // Same reasoning as Appearance: the history list can grow arbitrarily
+        // long, so the preferred size is the shared pane height
+        // (SettingsPaneMetrics.size) and the internal NSScrollView (not the
+        // window) absorbs the rest.
+        resolvePreferredPaneSize()
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(reload),
