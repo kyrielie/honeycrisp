@@ -276,6 +276,7 @@ private let _pjsMetricsAndHelpers: String = #"""
             scrollWidth: document.documentElement.scrollWidth,
             innerWidth: window.innerWidth,
             columns: window.qlColumnCount(),
+            column: window.qlCurrentColumn(),
             ready: _ready
         });
     };

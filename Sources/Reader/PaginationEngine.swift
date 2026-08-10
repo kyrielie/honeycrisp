@@ -64,6 +64,38 @@ enum RestorePosition {
     case characterOffset(Int)      // exact UTF-16 offset, from HistoryEntry
 }
 
+extension RestorePosition {
+    /// JS statement that performs this restore. Baked by EPUBParser.
+    /// buildPageHTML into an inline <script> that runs synchronously during
+    /// HTML parse — before the WKWebView's first paint — so the correct
+    /// column is already on screen for the very first frame rendered.
+    ///
+    /// This replaces an earlier approach where PaginationEngine.applyLayout
+    /// drove the scroll itself from webView(_:didFinish:), via a Swift ->
+    /// evaluateJavaScript round trip. That happens after the document has
+    /// already had at least one opportunity to paint at column 0 (its
+    /// default scroll position), so hiding the webview and revealing it
+    /// after the fact couldn't reliably suppress the flash — WKWebView's
+    /// compositor runs out-of-process and isn't guaranteed to have caught up
+    /// to the scroll by the time the evaluateJavaScript completion handler
+    /// (and thus the reveal) runs. Scrolling inline, before parsing yields
+    /// control back to the run loop, removes the race entirely: there is no
+    /// wrong frame to flash because column 0 is never actually painted.
+    var bootstrapJS: String {
+        switch self {
+        case .start:
+            return "window.qlScrollToColumn(0);"
+        case .end:
+            return "window.qlScrollToColumn(window.qlColumnCount() - 1);"
+        case .fraction(let fraction):
+            let clamped = max(0, min(1, fraction))
+            return "window.qlScrollToFraction(\(clamped));"
+        case .characterOffset(let offset):
+            return "window.qlNavigateToOffset(\(offset));"
+        }
+    }
+}
+
 // MARK: - PaginationEngine
 
 final class PaginationEngine: NSObject {
@@ -85,7 +117,6 @@ final class PaginationEngine: NSObject {
 
     private weak var webView: WKWebView?
     private var colsPerScreen: Int = 1
-    private var pendingRestorePosition: RestorePosition = .start
     private(set) var isReady = false
 
     init(webView: WKWebView) {
@@ -99,74 +130,32 @@ final class PaginationEngine: NSObject {
 
     // MARK: Called from webView(_:didFinish:) — after CSS is already applied
 
-    /// Injects PaginationJS and restores the requested position. The column CSS
-    /// is already baked into the loaded HTML, so no delay is needed to wait for
-    /// layout to settle.
+    /// Reads back the column/total that the inline bootstrap script (see
+    /// RestorePosition.bootstrapJS, embedded by EPUBParser.buildPageHTML)
+    /// already scrolled to during HTML parse. Does not perform any scrolling
+    /// itself — by the time didFinish fires and this runs, restore has
+    /// already happened.
     func applyLayout(restorePosition: RestorePosition) {
         guard let webViewRef = webView else { return }
         isReady = false
-        pendingRestorePosition = restorePosition
 
-        let setupJS = """
-        \(PaginationJS.script)
-        window.qlSetup(\(colsPerScreen));
-        window.qlPaginationMetrics();
-        """
-
-        webViewRef.evaluateJavaScript(setupJS) { [weak self] result, error in
+        webViewRef.evaluateJavaScript("window.qlPaginationMetrics();") { [weak self] result, error in
             guard let self else { return }
-            if error != nil {
+            self.isReady = true
+
+            guard error == nil,
+                  let str = result as? String,
+                  let data = str.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else {
                 self.spineDidLoad?(1)
                 return
             }
 
-            var totalCols = 1
-            if let str = result as? String,
-               let data = str.data(using: .utf8),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let cols = json["columns"] as? NSNumber {
-                totalCols = cols.intValue
-            }
+            let totalCols = (json["columns"] as? NSNumber)?.intValue ?? 1
+            let column = (json["column"] as? NSNumber)?.intValue ?? 0
 
-            self.isReady = true
-
-            // Every case except .characterOffset drives the WebKit-side scroll
-            // helpers (qlScrollToColumn/qlScrollToFraction) directly, and those
-            // JS functions do NOT post a `positionUpdate` message back to Swift
-            // (only qlNavigateToOffset does, for the .characterOffset case).
-            // Without positionDidChange firing here, paginatedCurrentColumn in
-            // ReaderViewController would keep whatever value it held from the
-            // PREVIOUS spine item, producing a stale page count immediately
-            // after a spine load (e.g. "16/1" on a freshly-loaded 1-column
-            // spine because the reader was on column 15 of the last spine).
-            // Compute/derive the resulting column for each case and report it
-            // so the label and progress bar are correct as soon as the spine
-            // loads, not just after the next manual page turn.
-            switch self.pendingRestorePosition {
-            case .start:
-                self.scrollToColumn(0)
-                self.positionDidChange?(0, totalCols)
-            case .end:
-                let lastColumn = max(0, totalCols - 1)
-                self.scrollToColumn(lastColumn)
-                self.positionDidChange?(lastColumn, totalCols)
-            case .fraction(let fraction):
-                self.scrollToFraction(fraction)
-                // Mirrors qlScrollToFraction's own column math exactly (see
-                // PaginationJS._pjsScrollAndPaging) so the reported column
-                // matches what the JS side actually scrolls to.
-                let clamped = max(0, min(1, fraction))
-                let denom = totalCols - self.colsPerScreen
-                let column = denom > 0 ? Int((clamped * Double(denom)).rounded()) : 0
-                self.positionDidChange?(max(0, min(column, max(0, totalCols - 1))), totalCols)
-            case .characterOffset(let offset):
-                self.scrollToOffset(offset)
-                // qlNavigateToOffset posts its own `positionUpdate` message
-                // once the marker-based scroll completes, so no synchronous
-                // report is needed (or possible — the resulting column isn't
-                // known until that JS call finishes).
-            }
-
+            self.positionDidChange?(column, totalCols)
             self.spineDidLoad?(totalCols)
         }
     }
@@ -240,8 +229,10 @@ final class PaginationEngine: NSObject {
 // 2. NAVIGATION DELEGATE
 //    In webView(_:didFinish:), when currentMode == .paginated:
 //        paginationEngine.applyLayout(restorePosition: pendingRestorePosition)
-//    pendingRestorePosition is set on ReaderViewController before loadFileURL is
-//    called (see loadSpineItem).
+//    The actual restore scroll already happened by this point — it runs
+//    synchronously inline, during HTML parse, via a bootstrap <script> that
+//    EPUBParser.buildPageHTML embeds using RestorePosition.bootstrapJS.
+//    applyLayout only reads back the resulting column/total.
 //
 // 3. KEY REPEAT SUPPRESSION
 //    NSEvent.isARepeat must be checked before forwarding to handleKeyDown(_:).

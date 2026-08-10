@@ -445,16 +445,6 @@ final class SettingsManager {
         set { defaults.set(newValue, forKey: "readerFormatFirstChapter"); notifyStructuralChange() }
     }
 
-    var removeFirstLine: Bool {
-        get { defaults.bool(forKey: "readerRemoveFirstLine") }
-        set { defaults.set(newValue, forKey: "readerRemoveFirstLine"); notifyChange() }
-    }
-
-    var enlargeSecondLine: Bool {
-        get { defaults.bool(forKey: "readerEnlargeSecondLine") }
-        set { defaults.set(newValue, forKey: "readerEnlargeSecondLine"); notifyChange() }
-    }
-
     /// Strips leading space/tab runs immediately inside paragraph-like elements, for
     /// books that fake first-line indentation with literal whitespace. Structural (it
     /// changes what HTML gets built), not cosmetic.
@@ -688,8 +678,6 @@ final class SettingsManager {
     /// button on the General tab.
     func resetAllToDefaults() {
         formatFirstChapter = false
-        removeFirstLine = false
-        enlargeSecondLine = false
         removeParagraphIndents = false
         showPageCount = true
         defaultReadingMode = .scroll

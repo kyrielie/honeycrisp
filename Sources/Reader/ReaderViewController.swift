@@ -4,7 +4,9 @@
 //
 // CHANGES vs original:
 //  • Toolbar: removed .search, .toc, .settings items; added centered .titleLabel item
-//  • Title: always shown centered in toolbar (truncated); window.title stays empty
+//  • Title: always shown centered in toolbar (truncated); window.title is also
+//    set (setToolbarTitle) so the Window menu/Mission Control/VoiceOver still
+//    read the real title even though titleVisibility hides it from the titlebar
 //  • TOC: driven entirely from menu bar "Show Table of Contents" (⌘T); sidebar
 //    collapsed/expanded state is independent of toolbar buttons
 //  • TOC re-open bug fixed: setSidebarVisible checks collapsed state via splitView API
@@ -76,10 +78,16 @@ final class ReaderViewController: NSViewController {
     private var pendingPaginatedRestorePosition: RestorePosition = .start
 
     /// Set just before switching from paginated mode to scroll mode, so
-    /// webView(_:didFinish:) can seek to the live paginated position instead
-    /// of falling back to restoreSavedPositionIfAvailable's possibly-stale
+    /// scrollRestoreBootstrapJS (baked into buildScrollHTML) can seek to the
+    /// live paginated position instead of falling back to the possibly-stale
     /// persisted HistoryEntry offset. Consumed and cleared on use.
     private var pendingScrollRestore: (spineIndex: Int, fraction: Double)?
+    /// Snapshot of the cosmetics actually baked into whatever HTML is
+    /// currently loading/loaded (set alongside each buildScrollHTML/
+    /// buildPageHTML call). Compared against current settings in
+    /// webView(_:didFinish:) so the post-load cosmetic re-sync only fires on
+    /// genuine drift — see applyCosmeticCSSUpdate's call site.
+    private var lastBuiltCosmetics: ReaderCosmeticSettings?
     private var securityScopedURL: URL?
 
     private static let readerHTMLFilename = "_ql_reader.html"
@@ -156,6 +164,17 @@ final class ReaderViewController: NSViewController {
             guard let self else { return }
             self.paginatedTotalColumns = totalCols
             self.updatePageCountLabel()
+        }
+        // The restore scroll for .start/.end/.fraction/.characterOffset all
+        // happen inline, baked into the HTML by RestorePosition.bootstrapJS
+        // (see EPUBParser.buildPageHTML), before first paint — not via a
+        // post-load Swift -> JS round trip. positionDidChange is
+        // PaginationEngine.applyLayout's readback of the column that inline
+        // script already landed on; route it through the same path as
+        // message-handler-driven updates so paginatedCurrentColumn is never
+        // stale after a spine load.
+        paginationEngine?.positionDidChange = { [weak self] column, total in
+            self?.didReceivePositionUpdate(column: column, totalColumns: total)
         }
 
         loadingIndicator = NSProgressIndicator()
@@ -380,7 +399,12 @@ final class ReaderViewController: NSViewController {
             let format = SettingsManager.shared.formatFirstChapter
             let removeIndents = SettingsManager.shared.removeParagraphIndents
             let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared)
-            let html = try parser.buildScrollHTML(from: pkg, cosmetics: cosmetics, formatFirstChapter: format, removeParagraphIndents: removeIndents)
+            lastBuiltCosmetics = cosmetics
+            let html = try parser.buildScrollHTML(
+                from: pkg, cosmetics: cosmetics,
+                scrollRestoreJS: scrollRestoreBootstrapJS(),
+                formatFirstChapter: format, removeParagraphIndents: removeIndents
+            )
             let indexURL = pkg.rootFolder.appendingPathComponent(Self.readerHTMLFilename)
             try html.write(to: indexURL, atomically: true, encoding: .utf8)
             webView.loadFileURL(indexURL, allowingReadAccessTo: pkg.rootFolder)
@@ -389,10 +413,37 @@ final class ReaderViewController: NSViewController {
         }
     }
 
+    /// JS that seeks scroll mode to wherever it should land, run inline (see
+    /// buildScrollHTML) instead of via a post-load evaluateJavaScript call —
+    /// that's what avoids painting the top of chapter 1 first and then jumping,
+    /// the scroll-mode equivalent of RestorePosition.bootstrapJS in paginated
+    /// mode. `pendingScrollRestore` (set just before a paginated -> scroll mode
+    /// switch) takes priority over the persisted HistoryEntry offset, since it
+    /// carries the live in-session position and the persisted value can be
+    /// stale if the debounced position save hasn't flushed yet. Consumed and
+    /// cleared on use. Returns "" (a harmless empty inline script) when there's
+    /// nothing to restore — first-ever open of a book, which is correctly left
+    /// at the top.
+    private func scrollRestoreBootstrapJS() -> String {
+        if let restore = pendingScrollRestore {
+            pendingScrollRestore = nil
+            return "window.honeycrispNavigateToChapterFraction(\(restore.spineIndex), \(restore.fraction));"
+        }
+        if let url = currentEPUBURL,
+           let saved = HistoryManager.shared.savedPosition(for: url),
+           saved.characterOffset > 0 {
+            return "window.honeycrispNavigateToOffset(\(saved.characterOffset));"
+        }
+        return ""
+    }
+
     /// Loads a single spine item in paginated mode, with the column layout CSS
     /// baked into the HTML before load (never injected after, to avoid an
-    /// unstyled flash before repagination). `pendingRestorePosition` is applied by
-    /// `PaginationEngine.applyLayout` from `webView(_:didFinish:)`.
+    /// unstyled flash before repagination). The restore position is baked in
+    /// the same way via `RestorePosition.bootstrapJS` — see
+    /// `EPUBParser.buildPageHTML` — so it's already applied by the time the
+    /// page first paints; `PaginationEngine.applyLayout` (from
+    /// `webView(_:didFinish:)`) just reads back the result.
     private func loadSpineItem(index: Int, restorePosition: RestorePosition, pkg: EPUBPackage) {
         guard index >= 0 && index < pkg.spineURLs.count else { return }
         // Column CSS is computed from webView.bounds; before the window's first
@@ -410,12 +461,14 @@ final class ReaderViewController: NSViewController {
             let format = SettingsManager.shared.formatFirstChapter
             let removeIndents = SettingsManager.shared.removeParagraphIndents
             let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared)
+            lastBuiltCosmetics = cosmetics
             let bounds = webView.bounds.isEmpty ? NSRect(x: 0, y: 0, width: 780, height: 920) : webView.bounds
             let html = try parser.buildPageHTML(
                 from: pkg, spineIndex: index,
                 viewportWidth: bounds.width, viewportHeight: bounds.height,
                 colsPerScreen: SettingsManager.shared.colsPerScreen,
                 cosmetics: cosmetics,
+                restorePosition: restorePosition,
                 maxWidth: CGFloat(SettingsManager.shared.maxWidth),
                 paddingH: CGFloat(SettingsManager.shared.paddingH),
                 paddingV: CGFloat(SettingsManager.shared.paddingV),
@@ -647,9 +700,10 @@ final class ReaderViewController: NSViewController {
         structuralSettingsDebounceTimer?.invalidate()
         structuralSettingsDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
             guard let self, let url = self.currentEPUBURL else { self?.renderCurrentContent(); return }
-            // Capture current position first so restoreSavedPositionIfAvailable (fired
-            // from the reload's own didFinish) lands back where the reader actually
-            // was, not wherever they were the last time the book was opened.
+            // Capture current position first so the reload's baked-in restore
+            // (scrollRestoreBootstrapJS in scroll mode, pendingPaginatedRestorePosition
+            // in paginated mode -- both read from HistoryEntry) lands back where the
+            // reader actually was, not wherever they were the last time the book was opened.
             self.webView.evaluateJavaScript("window.honeycrispCurrentCharacterOffset ? window.honeycrispCurrentCharacterOffset() : 0") { result, _ in
                 if let offset = result as? Int {
                     HistoryManager.shared.updatePosition(url: url, spineIndex: 0, characterOffset: offset)
@@ -716,19 +770,6 @@ final class ReaderViewController: NSViewController {
         }
     }
 
-    /// Called after the reader HTML finishes loading, in scroll mode only —
-    /// paginated mode's restore goes through PaginationEngine.applyLayout's
-    /// .characterOffset case instead (set up in loadEPUB/loadSpineItem). If a
-    /// saved offset exists for this URL, seeks to it; otherwise leaves the book at
-    /// the top, matching current (never-restores) behaviour for first opens.
-    private func restoreSavedPositionIfAvailable() {
-        guard let url = currentEPUBURL,
-              let saved = HistoryManager.shared.savedPosition(for: url),
-              saved.characterOffset > 0
-        else { return }
-        webView.evaluateJavaScript("window.honeycrispNavigateToOffset(\(saved.characterOffset));", completionHandler: nil)
-    }
-
     /// PaginationJS's qlNextPage/qlPrevPage post this when a page turn runs past
     /// the current spine item's last/first column.
     func didReceivePageAction(forward: Bool) {
@@ -767,11 +808,38 @@ final class ReaderViewController: NSViewController {
     /// Approximate by design -- spine items aren't equal length, so this
     /// treats each spine item as an equal-sized slice of the book -- matching
     /// the existing tolerance for imprecision when switching reading modes.
+    ///
+    /// Gated on "Format for AO3" (SettingsManager.formatFirstChapter): AO3's
+    /// EPUB export brackets the actual story with a short title-page spine
+    /// item and a short end-notes/afterword spine item. Weighing those as
+    /// full "1 of N" slices like any real chapter skews percent noticeably on
+    /// short works -- leaving the title page for the first real chapter
+    /// already counts as finishing a whole spine-slice, and progress is
+    /// pinned to 100% for however long the reader is on the end-notes page.
+    /// With that setting on, the first and last spine items are excluded
+    /// from the slice count entirely: the title page reads as 0% and the
+    /// end-notes page reads as 100%, and every real chapter in between is
+    /// weighed against the remaining spineCount - 2 items instead of the
+    /// full spineCount. Not applied when there are 2 or fewer spine items
+    /// (nothing would be left to weigh), and not applied at all with the
+    /// setting off, since this bracketing convention is specific to AO3-style
+    /// exports and would misread an ordinary EPUB's real first/last chapters.
     private func reportPaginatedProgress(column: Int?, totalColumns: Int?) {
         guard let column, let totalColumns, totalColumns > 0, let pkg = currentPackage else { return }
         let spineCount = max(1, pkg.spineURLs.count)
         let withinSpineFraction = min(1.0, Double(column + 1) / Double(totalColumns))
-        let percent = Int(((Double(currentSpineIndex) + withinSpineFraction) / Double(spineCount)) * 100)
+        let excludeBookends = SettingsManager.shared.formatFirstChapter && spineCount > 2
+
+        let percent: Int
+        if excludeBookends && currentSpineIndex == 0 {
+            percent = 0
+        } else if excludeBookends && currentSpineIndex == spineCount - 1 {
+            percent = 100
+        } else {
+            let effectiveSpineCount = excludeBookends ? spineCount - 2 : spineCount
+            let effectiveSpineIndex = excludeBookends ? currentSpineIndex - 1 : currentSpineIndex
+            percent = Int(((Double(effectiveSpineIndex) + withinSpineFraction) / Double(effectiveSpineCount)) * 100)
+        }
         didReceiveProgress(percent)
     }
 
@@ -803,14 +871,23 @@ final class ReaderViewController: NSViewController {
     /// own default keyboard-scroll action ever sees them (see that method's doc
     /// comment). This is only still reachable in scroll mode, where there's no
     /// competing native horizontal-scroll handler to race.
-    func handleKeyDown(_ event: NSEvent) {
+    ///
+    /// Returns whether the event was actually handled, so callers (ReaderWindow.
+    /// keyDown, ReaderWebView.keyDown) can fall back to `super.keyDown(with:)`
+    /// for anything not in the switch below, instead of silently swallowing
+    /// every other keystroke -- e.g. Tab, Space, or any future system key
+    /// AppKit would otherwise handle (including the default "no responder
+    /// handled this" beep).
+    @discardableResult
+    func handleKeyDown(_ event: NSEvent) -> Bool {
         switch event.keyCode {
         case 123, 126, 116: scrollByPages(-1)
         case 124, 125, 121: scrollByPages(1)
         case 3 where event.modifierFlags.contains(.command): // ⌘F
             toggleSearch(nil)
-        default: break
+        default: return false
         }
+        return true
     }
 
     private func scrollByPages(_ pages: Int) {
@@ -1128,22 +1205,20 @@ extension ReaderViewController: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         // The initial HTML already bakes real settings in via ReaderCosmeticSettings
-        // (see buildScrollHTML/buildPageHTML), so this is normally a no-op re-write
-        // of the same values -- kept as a safety re-sync in case a setting changed
-        // in the (synchronous build, async load) window between building the HTML
-        // and this callback firing.
-        applyCosmeticCSSUpdate()
+        // (see buildScrollHTML/buildPageHTML). Re-applying unconditionally here was
+        // itself a source of a visible flash on every load -- even when values match,
+        // rewriting #honeycrisp-vars forces a second style recalc right after first
+        // paint, and when a setting genuinely changed in the (synchronous build,
+        // async load) window it produced a color flip after the correct colors had
+        // already painted. Only re-sync if lastBuiltCosmetics actually disagrees with
+        // the current settings snapshot.
+        let currentCosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared)
+        if lastBuiltCosmetics != currentCosmetics {
+            applyCosmeticCSSUpdate()
+        }
         switch currentMode {
         case .scroll:
-            if let restore = pendingScrollRestore {
-                pendingScrollRestore = nil
-                webView.evaluateJavaScript(
-                    "window.honeycrispNavigateToChapterFraction(\(restore.spineIndex), \(restore.fraction));",
-                    completionHandler: nil
-                )
-            } else {
-                restoreSavedPositionIfAvailable()
-            }
+            break // Restore already happened inline; see scrollRestoreBootstrapJS/buildScrollHTML.
         case .paginated:
             paginationEngine?.setColsPerScreen(SettingsManager.shared.colsPerScreen)
             paginationEngine?.applyLayout(restorePosition: pendingPaginatedRestorePosition)

@@ -51,6 +51,46 @@ EPUBReaderApp (SwiftUI @main, boots AppDelegate)
 | `Settings/ShortcutsSettingsViewController.swift` | Per-`RebindableAction` key-capture rows. |
 | `Settings/KeyBinding.swift` | `RebindableAction` enum + `KeyBinding` codable value type; defaults live here. |
 
+## 2a. Fixed bug: saved reading position previously never restored
+
+`ReaderViewController.loadEPUB(at:)` calls `HistoryManager.shared.record(url:title:)`
+(which logs the just-opened book into history) *before* it reads
+`HistoryManager.shared.savedPosition(for:)` to decide where to restore to —
+in both the paginated-mode branch and, via `scrollRestoreBootstrapJS()`, the
+scroll-mode path. `HistoryManager.record` used to unconditionally replace the
+`HistoryEntry` for that URL with a fresh one whose initializer hardcodes
+`lastSpineIndex`/`lastCharacterOffset` to `0` (only `readingProgressPercent`
+carried forward), so the later `savedPosition(for:)` lookup always read back
+`(0, 0)` for the book that was just opened — every open silently discarded
+the saved position before it was ever consulted. Fixed by having `record()`
+carry `lastSpineIndex`/`lastCharacterOffset` forward from the existing entry
+the same way it already carried `readingProgressPercent` forward, so the
+fix holds regardless of call order at any future call site.
+
+## 2b. Removed dead settings: `removeFirstLine` / `enlargeSecondLine`
+
+`SettingsManager` used to expose `removeFirstLine`/`enlargeSecondLine` as
+fully `UserDefaults`-backed properties, included in `resetAllToDefaults()`,
+but nothing in `EPUBParser`'s HTML-building path ever read either one and no
+Settings pane exposed a control for either — leftover sub-flags from before
+"Format for AO3" (`formatFirstChapter`) absorbed their behavior. Removed;
+any stale `readerRemoveFirstLine`/`readerEnlargeSecondLine` keys left in a
+user's `UserDefaults` from a prior build are now simply unread, which is
+harmless.
+
+## 2c. Fixed: ReaderWindow no longer swallows unhandled key events
+
+`ReaderWindow.keyDown` unconditionally routed every keystroke to
+`ReaderViewController.handleKeyDown(_:)` whenever a reader VC was the
+content view controller, and `handleKeyDown`'s `switch` had a no-op
+`default: break` — so any key outside its five explicit cases (arrows,
+Page Up/Down, ⌘F) was silently swallowed at the window level instead of
+falling through to `super.keyDown(with:)`, losing AppKit's default
+"no responder handled this" behavior (e.g. the system beep) for stray
+keys. `handleKeyDown` now returns whether it actually handled the event,
+and both callers (`ReaderWindow.keyDown`, `ReaderWebView.keyDown`) fall
+back to `super.keyDown(with:)` when it didn't.
+
 ## 3. Data flow: opening a book
 
 1. `AppDelegate.application(_:open:)` or `ReaderWindowController.showOpenPanel` gets a file `URL`.
@@ -74,7 +114,7 @@ Two independent HTML-generation paths (`buildScrollHTML` for scroll mode, one do
 - No "share quote" — no OPF metadata (title/author/ISBN) parser exists to attribute a quote.
 - No per-window/per-book reading mode override — `currentMode` always initializes from the global `SettingsManager.shared.defaultReadingMode`.
 
-## 6. Known architectural gaps and their resolution (see `REVISION_PLAN.md` for full detail)
+## 6. Known architectural gaps and their resolution (see `docs/honeycrisp-settings-window-plan.md` for the Settings-window rebuild plan; other gaps below have no separate plan doc)
 
 - **DRM**: no detection today — a DRM-protected EPUB falls into the generic `.malformed`/`.opfNotFound` path. Resolution: detect `META-INF/encryption.xml` in `EPUBParser.parsePackage`, add `EPUBParseError.drmProtected`; the existing in-webview `showError` path already surfaces `errorDescription` with no further plumbing needed.
 - **Calibre annotations**: not supported (read or write). Blocked on confirming Calibre's actual on-disk format — Calibre stores highlights/bookmarks in its own library metadata (`metadata.db`/sidecar), not embedded in the EPUB file itself, and a standalone-opened EPUB (Honeycrisp's only input mode — see §5) generally won't carry that sidecar. Needs a real sample before a parser is written. When built: read-only by hard constraint, no write path to the EPUB or any sidecar, enforced in code (not just documented).
@@ -87,3 +127,49 @@ Two independent HTML-generation paths (`buildScrollHTML` for scroll mode, one do
 
 - **Per-window/per-book reading-mode override**: audited, confirmed already absent from the code (`ReaderViewController.currentMode` and `HistoryEntry` both already have no per-book mode field) — closed with no code change, documented here so it stops being re-flagged as missing.
 - **Non-goals** (no library view, no cross-book search, no publisher styling, no share-quote) are confirmed intentional and get a README "Non-goals" section; no code changes.
+
+## 8. Settings window: per-tab resize is wired but inert (by design, undocumented in the plan)
+
+`docs/honeycrisp-settings-window-plan.md` §1.3/§2.2 called the animated
+per-tab resize (a `SettingsPaneSizing` protocol, `resolvePreferredPaneSize()`,
+`SettingsPanelWindow.setWindowSize`, per-tab size caching) "the main
+structural gap" and "the core structural change." All of that machinery is
+present in `SettingsWindowController.swift` and is correctly wired to
+`SettingsTabViewController.tabView(_:didSelect:)`.
+
+It has no visible effect: every pane's `loadView()` constructs its root
+`NSView` with `frame: NSRect(origin: .zero, size: SettingsPaneMetrics.size)`
+— the same fixed 520×560 constant for General, Appearance, History, and
+Shortcuts — so `resolvePreferredPaneSize()` always resolves to the same
+size for all four tabs and the animated resize path never actually
+resizes anything. This is intentional (see the doc comment on
+`SettingsPaneMetrics`: a prior version *did* size per-tab and that read as
+unwanted "responsive" resizing), but the plan document was never updated to
+reflect the reversal, so it still reads as if per-tab resize is live
+behavior. Treat `docs/honeycrisp-settings-window-plan.md` §1.3/§2.2/§2.4 as
+superseded by this section, not as current behavior. Not changed in code —
+this is a deliberate product decision, not a bug, so it's left as-is with
+the documentation now caught up to it.
+
+## 9. Settings has exactly one entry point (fixed)
+
+`Sources/App/EPUBReaderApp.swift` used to declare a SwiftUI `Settings` scene
+(`SettingsView`, an `NSViewControllerRepresentable` around a *second,
+independently-constructed* `SettingsTabViewController`, framed 480×400) in
+addition to `AppDelegate`'s manually-built "Settings…" menu item
+(`openSettingsAction`, → `SettingsWindowController.shared`). Only the
+`SettingsWindowController.shared` path carried the pre-Ventura polish
+(`.toolbar` tab style, window-title sync, frame autosave, animated resize
+machinery) — the SwiftUI scene was a second, different, unpolished
+implementation of the same screen, reachable only if SwiftUI's own
+Settings-scene command (normally ⌘, via the App menu) survived
+`AppDelegate.setupMenus()` replacing `NSApp.mainMenu` wholesale, which was
+never verified either way.
+
+Fixed: `EPUBReaderApp`'s `Settings` scene is now an empty placeholder (kept
+only because `Settings` is the one `Scene` kind that doesn't auto-open a
+window at launch, so it's the cheapest way to satisfy `some Scene` for an
+otherwise 100%-AppDelegate-driven app). `SettingsView`/the duplicate
+`SettingsTabViewController` construction is gone. `SettingsWindowController.
+shared` via `AppDelegate.openSettingsAction` is now the only Settings
+implementation in the app.

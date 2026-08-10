@@ -19,7 +19,7 @@ struct EPUBPackage {
 /// buildScrollHTML/buildPageHTML at build time and reused as-is by
 /// ReaderViewController.applyCosmeticCSSUpdate for its live JS patch, so both
 /// paths are guaranteed to produce identical CSS from identical settings.
-struct ReaderCosmeticSettings {
+struct ReaderCosmeticSettings: Equatable {
     var fontSizePercent: Int
     var fontFamily: String
     var backgroundCSS: String
@@ -169,7 +169,17 @@ final class EPUBParser: NSObject {
 
     // MARK: - HTML building
 
-    func buildScrollHTML(from pkg: EPUBPackage, cosmetics: ReaderCosmeticSettings, formatFirstChapter: Bool = false, removeParagraphIndents: Bool = false) throws -> String {
+    /// `scrollRestoreJS` is baked in as an inline <script> right after readerJS
+    /// (which defines honeycrispNavigateToOffset/honeycrispNavigateToChapterFraction),
+    /// so it runs synchronously during HTML parse, before WKWebView's first paint —
+    /// same reasoning as RestorePosition.bootstrapJS in buildPageHTML. Pass an
+    /// empty string when there's nothing to restore (e.g. first-ever open of a
+    /// book, at the top by default). See ReaderViewController.scrollRestoreBootstrapJS.
+    func buildScrollHTML(
+        from pkg: EPUBPackage, cosmetics: ReaderCosmeticSettings,
+        scrollRestoreJS: String = "",
+        formatFirstChapter: Bool = false, removeParagraphIndents: Bool = false
+    ) throws -> String {
         var body = ""
         let base = pkg.rootFolder
         for i in pkg.spineURLs.indices {
@@ -194,7 +204,9 @@ final class EPUBParser: NSObject {
         </head>
         <body>
         <div id="content">\(body)</div>
+        <script>window._qlPaginated = false;</script>
         <script>\(Self.readerJS)</script>
+        <script>\(scrollRestoreJS)</script>
         </body>
         </html>
         """
@@ -203,8 +215,12 @@ final class EPUBParser: NSObject {
     /// Paginated-mode counterpart to buildScrollHTML: one spine item's HTML, with
     /// the column layout CSS baked in up front (never injected after load via
     /// evaluateJavaScript — that's what avoids an unstyled flash before
-    /// repagination). Uses the same extractedChapterBody helper as buildScrollHTML,
-    /// so formatting behaviour can't drift between the two rendering modes.
+    /// repagination). PaginationJS and the RestorePosition.bootstrapJS restore
+    /// call are baked in the same way, as an inline <script> at the end of
+    /// <body>, so the requested column is already on screen for the first
+    /// paint — see RestorePosition.bootstrapJS. Uses the same
+    /// extractedChapterBody helper as buildScrollHTML, so formatting behaviour
+    /// can't drift between the two rendering modes.
     func buildPageHTML(
         from pkg: EPUBPackage,
         spineIndex: Int,
@@ -212,6 +228,7 @@ final class EPUBParser: NSObject {
         viewportHeight: CGFloat,
         colsPerScreen: ColsPerScreen,
         cosmetics: ReaderCosmeticSettings,
+        restorePosition: RestorePosition,
         maxWidth: CGFloat = 700,
         paddingH: CGFloat = 24,
         paddingV: CGFloat = 24,
@@ -233,6 +250,21 @@ final class EPUBParser: NSObject {
             marginH: paddingH, marginV: paddingV, maxWidth: maxWidth
         )
 
+        // PaginationJS + qlSetup + the restore call run synchronously here,
+        // inline, as the last thing parsed in <body> — before WKWebView gets
+        // an opportunity to paint. That's what makes the restore column the
+        // very first thing rendered instead of a Swift-driven post-load
+        // scroll (which always races an already-painted column 0). See
+        // RestorePosition.bootstrapJS and PaginationEngine.applyLayout, which
+        // now only reads back the result of this script, it doesn't scroll.
+        let paginationBootstrap = """
+        <script>
+        \(PaginationJS.script)
+        window.qlSetup(\(colsPerScreen.rawValue));
+        \(restorePosition.bootstrapJS)
+        </script>
+        """
+
         return """
         <!doctype html>
         <html>
@@ -245,7 +277,9 @@ final class EPUBParser: NSObject {
         </head>
         <body>
         <div id="content">\(body)</div>
+        <script>window._qlPaginated = true;</script>
         <script>\(Self.readerJS)</script>
+        \(paginationBootstrap)
         </body>
         </html>
         """
@@ -553,6 +587,17 @@ final class EPUBParser: NSObject {
     // ── Reading progress ──────────────────────────────────────────────────────────
 
     function reportProgress() {
+      // Paginated mode clips document height to the viewport and scrolls
+      // horizontally (see paginatedColumnCSS: html { height: <vh>px;
+      // overflow-y: hidden }), so scrollY stays ~0 and scrollHeight stays
+      // ~innerHeight regardless of position -- this math would report ~100%
+      // on every single page turn. Paginated progress is instead computed
+      // Swift-side from spine index/column (see ReaderViewController.
+      // reportPaginatedProgress) and window._qlPaginated (set by
+      // buildPageHTML, absent/false in buildScrollHTML) is what tells this
+      // shared function to defer to that instead of posting its own bogus
+      // value over the same progressHandler channel.
+      if (window._qlPaginated) return;
       var scrolled = window.scrollY + window.innerHeight;
       var total    = document.documentElement.scrollHeight;
       var pct      = total > 0 ? Math.round((scrolled / total) * 100) : 0;
