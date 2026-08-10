@@ -1,6 +1,6 @@
 // swift-tools-version: 5.9
 // Package.swift — alternative build entry point (SPM)
-// Primary build target is the Xcode project: EPUBReader.xcodeproj
+// Primary build target is the Xcode project: Honeycrisp.xcodeproj
 
 import PackageDescription
 
@@ -16,7 +16,7 @@ let package = Package(
             dependencies: [
                 .product(name: "ZIPFoundation", package: "ZIPFoundation"),
             ],
-            path: "Honeycrisp/Sources"
+            path: "Sources"
         ),
     ]
 )

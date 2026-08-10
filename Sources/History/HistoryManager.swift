@@ -71,12 +71,25 @@ final class HistoryManager {
             relativeTo: nil
         )
 
-        // Preserve progress from existing entry if present
-        let existingProgress = entries.first(where: { $0.url == url })?.readingProgressPercent ?? -1
+        // Preserve progress AND saved restore position from the existing entry,
+        // if present. record() runs on every open, before the caller has a
+        // chance to read savedPosition(for:) — previously this rebuilt a brand
+        // new HistoryEntry here (which defaults lastSpineIndex/lastCharacterOffset
+        // to 0), so by the time ReaderViewController.loadEPUB went to look up
+        // the saved position it always read back (0, 0) and every open silently
+        // landed at the start of the book. Carrying these two fields forward the
+        // same way readingProgressPercent already was is what makes "resume
+        // where you left off" actually work.
+        let existing = entries.first(where: { $0.url == url })
+        let existingProgress = existing?.readingProgressPercent ?? -1
+        let existingSpineIndex = existing?.lastSpineIndex ?? 0
+        let existingCharacterOffset = existing?.lastCharacterOffset ?? 0
         entries.removeAll { $0.url == url }
 
         var entry = HistoryEntry(url: url, title: title, bookmarkData: bookmarkData)
         entry.readingProgressPercent = existingProgress
+        entry.lastSpineIndex = existingSpineIndex
+        entry.lastCharacterOffset = existingCharacterOffset
         entries.insert(entry, at: 0)
 
         if entries.count > maxEntries {

@@ -107,11 +107,10 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
 
 final class ReaderWindow: NSWindow {
     override func keyDown(with event: NSEvent) {
-        if let vc = contentViewController as? ReaderViewController {
-            vc.handleKeyDown(event)
-        } else {
-            super.keyDown(with: event)
+        if let vc = contentViewController as? ReaderViewController, vc.handleKeyDown(event) {
+            return
         }
+        super.keyDown(with: event)
     }
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
