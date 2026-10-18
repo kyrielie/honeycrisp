@@ -6,7 +6,7 @@
 
 A native macOS EPUB standalone reader, inspired by this [EPUBQuickLook plugin](https://github.com/arytek/epub-quicklook-extension).
 
-Built using claude and gemini because I hate swift.
+Built using claude and gemini and codex because I hate swift. 
 
 Check out https://github.com/kyrielie/ambrosia, a macos library and reader for massive fanfiction libraries. 
 Also https://github.com/kyrielie/nectar its ios app companion reader.
@@ -145,6 +145,7 @@ The QuickLook plugin (`EPUBQuickLook`) provided the `EPUBParser` core and the ba
 - Persistent history via `UserDefaults` + security-scoped bookmarks
 - Toolbar with mode switcher, page indicator, history popover, pin button
 - Opinionated reader CSS that strips all EPUB styles (Lora typeface, warm paper palette)
+
 
 ## License
 
