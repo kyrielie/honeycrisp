@@ -3,12 +3,11 @@
   "indentation": {
     "spaces": 4
   },
-  "lineLength": 110,
+  "lineLength": 120,
   "maximumBlankLines": 1,
   "respectsExistingLineBreaks": true,
   "rules": {
     "AlwaysUseLowerCamelCase": true,
-    "NoAccessLevelOnExtensionDeclaration": false,
-    "UseTripleSlashForDocumentation": true
+    "NoAccessLevelOnExtensionDeclaration": false
   }
 }

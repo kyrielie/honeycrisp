@@ -24,7 +24,7 @@ Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
 - Test: `./test.sh` (runs xcodegen, then `xcodebuild test`, scheme `Honeycrisp`, unsigned). Env
   overrides: `HONEYCRISP_TEST_DESTINATION`, `HONEYCRISP_DERIVED_DATA`.
 - Lint: `xcrun swift-format lint --configuration .swift-format --recursive Sources Tests`
-  (4 spaces, 110 columns). Format only touched files; no repo-wide formatting diffs.
+  (4 spaces, 120 columns). Format only touched files; no repo-wide formatting diffs.
 - `Package.swift` is a secondary SwiftPM entry point with no test target; CI does not use it.
 - Targets: macOS 13.0, Swift 5.9 (the test target declares macOS 14.0 in `project.yml`).
   Only dependency: ZIPFoundation (`from: 0.9.0`, resolved 0.9.20).
