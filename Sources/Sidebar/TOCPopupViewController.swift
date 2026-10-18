@@ -49,7 +49,7 @@ final class TOCPopupViewController: NSViewController, NSOutlineViewDataSource, N
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
             scroll.topAnchor.constraint(equalTo: root.topAnchor, constant: 8),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8),
+            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8)
         ])
         self.view = root
     }

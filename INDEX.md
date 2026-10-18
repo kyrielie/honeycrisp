@@ -33,7 +33,7 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
   `loadRecent`, `toggleFloat`, close flushes position. Also `ReaderWindow` (key forwarding).
 - `ReaderViewController.swift` (2047): the reading surface. See section map below.
 - `PaginationEngine.swift` (253): `PaginationEngine` (Swift driver of column layout),
-  `ColsPerScreen`, `RestorePosition` (`.start/.end/.fraction/.characterOffset`).
+  `ColsPerScreen`, `RestorePosition` (`.start/.end/.fraction/.characterOffset`). `EPUBAnchor.currentLayout`: version of the text extraction that saved offsets refer to; bump it when offsets change (ARCHITECTURE.md 5a).
 - `PaginationJS.swift` (313): JS for paginated mode: column snap, boundaries, char-offset seek.
   Posts `pageAction` and `positionUpdate`.
 - `EPUBDropTargetView.swift` (41): drag and drop of `.epub` files.
@@ -53,8 +53,9 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
 ### History (`Sources/History`)
 - `HistoryManager.swift` (196): `HistoryEntry` (Codable, security-scoped bookmark, progress,
   spine index, char offset) and `HistoryManager.shared` (`record`, `updateProgress`,
-  `updatePosition`, `savedPosition`, `resolveURL`). Notification: `entriesDidChangeNotification`.
-- `ReadingBookmark.swift` (75): `ReadingBookmark`, `BookmarkManager` (versioned envelope).
+  `updatePosition`, `savedPosition`, `resolveURL`). Notification: `entriesDidChangeNotification`. Load decodes per element; unreadable elements are re-emitted after the decoded ones on save and count toward the cap (dropped first); a non-array blob is preserved via `StorageQuarantine` before the first overwrite.
+- `ReadingBookmark.swift`: `ReadingBookmark`, `BookmarkManager` (versioned envelope; per-element decode, unreadable elements re-emitted on save, newer version or corrupt blob preserved via `StorageQuarantine` before the first overwrite).
+- `StorageQuarantine.swift`: bounded (3) raw copies under `<key>.quarantine.<unix-seconds>`; shared by bookmark and history storage.
 - `HistoryViewController.swift` (326): recents popover, `HistoryEntryOpener`, `HistoryRowView`.
 
 ### Settings (`Sources/Settings`)
@@ -64,6 +65,7 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
   toggleReadingMode) with defaults, `KeyBinding`, storage extension on `SettingsManager` (l.72),
   `.keyBindingsChanged` (l.142).
 - `ShortcutsSettingsViewController.swift` (176): key-capture rows for the Shortcuts tab.
+- `ReaderContrast.swift`: pure luminance and contrast math, and `hitColors(background:text:)`, the search-hit palette (yellow with black on light pages, deep amber with white on dark; active hit keeps system selection colors plus an outline). Feeds `ReaderCosmeticSettings.hit*` and the `--reader-hit-*` variables in `readerVarsCSS`.
 
 ## Large-file section maps
 
@@ -145,7 +147,7 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
 | Reading history UI | `HistoryViewController`, `HistoryEntryOpener`, `HistorySettingsViewController` |
 | Toolbar buttons | `ReaderViewController.toolbar(_:itemForItemIdentifier:)` (l.1745), `makeToolbarButton` (l.1869), identifiers (l.2035) |
 | Auto-scroll or speech | `ReaderViewController` l.737-830; speech delegate l.1645; menu actions in `AppDelegate` |
-| New DRM or parse error | `EPUBParseError` (l.92), `parsePackage` (l.129); error surfaces via `showError` |
+| New DRM or parse error | `EPUBParseError` (l.92), `EPUBParser.isDRMProtected(extractedRoot:)` (DRM rules, called first by `parsePackage`; line numbers after l.126 have shifted), `parsePackage`; error surfaces via `showError` |
 | Window behavior, float on top | `ReaderWindowController` (`setupWindow`, `toggleFloat`) |
 | Themes | `Theme` and storage in `SettingsManager`, `AppearanceSettingsViewController`, `ThemePopoverViewController` |
 | File type registration | `Honeycrisp/Info.plist`, `project.yml` settings |
@@ -155,12 +157,13 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
 
 | File | Covers |
 |---|---|
-| `EPUBParserTests.swift` | package and spine parsing, landmarks, search offsets, JS string escaping, DRM, missing container, unpack |
+| `EPUBParserTests.swift` | package and spine parsing, landmarks, search offsets, JS string escaping, DRM rules (LCP file, LCP and ADEPT markers, unknown algorithm; font-obfuscation-only and empty manifests open), missing container, unpack |
 | `TOCParserTests.swift` | NCX, EPUB3 nav, nested hierarchy, Start Reading, missing-TOC fallback |
-| `HistoryManagerTests.swift` | record/progress/position persistence, clamping, cap, clear, reload |
-| `HistoryEntryTests.swift` | legacy decode defaults, round-trip of restore position |
-| `BookmarkManagerTests.swift` | per-book persistence, rename/remove, corrupt data isolation |
+| `HistoryManagerTests.swift` | record/progress/position persistence, clamping, cap, clear, reload, bad-element survival, whole-blob quarantine, unreadable elements and the cap |
+| `HistoryEntryTests.swift` | legacy decode defaults (including `anchorLayout`), round-trip of restore position and layout |
+| `BookmarkManagerTests.swift` | per-book persistence, rename/remove, corrupt data isolation, bad-element survival, newer version and whole-blob quarantine, quarantine pruning, legacy bookmark decode, anchor layout round trip |
 | `RestorePositionTests.swift` | fraction clamping, bootstrap call generation |
+| `ReaderContrastTests.swift` | contrast math, hit palette per page luminance, 4.5:1 floor for every seed theme, `--reader-hit-*` variables, no fixed yellow in `readerCSS` |
 
 Not covered: `SettingsManager`, `KeyBinding`, `PaginationEngine` navigation, `ReaderViewController`,
 search UI, all Settings panes, `AppDelegate`.

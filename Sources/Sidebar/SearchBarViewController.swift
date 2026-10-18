@@ -40,6 +40,7 @@ final class SearchBarViewController: NSViewController {
         }
     }
 
+    // swiftlint:disable:next function_body_length
     override func loadView() {
         // Pill-shaped container
         let root = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 410, height: 48))
@@ -102,7 +103,7 @@ final class SearchBarViewController: NSViewController {
             closeButton.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
             closeButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
             closeButton.widthAnchor.constraint(equalToConstant: 24),
-            closeButton.heightAnchor.constraint(equalToConstant: 24),
+            closeButton.heightAnchor.constraint(equalToConstant: 24)
         ])
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("excerpt"))
@@ -126,7 +127,7 @@ final class SearchBarViewController: NSViewController {
             resultsScroll.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
             resultsScroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
             resultsScroll.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
-            resultsScroll.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8),
+            resultsScroll.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8)
         ]
         NSLayoutConstraint.deactivate(resultsPanelConstraints)
         rootHeightConstraint = root.heightAnchor.constraint(equalToConstant: 48)
@@ -204,8 +205,11 @@ final class SearchBarViewController: NSViewController {
         expanded = value
         resultsScroll.isHidden = !value
         rootHeightConstraint.constant = value ? 340 : 48
-        if value { NSLayoutConstraint.activate(resultsPanelConstraints) }
-        else { NSLayoutConstraint.deactivate(resultsPanelConstraints) }
+        if value {
+            NSLayoutConstraint.activate(resultsPanelConstraints)
+        } else {
+            NSLayoutConstraint.deactivate(resultsPanelConstraints)
+        }
         onExpandedChange?(value)
     }
 
@@ -267,7 +271,7 @@ extension SearchBarViewController: NSTableViewDataSource, NSTableViewDelegate {
             NSLayoutConstraint.activate([
                 label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
                 label.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
-                label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                label.centerYAnchor.constraint(equalTo: view.centerYAnchor)
             ])
             return view
         }()

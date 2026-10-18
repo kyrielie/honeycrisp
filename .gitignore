@@ -111,3 +111,4 @@ honeycrisp.xml
 # Keep these inputs out of source control unless a fixture's redistribution
 # terms are documented and the file is intentionally moved into test resources.
 samples/*
+features.txt

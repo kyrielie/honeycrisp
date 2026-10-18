@@ -23,6 +23,7 @@ final class HistoryViewController: NSViewController {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    // swiftlint:disable:next function_body_length
     override func loadView() {
         // Height is fully determined by the constraint chain below (header +
         // separator + fixed-height scrollView), so this initial frame height
@@ -108,7 +109,7 @@ final class HistoryViewController: NSViewController {
             ),
 
             emptyLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor)
         ])
 
         self.view = container
@@ -285,7 +286,7 @@ final class HistoryRowView: NSTableCellView {
             removeBtn.centerYAnchor.constraint(equalTo: centerYAnchor),
             removeBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             removeBtn.widthAnchor.constraint(equalToConstant: 20),
-            removeBtn.heightAnchor.constraint(equalToConstant: 20),
+            removeBtn.heightAnchor.constraint(equalToConstant: 20)
         ])
 
         // Show/hide remove button on hover

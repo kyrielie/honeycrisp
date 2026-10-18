@@ -19,6 +19,21 @@ final class HistoryEntryTests: XCTestCase {
         XCTAssertEqual(entries[0].readingProgressPercent, 42)
         XCTAssertEqual(entries[0].lastSpineIndex, 0)
         XCTAssertEqual(entries[0].lastCharacterOffset, 0)
+        XCTAssertEqual(entries[0].anchorLayout, EPUBAnchor.legacyLayout)
+    }
+
+    func testNewEntryCarriesCurrentAnchorLayout() {
+        let entry = HistoryEntry(url: URL(fileURLWithPath: "/books/book.epub"), title: "Book")
+        XCTAssertEqual(entry.anchorLayout, EPUBAnchor.currentLayout)
+    }
+
+    func testHistoryEntryRoundTripPreservesNonDefaultAnchorLayout() throws {
+        var entry = HistoryEntry(url: URL(fileURLWithPath: "/books/book.epub"), title: "Book")
+        entry.anchorLayout = 7
+
+        let decoded = try JSONDecoder().decode(HistoryEntry.self, from: JSONEncoder().encode(entry))
+
+        XCTAssertEqual(decoded.anchorLayout, 7)
     }
 
     func testHistoryEntryRoundTripPreservesRestorePosition() throws {

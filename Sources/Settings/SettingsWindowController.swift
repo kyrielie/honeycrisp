@@ -28,6 +28,7 @@
 //  • Per-tab pane sizes are cached after first resolution so switching back to an
 //    already-visited tab animates directly to the cached size.
 
+// swiftlint:disable file_length
 import AppKit
 import AVFoundation
 import UniformTypeIdentifiers
@@ -182,20 +183,24 @@ final class SettingsTabViewController: NSTabViewController {
         tabStyle = .toolbar
 
         // Typography tab intentionally removed.
-        let tabSpecs: [(() -> NSViewController, String, String)] = [
-            ({ GeneralSettingsViewController() },    "General",    "gear"),
-            ({ ReaderSettingsViewController() },     "Reading",    "text.book.closed"),
-            ({ AppearanceSettingsViewController() }, "Appearance", "paintbrush"),
-            ({ HistorySettingsViewController() },    "History",    "clock"),
-            ({ ShortcutsSettingsViewController() },  "Shortcuts",  "keyboard"),
+        struct TabSpec {
+            let makeViewController: () -> NSViewController
+            let label: String
+            let symbol: String
+        }
+        let tabSpecs = [
+            TabSpec(makeViewController: { GeneralSettingsViewController() }, label: "General", symbol: "gear"),
+            TabSpec(makeViewController: { ReaderSettingsViewController() }, label: "Reading", symbol: "text.book.closed"),
+            TabSpec(makeViewController: { AppearanceSettingsViewController() }, label: "Appearance", symbol: "paintbrush"),
+            TabSpec(makeViewController: { HistorySettingsViewController() }, label: "History", symbol: "clock"),
+            TabSpec(makeViewController: { ShortcutsSettingsViewController() }, label: "Shortcuts", symbol: "keyboard")
         ]
 
-        for (makeVC, label, symbol) in tabSpecs {
-            let vc = makeVC()
-            let item = NSTabViewItem(viewController: vc)
-            item.label = label
-            item.identifier = label
-            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        for spec in tabSpecs {
+            let item = NSTabViewItem(viewController: spec.makeViewController())
+            item.label = spec.label
+            item.identifier = spec.label
+            item.image = NSImage(systemSymbolName: spec.symbol, accessibilityDescription: nil)
             addTabViewItem(item)
         }
     }
@@ -294,6 +299,7 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
     var preferredPaneSize: NSSize?
     let isResizableView = false
 
+    // swiftlint:disable:next function_body_length
     override func loadView() {
         let root = NSView(frame: NSRect(origin: .zero, size: SettingsPaneMetrics.size))
 
@@ -391,7 +397,8 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         stack.addArrangedSubview(linkClicksCheckbox)
 
         let linkClicksHint = NSTextField(wrappingLabelWithString:
-            "Lets in-book links be clicked -- both internal cross-references (footnotes, table of contents) and external links, which open in your default browser. On by default."
+            "Lets in-book links be clicked -- both internal cross-references (footnotes, table of contents) "
+                + "and external links, which open in your default browser. On by default."
         )
         linkClicksHint.font = NSFont.systemFont(ofSize: 11)
         linkClicksHint.textColor = .secondaryLabelColor
@@ -435,7 +442,8 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         stack.setCustomSpacing(16, after: divider)
 
         let resetHint = NSTextField(wrappingLabelWithString:
-            "Resets every tab -- General, Reading, Appearance, History, and Shortcuts -- back to their original defaults. History entries themselves aren't affected."
+            "Resets every tab -- General, Reading, Appearance, History, and Shortcuts -- back to their original "
+                + "defaults. History entries themselves aren't affected."
         )
         resetHint.font = NSFont.systemFont(ofSize: 11)
         resetHint.textColor = .secondaryLabelColor
@@ -445,7 +453,7 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20)
         ])
 
         self.view = root
@@ -538,7 +546,8 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
     @objc private func resetAllToDefaultsClicked(_ sender: NSButton) {
         let alert = NSAlert()
         alert.messageText = "Reset All Settings to Defaults?"
-        alert.informativeText = "This resets General, Appearance, History display, and Shortcuts back to their original defaults. History entries themselves aren't affected. This can't be undone."
+        alert.informativeText = "This resets General, Appearance, History display, and Shortcuts back to their "
+            + "original defaults. History entries themselves aren't affected. This can't be undone."
         alert.addButton(withTitle: "Reset All")
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.hasDestructiveAction = true
@@ -574,6 +583,7 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
     private weak var voicePopup: NSPopUpButton?
     private weak var adjustScrollSpeedCheckbox: NSButton?
 
+    // swiftlint:disable:next function_body_length
     override func loadView() {
         let root = NSView(frame: NSRect(origin: .zero, size: SettingsPaneMetrics.size))
         let stack = NSStackView()
@@ -602,7 +612,9 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         speedRow.addArrangedSubview(speedStepper)
         stack.addArrangedSubview(speedRow)
 
-        let speedHint = NSTextField(wrappingLabelWithString: "Use the plus and minus controls to set a speed from 10 to 1,200 pixels per second. Auto-scroll is available in continuous scroll mode.")
+        let speedHint = NSTextField(wrappingLabelWithString:
+            "Use the plus and minus controls to set a speed from 10 to 1,200 pixels per second. "
+            + "Auto-scroll is available in continuous scroll mode.")
         speedHint.font = NSFont.systemFont(ofSize: 11)
         speedHint.textColor = .secondaryLabelColor
         stack.addArrangedSubview(speedHint)
@@ -639,7 +651,7 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -20),
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 24),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 24)
         ])
         self.speedValue = speedValue
         self.speedStepper = speedStepper
@@ -723,6 +735,7 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
 //    and each swatch's own context menu handles rename/recolor/duplicate/
 //    delete -- see Theme/ThemeColorSet in SettingsManager.swift.
 
+// swiftlint:disable:next type_body_length
 final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizing {
 
     var preferredPaneSize: NSSize?
@@ -768,6 +781,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     /// is applied to <html> as a CSS percentage of that. See EPUBParser.readerVarsCSS.
     private static let baseFontSizePx: Double = 16
 
+    // swiftlint:disable:next function_body_length
     override func loadView() {
         let root = NSView(frame: NSRect(origin: .zero, size: SettingsPaneMetrics.size))
 
@@ -832,7 +846,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             previewLabel.leadingAnchor.constraint(equalTo: previewBox.contentView!.leadingAnchor, constant: 16),
             previewLabel.trailingAnchor.constraint(equalTo: previewBox.contentView!.trailingAnchor, constant: -16),
             previewLabel.topAnchor.constraint(equalTo: previewBox.contentView!.topAnchor, constant: 16),
-            previewLabel.bottomAnchor.constraint(equalTo: previewBox.contentView!.bottomAnchor, constant: -16),
+            previewLabel.bottomAnchor.constraint(equalTo: previewBox.contentView!.bottomAnchor, constant: -16)
         ])
 
         // ── Scroll view (Appearance's content is taller than the window) ─────
@@ -850,7 +864,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             formStack.topAnchor.constraint(equalTo: clipContainer.topAnchor, constant: 20),
             formStack.leadingAnchor.constraint(equalTo: clipContainer.leadingAnchor, constant: 20),
             formStack.trailingAnchor.constraint(equalTo: clipContainer.trailingAnchor, constant: -20),
-            formStack.bottomAnchor.constraint(equalTo: clipContainer.bottomAnchor, constant: -20),
+            formStack.bottomAnchor.constraint(equalTo: clipContainer.bottomAnchor, constant: -20)
         ])
 
         let scrollView = NSScrollView()
@@ -882,7 +896,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             // vertical scrolling happens and the preview reflows to the window's
             // actual width -- that's what "responsive" means here, since there's
             // no independent width to give it other than the window's own.
-            clipContainer.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            clipContainer.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
         ])
 
         self.view = root
@@ -1003,9 +1017,10 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         return container
     }
 
+    // swiftlint:disable:next function_body_length
     private func rebuildThemeGrid() {
         guard let container = themeGridContainer else { return }
-        for v in container.arrangedSubviews { container.removeArrangedSubview(v); v.removeFromSuperview() }
+        for arranged in container.arrangedSubviews { container.removeArrangedSubview(arranged); arranged.removeFromSuperview() }
         themeButtons.removeAll()
 
         let themes = SettingsManager.shared.themes
@@ -1130,7 +1145,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             box.heightAnchor.constraint(equalToConstant: ThemeBigSwatchButton.swatchSize.height - 22),
 
             plus.centerXAnchor.constraint(equalTo: box.centerXAnchor),
-            plus.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            plus.centerYAnchor.constraint(equalTo: box.centerYAnchor)
         ])
 
         return button
@@ -1144,57 +1159,58 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         row.orientation = .horizontal
         row.spacing = 6
 
-        let s = NSStepper()
-        s.minValue = 1.0
-        s.maxValue = 3.0
-        s.increment = 0.1
-        s.doubleValue = SettingsManager.shared.lineHeight
-        s.target = self
-        s.action = #selector(lineHeightStepperChanged(_:))
-        s.setAccessibilityLabel("Line Height")
-        s.setAccessibilityValueDescription(String(format: "%.1f", SettingsManager.shared.lineHeight))
-        lineHeightStepper = s
+        let stepper = NSStepper()
+        stepper.minValue = 1.0
+        stepper.maxValue = 3.0
+        stepper.increment = 0.1
+        stepper.doubleValue = SettingsManager.shared.lineHeight
+        stepper.target = self
+        stepper.action = #selector(lineHeightStepperChanged(_:))
+        stepper.setAccessibilityLabel("Line Height")
+        stepper.setAccessibilityValueDescription(String(format: "%.1f", SettingsManager.shared.lineHeight))
+        lineHeightStepper = stepper
 
-        let l = NSTextField(labelWithString: String(format: "%.1f", SettingsManager.shared.lineHeight))
-        l.font = NSFont.systemFont(ofSize: 13)
-        lineHeightLabel = l
+        let valueLabel = NSTextField(labelWithString: String(format: "%.1f", SettingsManager.shared.lineHeight))
+        valueLabel.font = NSFont.systemFont(ofSize: 13)
+        lineHeightLabel = valueLabel
 
-        row.addArrangedSubview(s)
-        row.addArrangedSubview(l)
+        row.addArrangedSubview(stepper)
+        row.addArrangedSubview(valueLabel)
         return row
     }
 
     /// Single parameterized factory for the remaining integer px steppers
     /// (max width / h margin / v margin). Font size has its own row below
     /// since it displays px while storing percent underneath.
+    // swiftlint:disable:next function_parameter_count
     private func makeStepperRow(
         label accessibilityName: String,
         min: Double, max: Double, increment: Double,
         initialValue: Int,
         action: Selector,
-        stepper: inout NSStepper!, valueLabel: inout NSTextField!
+        stepper stepperOut: inout NSStepper!, valueLabel valueLabelOut: inout NSTextField!
     ) -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
         row.spacing = 6
 
-        let s = NSStepper()
-        s.minValue = min
-        s.maxValue = max
-        s.increment = increment
-        s.integerValue = initialValue
-        s.target = self
-        s.action = action
-        s.setAccessibilityLabel(accessibilityName)
-        s.setAccessibilityValueDescription("\(initialValue) pixels")
-        stepper = s
+        let stepper = NSStepper()
+        stepper.minValue = min
+        stepper.maxValue = max
+        stepper.increment = increment
+        stepper.integerValue = initialValue
+        stepper.target = self
+        stepper.action = action
+        stepper.setAccessibilityLabel(accessibilityName)
+        stepper.setAccessibilityValueDescription("\(initialValue) pixels")
+        stepperOut = stepper
 
-        let l = NSTextField(labelWithString: "\(initialValue)px")
-        l.font = NSFont.systemFont(ofSize: 13)
-        valueLabel = l
+        let valueLabel = NSTextField(labelWithString: "\(initialValue)px")
+        valueLabel.font = NSFont.systemFont(ofSize: 13)
+        valueLabelOut = valueLabel
 
-        row.addArrangedSubview(s)
-        row.addArrangedSubview(l)
+        row.addArrangedSubview(stepper)
+        row.addArrangedSubview(valueLabel)
         return row
     }
 
@@ -1206,23 +1222,23 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         row.spacing = 6
 
         let currentPx = Self.px(fromPercent: SettingsManager.shared.fontSizePercent)
-        let s = NSStepper()
-        s.minValue = Double(Self.px(fromPercent: 50))    // matches fontSizePercent's stored clamp (50-300%)
-        s.maxValue = Double(Self.px(fromPercent: 300))
-        s.increment = 1
-        s.integerValue = currentPx
-        s.target = self
-        s.action = #selector(fontSizeStepperChanged(_:))
-        s.setAccessibilityLabel("Font Size")
-        s.setAccessibilityValueDescription("\(currentPx) pixels")
-        fontSizeStepper = s
+        let stepper = NSStepper()
+        stepper.minValue = Double(Self.px(fromPercent: 50))    // matches fontSizePercent's stored clamp (50-300%)
+        stepper.maxValue = Double(Self.px(fromPercent: 300))
+        stepper.increment = 1
+        stepper.integerValue = currentPx
+        stepper.target = self
+        stepper.action = #selector(fontSizeStepperChanged(_:))
+        stepper.setAccessibilityLabel("Font Size")
+        stepper.setAccessibilityValueDescription("\(currentPx) pixels")
+        fontSizeStepper = stepper
 
-        let l = NSTextField(labelWithString: "\(currentPx)px")
-        l.font = NSFont.systemFont(ofSize: 13)
-        fontSizeLabel = l
+        let valueLabel = NSTextField(labelWithString: "\(currentPx)px")
+        valueLabel.font = NSFont.systemFont(ofSize: 13)
+        fontSizeLabel = valueLabel
 
-        row.addArrangedSubview(s)
-        row.addArrangedSubview(l)
+        row.addArrangedSubview(stepper)
+        row.addArrangedSubview(valueLabel)
         return row
     }
 
@@ -1302,7 +1318,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             attributes: [
                 .font: previewFont,
                 .foregroundColor: previewLabel.textColor ?? .labelColor,
-                .paragraphStyle: paragraphStyle,
+                .paragraphStyle: paragraphStyle
             ]
         )
     }
@@ -1525,6 +1541,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     /// switching between them in separate wells inside a sheet. All fields
     /// live-update the theme (name on every keystroke, colors on every pick)
     /// and re-render the swatch immediately.
+    // swiftlint:disable:next function_body_length
     private func makeInlineThemeEditor(for theme: Theme) -> NSView {
         let outer = NSBox()
         outer.boxType = .custom
@@ -1600,15 +1617,15 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
                 let r = NSStackView()
                 r.orientation = .horizontal
                 r.spacing = 8
-                let l = NSTextField(labelWithString: label)
-                l.widthAnchor.constraint(equalToConstant: 80).isActive = true
+                let rowLabel = NSTextField(labelWithString: label)
+                rowLabel.widthAnchor.constraint(equalToConstant: 80).isActive = true
                 let well = ThemeColorWell()
                 well.themeID = theme.id
                 well.field = field
                 well.color = SettingsManager.color(fromCSS: value)
                 well.target = self
                 well.action = #selector(themeColorWellChanged(_:))
-                r.addArrangedSubview(l)
+                r.addArrangedSubview(rowLabel)
                 r.addArrangedSubview(well)
                 return r
             }
@@ -1629,7 +1646,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             content.topAnchor.constraint(equalTo: outer.contentView!.topAnchor, constant: 14),
             content.leadingAnchor.constraint(equalTo: outer.contentView!.leadingAnchor, constant: 14),
             content.trailingAnchor.constraint(equalTo: outer.contentView!.trailingAnchor, constant: -14),
-            content.bottomAnchor.constraint(equalTo: outer.contentView!.bottomAnchor, constant: -14),
+            content.bottomAnchor.constraint(equalTo: outer.contentView!.bottomAnchor, constant: -14)
         ])
 
         return outer
@@ -1776,14 +1793,14 @@ final class ThemeBigSwatchButton: NSButton {
 
         let aa = NSAttributedString(string: "Aa", attributes: [
             .font: Self.previewFont(for: theme, ofSize: 26),
-            .foregroundColor: text,
+            .foregroundColor: text
         ])
         let aaSize = aa.size()
         aa.draw(at: NSPoint(x: swatchRect.midX - aaSize.width / 2, y: swatchRect.midY - aaSize.height / 2))
 
         let name = NSAttributedString(string: theme.name, attributes: [
             .font: NSFont.systemFont(ofSize: 11),
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: NSColor.labelColor
         ])
         let nameSize = name.size()
         name.draw(at: NSPoint(x: size.width / 2 - nameSize.width / 2, y: 2))

@@ -83,8 +83,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
         panel.message = "Choose an EPUB file to open"
         panel.prompt = "Open"
 
-        guard let w = window else { return }
-        panel.beginSheetModal(for: w) { [weak self] response in
+        guard let targetWindow = window else { return }
+        panel.beginSheetModal(for: targetWindow) { [weak self] response in
             if response == .OK, let url = panel.url {
                 self?.loadEPUB(at: url)
             }

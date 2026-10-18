@@ -56,14 +56,14 @@ struct KeyBinding: Codable, Equatable, Hashable {
 
     /// Symbolic display string, e.g. "⇧⌘P".
     var displayString: String {
-        var s = ""
-        let f = modifierFlags
-        if f.contains(.control) { s += "⌃" }
-        if f.contains(.option)  { s += "⌥" }
-        if f.contains(.shift)   { s += "⇧" }
-        if f.contains(.command) { s += "⌘" }
-        s += key.uppercased()
-        return s
+        var text = ""
+        let flags = modifierFlags
+        if flags.contains(.control) { text += "⌃" }
+        if flags.contains(.option) { text += "⌥" }
+        if flags.contains(.shift) { text += "⇧" }
+        if flags.contains(.command) { text += "⌘" }
+        text += key.uppercased()
+        return text
     }
 }
 
@@ -123,7 +123,7 @@ extension SettingsManager {
             KeyBinding(key: "v", modifiers: [.command]),
             KeyBinding(key: "x", modifiers: [.command]),
             KeyBinding(key: "z", modifiers: [.command]),
-            KeyBinding(key: "a", modifiers: [.command]),
+            KeyBinding(key: "a", modifiers: [.command])
         ]
         return reserved.contains(binding)
     }

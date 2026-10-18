@@ -144,19 +144,78 @@ final class EPUBParserTests: XCTestCase {
     }
 
     func testDRMErrorTakesPrecedenceOverMissingContainer() throws {
+        // D3: an empty <encryption/> is no longer DRM, so this uses an ADEPT marker to keep the
+        // precedence assertion (DRM is reported before the missing container/OPF).
         let root = temporaryDirectory.appendingPathComponent("drm", isDirectory: true)
+        let metaInf = root.appendingPathComponent("META-INF", isDirectory: true)
+        try FileManager.default.createDirectory(at: metaInf, withIntermediateDirectories: true)
+        let xml = encryptionXML(encryptedData(algorithm: Self.fontAlgorithm, keyInfo: Self.adeptKeyInfo))
+        try Data(xml.utf8).write(to: metaInf.appendingPathComponent("encryption.xml"))
+
+        assertDRMProtected(root)
+    }
+
+    func testEmptyEncryptionManifestWithNoContainerIsNotDRM() throws {
+        let root = temporaryDirectory.appendingPathComponent("empty-encryption", isDirectory: true)
         let metaInf = root.appendingPathComponent("META-INF", isDirectory: true)
         try FileManager.default.createDirectory(at: metaInf, withIntermediateDirectories: true)
         try Data("<encryption/>".utf8).write(to: metaInf.appendingPathComponent("encryption.xml"))
 
         XCTAssertThrowsError(try EPUBParser().parsePackage(at: root)) { error in
-            guard let parseError = error as? EPUBParseError else {
-                return XCTFail("Expected EPUBParseError, got \(error)")
-            }
-            guard case .drmProtected = parseError else {
-                return XCTFail("Expected DRM-protected EPUB error, got \(parseError)")
+            guard let parseError = error as? EPUBParseError, case .opfNotFound = parseError else {
+                return XCTFail("Expected opfNotFound (not DRM), got \(error)")
             }
         }
+    }
+
+    func testFontObfuscationOnlyEncryptionManifestOpensNormally() throws {
+        let xml = encryptionXML(
+            encryptedData(algorithm: "http://www.idpf.org/2008/embedding"),
+            encryptedData(algorithm: "http://ns.adobe.com/pdf/enc#RC"))
+        let root = try makeReadableRoot(encryptionXML: xml)
+
+        let package = try EPUBParser().parsePackage(at: root)
+
+        XCTAssertEqual(package.title, "Fonts Only")
+        XCTAssertEqual(package.spineURLs.map(\.lastPathComponent), ["chapter.xhtml"])
+    }
+
+    func testADEPTResourceMarkerIsDRMEvenWithFontAlgorithm() throws {
+        let xml = encryptionXML(encryptedData(algorithm: Self.fontAlgorithm, keyInfo: Self.adeptKeyInfo))
+        assertDRMProtected(try makeReadableRoot(encryptionXML: xml))
+    }
+
+    func testLCPRetrievalMethodMarkerIsDRMEvenWithFontAlgorithm() throws {
+        let keyInfo =
+            "<ds:KeyInfo><ds:RetrievalMethod URI=\"license.lcpl#/encryption/content_key\" "
+            + "Type=\"http://readium.org/2014/01/lcp#EncryptedContentKey\"/></ds:KeyInfo>"
+        let xml = encryptionXML(encryptedData(algorithm: Self.fontAlgorithm, keyInfo: keyInfo))
+        assertDRMProtected(try makeReadableRoot(encryptionXML: xml))
+    }
+
+    func testLCPLicenseFileIsDRM() throws {
+        let root = try makeReadableRoot(encryptionXML: nil)
+        let license = root.appendingPathComponent("META-INF/license.lcpl")
+        try Data("{}".utf8).write(to: license)
+
+        assertDRMProtected(root)
+    }
+
+    func testUnknownEncryptionAlgorithmIsDRM() throws {
+        let xml = encryptionXML(
+            encryptedData(algorithm: "http://www.w3.org/2001/04/xmlenc#aes128-cbc"))
+        assertDRMProtected(try makeReadableRoot(encryptionXML: xml))
+    }
+
+    func testEncryptionMethodWithoutAlgorithmIsTreatedAsDRM() throws {
+        let xml = encryptionXML("<enc:EncryptedData><enc:EncryptionMethod/></enc:EncryptedData>")
+        assertDRMProtected(try makeReadableRoot(encryptionXML: xml))
+    }
+
+    func testUnparseableEncryptionManifestIsNotDRM() throws {
+        let root = try makeReadableRoot(encryptionXML: "<<< not xml")
+
+        XCTAssertEqual(try EPUBParser().parsePackage(at: root).title, "Fonts Only")
     }
 
     func testParsePackageFindsOPFWhenContainerIsMissing() throws {
@@ -188,6 +247,54 @@ final class EPUBParserTests: XCTestCase {
 
         XCTAssertEqual(unpacked.lastPathComponent, "EPUBPackage")
         XCTAssertTrue(FileManager.default.fileExists(atPath: unpacked.appendingPathComponent("chapter.xhtml").path))
+    }
+
+    private static let fontAlgorithm = "http://www.idpf.org/2008/embedding"
+    private static let adeptKeyInfo =
+        "<ds:KeyInfo><ds:resource xmlns:adept=\"http://ns.adobe.com/adept\">urn:uuid:test</ds:resource>"
+        + "</ds:KeyInfo>"
+
+    private func encryptedData(algorithm: String, keyInfo: String = "") -> String {
+        "<enc:EncryptedData><enc:EncryptionMethod Algorithm=\"\(algorithm)\"/>\(keyInfo)"
+            + "<enc:CipherData><enc:CipherReference URI=\"OPS/a.otf\"/></enc:CipherData></enc:EncryptedData>"
+    }
+
+    private func encryptionXML(_ bodies: String...) -> String {
+        "<?xml version=\"1.0\"?><encryption xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\" "
+            + "xmlns:enc=\"http://www.w3.org/2001/04/xmlenc#\" "
+            + "xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\">\(bodies.joined())</encryption>"
+    }
+
+    /// A package that parses on its own, optionally with a META-INF/encryption.xml.
+    private func makeReadableRoot(encryptionXML: String?) throws -> URL {
+        let root = try makeEPUBRoot(
+            opfPath: "OPS/content.opf",
+            opf: """
+                <package><metadata><title>Fonts Only</title></metadata>
+                  <manifest>
+                    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                  </manifest>
+                  <spine><itemref idref="chapter"/></spine>
+                </package>
+                """,
+            files: ["OPS/chapter.xhtml"]
+        )
+        if let encryptionXML {
+            let url = root.appendingPathComponent("META-INF/encryption.xml")
+            try Data(encryptionXML.utf8).write(to: url)
+        }
+        return root
+    }
+
+    private func assertDRMProtected(_ root: URL, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertThrowsError(try EPUBParser().parsePackage(at: root), file: file, line: line) { error in
+            guard let parseError = error as? EPUBParseError else {
+                return XCTFail("Expected EPUBParseError, got \(error)", file: file, line: line)
+            }
+            guard case .drmProtected = parseError else {
+                return XCTFail("Expected DRM-protected EPUB error, got \(parseError)", file: file, line: line)
+            }
+        }
     }
 
     private func makeEPUBRoot(

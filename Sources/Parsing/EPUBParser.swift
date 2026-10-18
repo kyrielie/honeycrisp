@@ -1,6 +1,7 @@
 // EPUBParser.swift
 // Parses EPUB files into structured content, adapted from the QuickLook plugin
 
+// swiftlint:disable file_length
 import Foundation
 import AppKit
 import ZIPFoundation
@@ -17,7 +18,11 @@ struct EPUBPackage {
     let navigationURL: URL?
     let landmarks: [EPUBLandmark]
 
-    init(rootFolder: URL, spineURLs: [URL], title: String, author: String, coverURL: URL?, manifest: [String: EPUBManifestItem] = [:], spine: [EPUBSpineItem]? = nil, version: String? = nil, navigationURL: URL? = nil, landmarks: [EPUBLandmark] = []) {
+    init(
+        rootFolder: URL, spineURLs: [URL], title: String, author: String, coverURL: URL?,
+        manifest: [String: EPUBManifestItem] = [:], spine: [EPUBSpineItem]? = nil, version: String? = nil,
+        navigationURL: URL? = nil, landmarks: [EPUBLandmark] = []
+    ) {
         self.rootFolder = rootFolder
         self.spineURLs = spineURLs
         self.title = title
@@ -69,22 +74,33 @@ struct ReaderCosmeticSettings: Equatable {
     var backgroundCSS: String
     var textCSS: String
     var linkCSS: String
+    /// Search-hit palette (`ReaderContrast.hitColors`), emitted as `--reader-hit-*` so a theme change
+    /// repaints hits through the live CSS patch without a reload.
+    var hitBackground: String
+    var hitText: String
+    var hitActiveBackground: String
+    var hitActiveText: String
     var lineHeight: Double
     var maxWidth: Int
     var paddingH: Int
     var allowLinkClicks: Bool
 
-    static func current(from s: SettingsManager) -> ReaderCosmeticSettings {
-        ReaderCosmeticSettings(
-            fontSizePercent: s.fontSizePercent,
-            fontFamily: s.fontFamily,
-            backgroundCSS: s.effectiveBackgroundCSS,
-            textCSS: s.effectiveTextCSS,
-            linkCSS: s.effectiveLinkCSS,
-            lineHeight: s.lineHeight,
-            maxWidth: s.maxWidth,
-            paddingH: s.paddingH,
-            allowLinkClicks: s.allowReaderLinkClicks
+    static func current(from settings: SettingsManager) -> ReaderCosmeticSettings {
+        let hit = ReaderContrast.hitColors(background: settings.effectiveBackgroundCSS, text: settings.effectiveTextCSS)
+        return ReaderCosmeticSettings(
+            fontSizePercent: settings.fontSizePercent,
+            fontFamily: settings.fontFamily,
+            backgroundCSS: settings.effectiveBackgroundCSS,
+            textCSS: settings.effectiveTextCSS,
+            linkCSS: settings.effectiveLinkCSS,
+            hitBackground: hit.hitBackground,
+            hitText: hit.hitText,
+            hitActiveBackground: hit.activeBackground,
+            hitActiveText: hit.activeText,
+            lineHeight: settings.lineHeight,
+            maxWidth: settings.maxWidth,
+            paddingH: settings.paddingH,
+            allowLinkClicks: settings.allowReaderLinkClicks
         )
     }
 }
@@ -103,6 +119,7 @@ enum EPUBParseError: Error, LocalizedError {
     }
 }
 
+// swiftlint:disable:next type_body_length
 final class EPUBParser: NSObject {
 
     static func javaScriptStringLiteral(_ value: String) -> String? {
@@ -126,16 +143,61 @@ final class EPUBParser: NSObject {
         return workDir
     }
 
+    /// `Algorithm` values that only obfuscate embedded fonts (IDPF and Adobe font obfuscation). These
+    /// are not DRM: the book is otherwise readable.
+    private static let fontObfuscationAlgorithms: Set<String> = [
+        "http://www.idpf.org/2008/embedding",
+        "http://ns.adobe.com/pdf/enc#RC"
+    ]
+
+    /// True when the unpacked package carries a DRM marker. Matches by element local name (as
+    /// `parseOPF` does), so namespace URIs are never needed. DRM if any of:
+    /// 1. `META-INF/license.lcpl` exists (Readium LCP).
+    /// 2. `encryption.xml` has `EncryptedData/KeyInfo/RetrievalMethod` with URI
+    ///    `license.lcpl#/encryption/content_key` (LCP), or `EncryptedData/KeyInfo/resource` (ADEPT).
+    /// 3. `encryption.xml` has any `EncryptionMethod` whose `Algorithm` is not a font-obfuscation id.
+    ///    This catches unknown schemes the markers above would miss; it is broader than Readium's check.
+    /// A missing, empty, or font-obfuscation-only `encryption.xml` is not DRM. An `encryption.xml` that
+    /// cannot be parsed is also treated as not DRM: if the book is broken, the OPF or spine failure
+    /// reports it as it would for any other broken book.
+    static func isDRMProtected(extractedRoot: URL) -> Bool {
+        let fm = FileManager.default
+        let metaInf = extractedRoot.appendingPathComponent("META-INF", isDirectory: true)
+        if fm.fileExists(atPath: metaInf.appendingPathComponent("license.lcpl").path) {
+            return true
+        }
+        let encryptionURL = metaInf.appendingPathComponent("encryption.xml")
+        guard let data = try? Data(contentsOf: encryptionURL),
+            let document = try? XMLDocument(data: data)
+        else { return false }
+
+        let keyInfo = "//*[local-name()='EncryptedData']/*[local-name()='KeyInfo']"
+        let markerPaths = [
+            "\(keyInfo)/*[local-name()='RetrievalMethod'][@URI='license.lcpl#/encryption/content_key']",
+            "\(keyInfo)/*[local-name()='resource']"
+        ]
+        for path in markerPaths {
+            if let nodes = try? document.nodes(forXPath: path), !nodes.isEmpty { return true }
+        }
+
+        let methods = (try? document.nodes(forXPath: "//*[local-name()='EncryptionMethod']")) ?? []
+        for case let method as XMLElement in methods {
+            let algorithm = method.attribute(forName: "Algorithm")?.stringValue?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if algorithm.map({ !fontObfuscationAlgorithms.contains($0) }) ?? true { return true }
+        }
+        return false
+    }
+
     func parsePackage(at extractedRoot: URL) throws -> EPUBPackage {
         let fm = FileManager.default
 
-        // DRM-protected EPUBs (Adobe ADEPT, most library-loan formats, etc.) carry
-        // a META-INF/encryption.xml manifest listing which resources are encrypted.
-        // Checked first, before container.xml/OPF parsing, so a DRM'd file gets a
-        // clear, specific error instead of falling through to .malformed/.opfNotFound
-        // once the encrypted OPF or spine content fails to parse as plain XML/XHTML.
-        let encryptionURL = extractedRoot.appendingPathComponent("META-INF/encryption.xml")
-        if fm.fileExists(atPath: encryptionURL.path) {
+        // DRM-protected EPUBs (Adobe ADEPT, Readium LCP, most library-loan formats) are detected by
+        // `isDRMProtected` (D3, D17). Checked first, before container.xml/OPF parsing, so a DRM'd file
+        // gets a clear, specific error instead of falling through to .malformed/.opfNotFound once the
+        // encrypted OPF or spine content fails to parse as plain XML/XHTML. A font-obfuscation-only
+        // encryption.xml no longer counts.
+        if Self.isDRMProtected(extractedRoot: extractedRoot) {
             throw EPUBParseError.drmProtected
         }
 
@@ -151,9 +213,9 @@ final class EPUBParser: NSObject {
             }
         }
 
-        if let e = fm.enumerator(at: extractedRoot, includingPropertiesForKeys: nil) {
-            for case let url as URL in e {
-                if url.pathExtension.lowercased() == "opf" { return try parseOPF(at: url) }
+        if let enumerator = fm.enumerator(at: extractedRoot, includingPropertiesForKeys: nil) {
+            for case let url as URL in enumerator where url.pathExtension.lowercased() == "opf" {
+                return try parseOPF(at: url)
             }
         }
 
@@ -165,7 +227,10 @@ final class EPUBParser: NSObject {
         guard !query.isEmpty else { return [] }
         var results: [BookSearchResult] = []
         for index in package.spineURLs.indices {
-            guard let html = try? Self.extractedChapterBody(from: package, index: index, base: package.rootFolder, formatFirstChapter: false, removeParagraphIndents: false) else { continue }
+            guard let html = try? Self.extractedChapterBody(
+                from: package, index: index, base: package.rootFolder,
+                formatFirstChapter: false, removeParagraphIndents: false
+            ) else { continue }
             let text = Self.searchableText(fromHTML: html)
             let nsText = text as NSString
             var searchRange = NSRange(location: 0, length: nsText.length)
@@ -204,7 +269,10 @@ final class EPUBParser: NSObject {
     private static func searchableText(fromHTML html: String) -> String {
         var text = html.replacingOccurrences(of: #"(?is)<(script|style)[^>]*>.*?</\1>"#, with: "", options: .regularExpression)
         text = text.replacingOccurrences(of: #"(?s)<[^>]+>"#, with: "", options: .regularExpression)
-        let entities: [(String, String)] = [("&nbsp;", "\u{00a0}"), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'")]
+        let entities: [(String, String)] = [
+            ("&nbsp;", "\u{00a0}"), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
+            ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'")
+        ]
         for (entity, value) in entities { text = text.replacingOccurrences(of: entity, with: value, options: .caseInsensitive) }
         text = text.replacingOccurrences(of: #"&#(\d+);"#, with: { _, matched in
             let digits = matched.dropFirst(2).dropLast()
@@ -219,6 +287,7 @@ final class EPUBParser: NSObject {
         return text
     }
 
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
     private func parseOPF(at opfURL: URL) throws -> EPUBPackage {
         let rootFolder = opfURL.deletingLastPathComponent()
         let opfData = try Data(contentsOf: opfURL)
@@ -238,8 +307,11 @@ final class EPUBParser: NSObject {
                 hrefByID[id] = href
                 let mediaType = item.attribute(forName: "media-type")?.stringValue ?? ""
                 mediaTypeByID[id] = mediaType
-                let properties = Set((item.attribute(forName: "properties")?.stringValue ?? "").split(whereSeparator: \.isWhitespace).map(String.init))
-                manifest[id] = EPUBManifestItem(id: id, href: href, mediaType: mediaType, properties: properties, url: Self.resolve(href, relativeTo: rootFolder))
+                let rawProperties = item.attribute(forName: "properties")?.stringValue ?? ""
+                let properties = Set(rawProperties.split(whereSeparator: \.isWhitespace).map(String.init))
+                manifest[id] = EPUBManifestItem(
+                    id: id, href: href, mediaType: mediaType, properties: properties,
+                    url: Self.resolve(href, relativeTo: rootFolder))
             }
         }
 
@@ -252,15 +324,15 @@ final class EPUBParser: NSObject {
         if let coverID = coverMeta?.first?.attribute(forName: "content")?.stringValue,
             let coverHref = hrefByID[coverID] {
             let decoded = coverHref.removingPercentEncoding ?? coverHref
-            let u = URL(fileURLWithPath: decoded, relativeTo: rootFolder).standardizedFileURL
-            if FileManager.default.fileExists(atPath: u.path) { coverURL = u }
+            let fileURL = URL(fileURLWithPath: decoded, relativeTo: rootFolder).standardizedFileURL
+            if FileManager.default.fileExists(atPath: fileURL.path) { coverURL = fileURL }
         }
         if coverURL == nil {
             for (id, href) in hrefByID {
                 if href.lowercased().contains("cover"), let mt = mediaTypeByID[id], mt.hasPrefix("image/") {
                     let decoded = href.removingPercentEncoding ?? href
-                    let u = URL(fileURLWithPath: decoded, relativeTo: rootFolder).standardizedFileURL
-                    if FileManager.default.fileExists(atPath: u.path) { coverURL = u; break }
+                    let fileURL = URL(fileURLWithPath: decoded, relativeTo: rootFolder).standardizedFileURL
+                    if FileManager.default.fileExists(atPath: fileURL.path) { coverURL = fileURL; break }
                 }
             }
         }
@@ -280,7 +352,10 @@ final class EPUBParser: NSObject {
 
         guard !spineURLs.isEmpty else { throw EPUBParseError.malformed }
         let landmarks = navigationURL.map { Self.parseLandmarks(at: $0) } ?? []
-        return EPUBPackage(rootFolder: rootFolder, spineURLs: spineURLs, title: bookTitle, author: bookAuthor, coverURL: coverURL, manifest: manifest, spine: spineItems, version: version, navigationURL: navigationURL, landmarks: landmarks)
+        return EPUBPackage(
+            rootFolder: rootFolder, spineURLs: spineURLs, title: bookTitle, author: bookAuthor,
+            coverURL: coverURL, manifest: manifest, spine: spineItems, version: version,
+            navigationURL: navigationURL, landmarks: landmarks)
     }
 
     private static func resolve(_ href: String, relativeTo base: URL) -> URL {
@@ -317,7 +392,9 @@ final class EPUBParser: NSObject {
                 let linkAttrs = attributes(body, range: linkMatch.range(at: 1))
                 guard let type = linkAttrs["epub:type"], let href = linkAttrs["href"],
                       let titleRange = Range(linkMatch.range(at: 2), in: body) else { continue }
-                let title = String(body[titleRange]).replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+                let title = String(body[titleRange])
+                    .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 for semantic in type.split(whereSeparator: \.isWhitespace) {
                     landmarks.append(EPUBLandmark(type: semantic.lowercased(), title: title, url: resolve(href, relativeTo: url.deletingLastPathComponent())))
                 }
@@ -382,6 +459,7 @@ final class EPUBParser: NSObject {
     /// paint — see RestorePosition.bootstrapJS. Uses the same
     /// extractedChapterBody helper as buildScrollHTML, so formatting behaviour
     /// can't drift between the two rendering modes.
+    // swiftlint:disable:next function_parameter_count
     func buildPageHTML(
         from pkg: EPUBPackage,
         spineIndex: Int,
@@ -460,6 +538,7 @@ final class EPUBParser: NSObject {
     /// paddingH/paddingV/maxWidth, read by the caller (ReaderViewController.
     /// loadSpineItem) and passed through buildPageHTML — see the appearance-
     /// settings merge pass.
+    // swiftlint:disable:next function_body_length function_parameter_count
     private static func paginatedColumnCSS(
         viewportWidth: CGFloat, viewportHeight: CGFloat, colsPerScreen: ColsPerScreen,
         marginH: CGFloat, marginV: CGFloat, maxWidth: CGFloat
@@ -631,8 +710,8 @@ final class EPUBParser: NSObject {
     private static func rewriteResourceURLs(in html: String, base: URL) -> String {
         let patterns = ["src=\"([^\"]+)\"", "href=\"([^\"]+)\""]
         var out = html
-        for p in patterns {
-            out = out.replacingOccurrences(of: p) { match, matched in
+        for candidate in patterns {
+            out = out.replacingOccurrences(of: candidate) { match, matched in
                 let whole = match.range
                 let cap = match.range(at: 1)
                 let capInMatch = NSRange(location: cap.location - whole.location, length: cap.length)
@@ -883,6 +962,76 @@ final class EPUBParser: NSObject {
       return count;
     };
 
+    // Character range currently on screen, as [start, end] in the same offset space
+    // as honeycrispCurrentCharacterOffset (paginated: whole body) or
+    // honeycrispCurrentChapterCharacterOffset (scroll: the given chapter section).
+    // A bookmark whose offset falls inside this range belongs to the visible page,
+    // wherever on the page it was dropped. Returns null when nothing is measurable.
+    window.honeycrispVisibleCharacterRange = function(scrollMode, spineIndex) {
+      var root = document.body;
+      if (scrollMode) {
+        root = document.getElementById('chapter-' + spineIndex);
+        if (!root) return null;
+      }
+      var viewW = window.innerWidth, viewH = window.innerHeight;
+      // -1: before the viewport, 1: after it, 0: touches it, null: unmeasurable.
+      function side(rect) {
+        if (!rect || (rect.width === 0 && rect.height === 0)) return null;
+        if (scrollMode) return rect.bottom <= 0 ? -1 : (rect.top >= viewH ? 1 : 0);
+        return rect.right <= 0 ? -1 : (rect.left >= viewW ? 1 : 0);
+      }
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+      var nodes = [], starts = [], count = 0, node;
+      while ((node = walker.nextNode()) !== null) {
+        if (node.data.trim().length > 0) { nodes.push(node); starts.push(count); }
+        count += node.length;
+      }
+      if (!nodes.length) return null;
+      var range = document.createRange();
+      // First index in [0, n) where pred is true. pred is false then true across
+      // the range (reading order is monotonic on screen); null means unmeasurable
+      // and is skipped forward.
+      function lowerBound(n, pred) {
+        var lo = 0, hi = n;
+        while (lo < hi) {
+          var mid = (lo + hi) >> 1, j = mid, p = pred(j);
+          while (p === null && j + 1 < hi) { j += 1; p = pred(j); }
+          if (p === null) { hi = mid; continue; }
+          if (p) hi = j; else lo = j + 1;
+        }
+        return lo;
+      }
+      function nodeSide(i) {
+        range.selectNodeContents(nodes[i]);
+        return side(range.getBoundingClientRect());
+      }
+      function charSide(n, k) {
+        range.setStart(n, k);
+        range.setEnd(n, k);
+        return side(range.getBoundingClientRect());
+      }
+      var firstNode = lowerBound(nodes.length, function(i) {
+        var s = nodeSide(i); return s === null ? null : s >= 0;
+      });
+      var afterNode = lowerBound(nodes.length, function(i) {
+        var s = nodeSide(i); return s === null ? null : s > 0;
+      });
+      if (firstNode >= afterNode) return null;
+      var lastNode = afterNode - 1;
+      // A long paragraph is one text node and can span several pages, so refine
+      // the two edge nodes down to the character that actually starts/ends the page.
+      var first = nodes[firstNode], last = nodes[lastNode];
+      var startK = lowerBound(first.length + 1, function(k) {
+        var s = charSide(first, k); return s === null ? null : s >= 0;
+      });
+      var endK = lowerBound(last.length + 1, function(k) {
+        var s = charSide(last, k); return s === null ? null : s > 0;
+      });
+      var start = starts[firstNode] + Math.min(startK, first.length);
+      var end = starts[lastNode] + Math.min(endK, last.length);
+      return [start, Math.max(start, end)];
+    };
+
     window.honeycrispNavigateToChapterOffset = function(spineIndex, targetOffset) {
       var section = document.getElementById('chapter-' + spineIndex);
       if (!section) return;
@@ -1048,19 +1197,23 @@ final class EPUBParser: NSObject {
     /// what the vars block contains, not two that can drift apart. Baking real
     /// values in from the start also means there is no longer a static/default
     /// frame to flash before the real ones land -- see ReaderCosmeticSettings.
-    static func readerVarsCSS(_ c: ReaderCosmeticSettings) -> String {
+    static func readerVarsCSS(_ cosmetics: ReaderCosmeticSettings) -> String {
         """
         :root {
             color-scheme: light dark;
-            --reader-font-size: \(c.fontSizePercent)%;
-            --reader-font-family: \(c.fontFamily);
-            --reader-bg: \(c.backgroundCSS);
-            --reader-text: \(c.textCSS);
-            --reader-link: \(c.linkCSS);
-            --reader-line-height: \(c.lineHeight);
-            --reader-max-width: \(c.maxWidth)px;
-            --reader-padding-h: \(c.paddingH)px;
-            --reader-link-pointer-events: \(c.allowLinkClicks ? "auto" : "none");
+            --reader-font-size: \(cosmetics.fontSizePercent)%;
+            --reader-font-family: \(cosmetics.fontFamily);
+            --reader-bg: \(cosmetics.backgroundCSS);
+            --reader-text: \(cosmetics.textCSS);
+            --reader-link: \(cosmetics.linkCSS);
+            --reader-hit-bg: \(cosmetics.hitBackground);
+            --reader-hit-text: \(cosmetics.hitText);
+            --reader-hit-active-bg: \(cosmetics.hitActiveBackground);
+            --reader-hit-active-text: \(cosmetics.hitActiveText);
+            --reader-line-height: \(cosmetics.lineHeight);
+            --reader-max-width: \(cosmetics.maxWidth)px;
+            --reader-padding-h: \(cosmetics.paddingH)px;
+            --reader-link-pointer-events: \(cosmetics.allowLinkClicks ? "auto" : "none");
         }
         """
     }
@@ -1068,14 +1221,15 @@ final class EPUBParser: NSObject {
     static let readerCSS = """
     /* Search highlight colours */
     mark.ql-hit {
-        background: #FFEE58;
-        color: inherit;
+        background: var(--reader-hit-bg);
+        color: var(--reader-hit-text);
         border-radius: 2px;
         padding: 0 1px;
     }
     mark.ql-hit.ql-active {
-        background: Highlight;
-        color: HighlightText;
+        background: var(--reader-hit-active-bg);
+        color: var(--reader-hit-active-text);
+        outline: 2px solid var(--reader-hit-text);
     }
 
     html {
@@ -1085,9 +1239,9 @@ final class EPUBParser: NSObject {
         background-color: var(--reader-bg) !important;
         font-size: var(--reader-font-size);
     }
-    
+
     *, *::before, *::after { box-sizing: inherit; }
-    
+
     body {
         font-family: var(--reader-font-family) !important;
         color: var(--reader-text) !important;
@@ -1099,60 +1253,60 @@ final class EPUBParser: NSObject {
         overflow-x: hidden;
         max-width: 100%;
     }
-    
+
     #content { width: 100%; max-width: var(--reader-max-width); margin: 0 auto; padding: 28px var(--reader-padding-h) 48px; }
     .ql-chapter { margin: 40px 0; }
     .ql-chapter + .ql-chapter {
         border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
         padding-top: 40px;
     }
-    
+
     img, svg, video, iframe { max-width: 100%; height: auto; display: block; margin: 1.2em auto; }
-    
+
     h1, h2, h3, h4, h5, h6 {
         font-family: var(--reader-font-family) !important;
         line-height: 1.25;
         margin-top: 1.5em;
         margin-bottom: 0.5em;
     }
-    
+
     blockquote {
         border-inline-start: 3px solid color-mix(in srgb, currentColor 20%, transparent);
         padding-inline-start: 12px;
         margin-inline: 0;
         color: color-mix(in srgb, currentColor 80%, black);
     }
-    
+
     code, pre {
         font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace !important;
         white-space: pre-wrap;
         word-break: break-all;
     }
-    
+
     a { color: var(--reader-link); pointer-events: var(--reader-link-pointer-events); }
-    
-    * { 
-        font-family: inherit !important; 
-        color: inherit !important; 
-        background-color: transparent !important; 
+
+    * {
+        font-family: inherit !important;
+        color: inherit !important;
+        background-color: transparent !important;
     }
-    
+
     img, svg { color: unset !important; }
     """
 }
 
 private extension String {
     func replacingOccurrences(of pattern: String, with transform: (_ match: NSTextCheckingResult, _ matched: String) -> String) -> String {
-        let re = try! NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return self }
         var result = self
         var delta = 0
         let originalNSString = self as NSString
-        for m in re.matches(in: self, range: NSRange(startIndex..., in: self)) {
-            let matched = originalNSString.substring(with: m.range)
-            let replacement = transform(m, matched)
-            let adjustedRange = NSRange(location: m.range.location + delta, length: m.range.length)
+        for match in regex.matches(in: self, range: NSRange(startIndex..., in: self)) {
+            let matched = originalNSString.substring(with: match.range)
+            let replacement = transform(match, matched)
+            let adjustedRange = NSRange(location: match.range.location + delta, length: match.range.length)
             result = (result as NSString).replacingCharacters(in: adjustedRange, with: replacement)
-            delta += replacement.count - m.range.length
+            delta += replacement.count - match.range.length
         }
         return result
     }

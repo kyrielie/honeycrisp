@@ -20,6 +20,10 @@ struct HistoryEntry: Codable, Identifiable {
     /// separate from readingProgressPercent (which stays exactly as-is and keeps
     /// driving the "N% read" history-list label).
     var lastCharacterOffset: Int = 0
+    /// `EPUBAnchor` layout that `lastCharacterOffset` was saved against. Stamped by `updatePosition`,
+    /// carried forward by `record`. Stored for a future change that alters extraction; nothing reads
+    /// it yet.
+    var anchorLayout: Int = EPUBAnchor.currentLayout
 
     init(url: URL, title: String, bookmarkData: Data? = nil) {
         self.id = UUID()
@@ -30,6 +34,7 @@ struct HistoryEntry: Codable, Identifiable {
         self.readingProgressPercent = -1
         self.lastSpineIndex = 0
         self.lastCharacterOffset = 0
+        self.anchorLayout = EPUBAnchor.currentLayout
     }
 
     // Swift's synthesized Decodable does NOT fall back to a property's default value
@@ -39,15 +44,16 @@ struct HistoryEntry: Codable, Identifiable {
     // *entire* history array on any decode failure. That's a real
     // "reading history disappeared after the update" bug, not a hypothetical case.
     init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(UUID.self, forKey: .id)
-        url = try c.decode(URL.self, forKey: .url)
-        title = try c.decode(String.self, forKey: .title)
-        openedAt = try c.decode(Date.self, forKey: .openedAt)
-        bookmarkData = try c.decodeIfPresent(Data.self, forKey: .bookmarkData)
-        readingProgressPercent = try c.decode(Int.self, forKey: .readingProgressPercent)
-        lastSpineIndex = try c.decodeIfPresent(Int.self, forKey: .lastSpineIndex) ?? 0
-        lastCharacterOffset = try c.decodeIfPresent(Int.self, forKey: .lastCharacterOffset) ?? 0
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        url = try values.decode(URL.self, forKey: .url)
+        title = try values.decode(String.self, forKey: .title)
+        openedAt = try values.decode(Date.self, forKey: .openedAt)
+        bookmarkData = try values.decodeIfPresent(Data.self, forKey: .bookmarkData)
+        readingProgressPercent = try values.decode(Int.self, forKey: .readingProgressPercent)
+        lastSpineIndex = try values.decodeIfPresent(Int.self, forKey: .lastSpineIndex) ?? 0
+        lastCharacterOffset = try values.decodeIfPresent(Int.self, forKey: .lastCharacterOffset) ?? 0
+        anchorLayout = try values.decodeIfPresent(Int.self, forKey: .anchorLayout) ?? EPUBAnchor.legacyLayout
     }
 }
 
@@ -63,6 +69,13 @@ final class HistoryManager {
     private let maxEntries: Int
 
     private(set) var entries: [HistoryEntry] = []
+    /// Stored array elements this build could not decode, as JSON. `save()` re-emits them after the
+    /// decoded entries, so they are treated as the oldest items: they count toward `maxEntries` and are
+    /// the first to be dropped when the cap is exceeded.
+    private var unreadableElements: [Data] = []
+    /// Original stored bytes to preserve before the first overwrite, set when the stored blob was not a
+    /// readable array. Cleared once preserved (or when the user clears history).
+    private var pendingQuarantine: (data: Data, reason: String)?
 
     init(
         defaults: UserDefaults = .standard,
@@ -95,19 +108,31 @@ final class HistoryManager {
         let existingProgress = existing?.readingProgressPercent ?? -1
         let existingSpineIndex = existing?.lastSpineIndex ?? 0
         let existingCharacterOffset = existing?.lastCharacterOffset ?? 0
+        let existingAnchorLayout = existing?.anchorLayout ?? EPUBAnchor.currentLayout
         entries.removeAll { $0.url == url }
 
         var entry = HistoryEntry(url: url, title: title, bookmarkData: bookmarkData)
         entry.readingProgressPercent = existingProgress
         entry.lastSpineIndex = existingSpineIndex
         entry.lastCharacterOffset = existingCharacterOffset
+        entry.anchorLayout = existingAnchorLayout
         entries.insert(entry, at: 0)
 
+        enforceCap()
+        save()
+        notifyEntriesChanged()
+    }
+
+    /// Applies `maxEntries` to decoded and unreadable elements together. Unreadable elements sit after
+    /// every decoded entry, so they are dropped first.
+    private func enforceCap() {
         if entries.count > maxEntries {
             entries = Array(entries.prefix(maxEntries))
         }
-        save()
-        notifyEntriesChanged()
+        let room = max(0, maxEntries - entries.count)
+        if unreadableElements.count > room {
+            unreadableElements = Array(unreadableElements.prefix(room))
+        }
     }
 
     /// Update reading progress for an entry identified by URL
@@ -124,6 +149,7 @@ final class HistoryManager {
         guard let idx = entries.firstIndex(where: { $0.url == url }) else { return }
         entries[idx].lastSpineIndex = spineIndex
         entries[idx].lastCharacterOffset = max(0, characterOffset)
+        entries[idx].anchorLayout = EPUBAnchor.currentLayout
         save()
     }
 
@@ -146,6 +172,9 @@ final class HistoryManager {
 
     func clearAll() {
         entries.removeAll()
+        // An explicit clear removes everything, including elements this build could not read.
+        unreadableElements.removeAll()
+        pendingQuarantine = nil
         save()
         notifyEntriesChanged()
     }
@@ -176,9 +205,26 @@ final class HistoryManager {
     }
 
     private func save() {
-        if let data = try? JSONEncoder().encode(entries) {
-            defaults.set(data, forKey: key)
+        if let pending = pendingQuarantine {
+            StorageQuarantine.preserve(pending.data, key: key, defaults: defaults, reason: pending.reason)
+            pendingQuarantine = nil
         }
+        let encoder = JSONEncoder()
+        var elements: [Data] = []
+        for entry in entries {
+            // Never write a partial list.
+            guard let element = try? encoder.encode(entry) else { return }
+            elements.append(element)
+        }
+        elements.append(contentsOf: unreadableElements)
+
+        var output = Data("[".utf8)
+        for (index, element) in elements.enumerated() {
+            if index > 0 { output.append(0x2C) }
+            output.append(element)
+        }
+        output.append(contentsOf: "]".utf8)
+        defaults.set(output, forKey: key)
     }
 
     private func notifyEntriesChanged() {
@@ -187,10 +233,34 @@ final class HistoryManager {
         }
     }
 
+    /// Decodes element by element in a single `JSONDecoder` pass, so valid entries are never
+    /// re-serialized. Raw JSON is only extracted for elements that failed. There is no envelope (and none
+    /// is introduced here, to avoid a format migration), so a blob that is not a JSON array is preserved
+    /// whole before the first overwrite.
     private func load() {
-        guard let data = defaults.data(forKey: key),
-              let decoded = try? JSONDecoder().decode([HistoryEntry].self, from: data)
-        else { return }
-        entries = decoded
+        guard let data = defaults.data(forKey: key) else { return }
+        guard let decoded = try? JSONDecoder().decode([LenientEntry].self, from: data) else {
+            pendingQuarantine = (data, "stored history is not a readable array")
+            return
+        }
+        entries = decoded.compactMap(\.value)
+        guard decoded.contains(where: { $0.value == nil }) else { return }
+        let rawElements = (try? JSONSerialization.jsonObject(with: data)) as? [Any] ?? []
+        for (index, element) in decoded.enumerated()
+        where element.value == nil && rawElements.indices.contains(index) {
+            if let raw = try? JSONSerialization.data(
+                withJSONObject: rawElements[index], options: [.fragmentsAllowed]) {
+                unreadableElements.append(raw)
+            }
+        }
+    }
+
+    /// Decodes to `nil` instead of throwing, so one bad element cannot fail the whole array.
+    private struct LenientEntry: Decodable {
+        let value: HistoryEntry?
+
+        init(from decoder: Decoder) throws {
+            value = try? HistoryEntry(from: decoder)
+        }
     }
 }

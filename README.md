@@ -4,6 +4,13 @@
   <img src="Assets.xcassets/AppIcon.appiconset/icon-mac-256x256.png" alt="Honeycrisp Reader icon" width="128">
 </p>
 
+<p align="center">
+  <a href="https://github.com/kyrielie/honeycrisp/actions/workflows/tests.yml"><img src="https://github.com/kyrielie/honeycrisp/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/kyrielie/honeycrisp/releases/latest"><img src="https://img.shields.io/github/v/release/kyrielie/honeycrisp" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-13%2B-blue" alt="macOS 13 or later">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/kyrielie/honeycrisp" alt="MIT license"></a>
+</p>
+
 A native macOS EPUB standalone reader, inspired by this [EPUBQuickLook plugin](https://github.com/arytek/epub-quicklook-extension).
 
 Built using claude and gemini and codex because I hate swift. 
@@ -13,158 +20,146 @@ Also https://github.com/kyrielie/nectar its ios app companion reader.
 
 ## Screenshots
 
-### Reader
-
-<img src="screenshots/01.png" alt="Honeycrisp Reader main reading view" width="900" />
-
-### Settings
+<p align="center">
+  <img src="screenshots/01.png" alt="Honeycrisp Reader main reading view" width="900">
+</p>
 
 <table>
 <tr>
-<td><img src="screenshots/02.png" alt="Settings - General tab" width="260"></td>
-<td><img src="screenshots/03.png" alt="Settings - Appearance tab" width="260"></td>
-<td><img src="screenshots/04.png" alt="Settings - Advanced tab" width="260"></td>
+<td><img src="screenshots/02.png" alt="Settings, General tab" width="260"></td>
+<td><img src="screenshots/03.png" alt="Settings, Appearance tab" width="260"></td>
+<td><img src="screenshots/04.png" alt="Settings, additional tab" width="260"></td>
 </tr>
 </table>
-
 
 ## Installation
 
 ### Homebrew
 
-This personal tap installs Honeycrisp's published macOS release:
-
 ```bash
-brew tap kyrielie/yggdrasil
-brew install --cask honeycrisp
+brew install --cask kyrielie/yggdrasil/honeycrisp
 ```
 
-To update it after a tap update has been merged:
-
-```bash
-brew upgrade --cask honeycrisp
-```
-
-The current builds are ad-hoc signed and not notarized. macOS may ask you to
-approve opening Honeycrisp the first time. See the [Yggdrasil tap](https://github.com/kyrielie/homebrew-yggdrasil)
-for the cask and release details.
+Update with `brew upgrade --cask honeycrisp` once a tap update has been merged. See the
+[Yggdrasil tap](https://github.com/kyrielie/homebrew-yggdrasil) for cask and release details.
 
 ### Manual download
 
-Download release to try, try to open then click open anyways in Settings / Privacy & Security
+Download the latest build from [Releases](https://github.com/kyrielie/honeycrisp/releases/latest)
+and move it to Applications.
 
-Or bypass macos gatekeeper.
+### First launch
+
+Releases are ad-hoc signed and not notarized, so macOS Gatekeeper will block the first launch.
+Either open **System Settings > Privacy & Security** and choose **Open Anyway**, or remove the
+quarantine attribute:
 
 ```bash
-xattr -d com.apple.quarantine /path/to/app
+xattr -d com.apple.quarantine /Applications/Honeycrisp.app
 ```
 
 ## Features
 
-- **Persistent windows** — stays open, unlike Quick Look
-- **Multiple windows** — open several books simultaneously (File > Open, or ⌘O)
-- **Tabbed mode** - open multiple books as tabs in the same window
-- **Paginated mode** — one spine document per "page", navigate with ← → arrow keys
-- **Scroll mode** — all chapters merged into one continuous scroll
-- **Float on top** — pin any window above all others (⌘⇧T or toolbar pin button)
-- **Reading history** — recent books saved with open date, accessible via clock toolbar button
-- **Open Recent** — reopen supported EPUBs from File > Open Recent
-- **Persistent bookmarks** — save and rename multiple return points per book from the Bookmarks menu
-- **In-book search** — ⌘F opens a focused overlay with excerpts and chapter locations
-- **Start Reading** — follows EPUB landmarks when available, with a direct route to the beginning and TOC
-- **Drag and drop** — drop an EPUB onto an empty reader window or an open book
-- **Themes** - save your prefered formatting as a theme
-- **Dark mode** — automatic, follows system appearance
-- **Page counter** - page / total pages (and spine / total spines in paged mode)
-- **Table of contents** - quickly flick through books
+**Reading**
+- Paginated mode: one spine document per page, with columns per screen configurable
+- Scroll mode: all chapters merged into one continuous scroll, with auto-scroll
+- Text to speech from the current reading position
+- Themes: save preferred typography and colors as a named theme
+- Light and dark appearance, following the system
+
+**Navigation**
+- Table of contents sidebar and popup
+- In-book search with excerpts and chapter locations
+- Start Reading follows EPUB landmarks when available
+- Persistent bookmarks: toggle one per page, rename, and return from the Bookmarks menu
+- Page counter (page / total pages, plus chapter / total chapters in paginated mode)
+
+**Windows and files**
+- Multiple windows or tabs, one book each
+- Float on top: pin any window above all others
+- Reading history and File > Open Recent
+- Drag and drop an EPUB onto an empty reader window or an open book
+
+The toolbar is customizable (View > Customize Toolbar), including the title and page counter.
+
+## Planned
+
+- **Quote sharing:** share a selected passage with attribution (title, author, chapter). Not yet scheduled.
 
 ## Non-goals
 
-These are intentional scope boundaries, not missing features:
+These are intentional scope boundaries, not missing features.
 
-- **No library view** — File > Open, drag-drop, and the History popover are the only ways to open a book. Honeycrisp is a reader, not a library manager; see [ambrosia](https://github.com/kyrielie/ambrosia) for that.
-- **No cross-library full-text search** — search is scoped to the currently open book only.
-- **No publisher CSS** — Honeycrisp deliberately strips inline/publisher styling and applies its own reader CSS (Lora typeface, warm paper palette). This is by design, not a rendering bug.
-- **No quote sharing** — quote attribution and sharing are outside the reader's current scope.
-- **No per-window/per-book reading mode** — paginated vs. scroll mode is a single global default (Settings' General tab); every window and every book opens in whichever mode was last chosen.
+- **No library view.** File > Open, drag and drop, and the History popover are the only ways to open a book. See [ambrosia](https://github.com/kyrielie/ambrosia) for library management.
+- **No cross-library full-text search.** Search covers the open book only.
+- **No publisher CSS.** Honeycrisp strips publisher styling and applies its own reader CSS. This is by design, not a rendering bug.
+- **No per-window or per-book reading mode.** Paginated versus scroll is a single global default set in Settings > General.
 
 ## Keyboard shortcuts
 
-| Key | Action |
-|-----|--------|
-| ← / → | Previous / next page (paginated mode) |
-| ↑ / ↓ | Scroll up/down (scroll mode) |
-| Page Up / Page Down | Previous / next page or large scroll |
-| ⌘O | Open EPUB file |
-| ⌘W | Close window |
-| ⌘⇧T | Toggle float on top |
+Shortcuts marked configurable can be rebound in Settings > Shortcuts.
 
-## Building
+| Key | Action | Configurable |
+|-----|--------|:------------:|
+| ⌘O | Open EPUB file | Yes |
+| ⌘F | Search in book | Yes |
+| ⌘T | Show table of contents | Yes |
+| ⇧⌘T | Float on top | Yes |
+| ⇧⌘P | Toggle paginated mode | Yes |
+| ⌘N | New window | No |
+| ⌘W | Close window | No |
+| ⌘+ / ⌘- | Increase / decrease font size | No |
+| ← / → | Previous / next page (paginated mode) | No |
+| ↑ / ↓ | Scroll (scroll mode) | No |
+| Page Up / Page Down | Previous / next page or large scroll | No |
 
-### Xcode (recommended)
+## Development
 
-1. Install XcodeGen: `brew install xcodegen`
-2. Generate the project: `xcodegen generate`
-3. Open `Honeycrisp.xcodeproj` in Xcode 15+
-4. Select the **Honeycrisp** scheme → **My Mac** destination
-5. Press ⌘R to build and run
+Requirements: macOS 13+ to run; a Swift 5.9 toolchain (Xcode 15 or later) to build. CI runs on
+Xcode 26.3. ZIPFoundation is fetched through Swift Package Manager.
 
-> **Note:** Set your own Team in Signing & Capabilities if you see code signing errors.
+```bash
+brew install xcodegen
+xcodegen generate
+open Honeycrisp.xcodeproj
+```
+
+Select the **Honeycrisp** scheme and the **My Mac** destination, then press ⌘R. Set your own Team
+under Signing & Capabilities if you see code signing errors.
+
+`project.yml` is the source of truth for the generated Xcode project. Do not edit
+`Honeycrisp.xcodeproj` by hand. The root `Package.swift` is a secondary SwiftPM entry point.
 
 ### Tests
-
-Run the macOS unit-test suite with:
 
 ```bash
 ./test.sh
 ```
 
-The script generates the Xcode project from `project.yml` and runs the suite. The GitHub Actions test workflow does the same on pushes and pull requests. Override the destination with `HONEYCRISP_TEST_DESTINATION` or the Derived Data folder with `HONEYCRISP_DERIVED_DATA` when needed.
+The script generates the project and runs the unit tests. GitHub Actions does the same on pushes
+and pull requests. Override the destination with `HONEYCRISP_TEST_DESTINATION` or the Derived Data
+folder with `HONEYCRISP_DERIVED_DATA`.
 
-Lint Swift source with Apple's formatter from the selected Xcode toolchain:
+### Linting
 
 ```bash
 xcrun swift-format lint --configuration .swift-format --recursive Sources Tests
 ```
 
-To format specific files intentionally, use `xcrun swift-format format --configuration .swift-format --in-place <file>`. Formatting is currently a local check; CI enforcement can be enabled after the existing source baseline has been reviewed.
+Format only the files you touch: `xcrun swift-format format --configuration .swift-format --in-place <file>`.
+Formatting is a local check for now.
 
-### Requirements
+### Project documentation
 
-- macOS 13.0+ (Ventura or later)
-- Xcode 15+
-- ZIPFoundation (fetched automatically via Swift Package Manager)
+- [ARCHITECTURE.md](ARCHITECTURE.md): design rationale and module responsibilities
+- [INDEX.md](INDEX.md): file and section map for locating code
+- [docs/](docs/): roadmap, settings window plan, and the [compatibility corpus](docs/compatibility-corpus.md)
 
-## Architecture
-
-| File | Responsibility |
-|------|---------------|
-| `EPUBReaderApp.swift` | SwiftUI `@main` entry point, boots `AppDelegate` |
-| `AppDelegate.swift` | Application lifecycle, menu bar, window creation |
-| `ReaderWindowController.swift` | Per-window chrome, float-on-top, toolbar scaffold |
-| `ReaderViewController.swift` | WebKit rendering, pagination, keyboard nav, toolbar items |
-| `EPUBParser.swift` | ZIP extraction, OPF/spine parsing, HTML generation |
-| `HistoryManager.swift` | Persists recently opened files with security-scoped bookmarks |
-| `HistoryViewController.swift` | Popover showing recent books with open/remove actions |
-
-`project.yml` is the source of truth for the generated Xcode project and shared scheme. Run `xcodegen generate` after changing the project configuration; do not hand-edit `Honeycrisp.xcodeproj`. The root `Package.swift` remains a secondary SwiftPM build entry point.
-
-The local EPUB compatibility corpus is described in
-[docs/compatibility-corpus.md](docs/compatibility-corpus.md). Local book files
-are excluded from source control unless their redistribution terms are
-verified and they are intentionally added as test fixtures.
+Local EPUB corpus files are excluded from source control unless their redistribution terms are
+verified.
 
 The QuickLook plugin (`EPUBQuickLook`) provided the `EPUBParser` core and the basic WebKit rendering approach. (I think, I just told claude to use it.)
 
-- Full `NSWindowController` lifecycle with multiple independent windows
-- Paginated reading mode driven by the spine order
-- Arrow key navigation with `ReaderWindow` key forwarding
-- Window-level floating (`.floating` NSWindow level)
-- Persistent history via `UserDefaults` + security-scoped bookmarks
-- Toolbar with mode switcher, page indicator, history popover, pin button
-- Opinionated reader CSS that strips all EPUB styles (Lora typeface, warm paper palette)
-
-
 ## License
 
-MIT
+[MIT](LICENSE)

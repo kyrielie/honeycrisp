@@ -71,7 +71,9 @@ final class TOCParser {
     func startReadingNode(in package: EPUBPackage, toc: [TOCEntry]) -> TOCNode? {
         if let landmark = package.landmarks.first(where: { ["bodymatter", "text"].contains($0.type.lowercased()) }),
            let index = package.spineURLs.firstIndex(where: { $0.standardizedFileURL.path == landmark.url.standardizedFileURL.path }) {
-            return TOCNode(title: landmark.title.isEmpty ? "Start Reading" : landmark.title, url: landmark.url, children: [], spineIndex: index, isLandmark: true)
+            return TOCNode(
+                title: landmark.title.isEmpty ? "Start Reading" : landmark.title,
+                url: landmark.url, children: [], spineIndex: index, isLandmark: true)
         }
 
         // Only skip an initial linear item when its filename/heading clearly
@@ -79,7 +81,8 @@ final class TOCParser {
         if let firstLinearIndex = package.spine.firstIndex(where: \.isLinear),
            let nextLinearIndex = package.spine.indices.first(where: { $0 > firstLinearIndex && package.spine[$0].isLinear }) {
             let first = package.spine[firstLinearIndex]
-            let firstName = first.url.deletingPathExtension().lastPathComponent.lowercased().replacingOccurrences(of: "[_-]", with: " ", options: .regularExpression)
+            let firstName = first.url.deletingPathExtension().lastPathComponent.lowercased()
+                .replacingOccurrences(of: "[_-]", with: " ", options: .regularExpression)
             let firstTitle = heading(in: first.url)?.lowercased() ?? ""
             let frontMatterTerms = ["cover", "title page", "contents", "table of contents"]
             let isLikelyFrontMatter = frontMatterTerms.contains(where: { firstName.contains($0) || firstTitle.contains($0) })
@@ -122,13 +125,13 @@ final class TOCParser {
         let fm = FileManager.default
         // Common locations
         for candidate in ["toc.ncx", "OEBPS/toc.ncx", "OPS/toc.ncx"] {
-            let u = root.appendingPathComponent(candidate)
-            if fm.fileExists(atPath: u.path) { return u }
+            let url = root.appendingPathComponent(candidate)
+            if fm.fileExists(atPath: url.path) { return url }
         }
         // Walk the tree
-        if let e = fm.enumerator(at: root, includingPropertiesForKeys: nil) {
-            for case let u as URL in e {
-                if u.lastPathComponent.lowercased() == "toc.ncx" { return u }
+        if let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: nil) {
+            for case let url as URL in enumerator where url.lastPathComponent.lowercased() == "toc.ncx" {
+                return url
             }
         }
         return nil
@@ -136,11 +139,11 @@ final class TOCParser {
 
     private func findNav(in root: URL) -> URL? {
         let fm = FileManager.default
-        if let e = fm.enumerator(at: root, includingPropertiesForKeys: nil) {
-            for case let u as URL in e {
-                if u.lastPathComponent.lowercased().contains("nav") &&
-                   ["xhtml", "html", "htm"].contains(u.pathExtension.lowercased()) {
-                    return u
+        if let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: nil) {
+            for case let url as URL in enumerator {
+                if url.lastPathComponent.lowercased().contains("nav") &&
+                   ["xhtml", "html", "htm"].contains(url.pathExtension.lowercased()) {
+                    return url
                 }
             }
         }
@@ -166,6 +169,7 @@ final class TOCParser {
         return parseNCXPoints(navPoints, doc: doc, rootFolder: rootFolder, rootURL: url.deletingLastPathComponent(), depth: 0, order: &order)
     }
 
+    // swiftlint:disable:next function_parameter_count
     private func parseNCXPoints(_ nodes: [XMLElement], doc: XMLDocument, rootFolder: URL, rootURL: URL, depth: Int, order: inout Int) -> [TOCEntry] {
         var entries: [TOCEntry] = []
         for node in nodes {
@@ -222,10 +226,10 @@ final class TOCParser {
         var order = 0
         let base = url.deletingLastPathComponent()
 
-        for m in matches {
-            guard m.numberOfRanges >= 3 else { continue }
-            let href = ns.substring(with: m.range(at: 1))
-            var title = ns.substring(with: m.range(at: 2))
+        for match in matches {
+            guard match.numberOfRanges >= 3 else { continue }
+            let href = ns.substring(with: match.range(at: 1))
+            var title = ns.substring(with: match.range(at: 2))
             // Strip inner tags
             title = title.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
                          .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -252,7 +256,9 @@ final class TOCParser {
             let childLists = (try? item.nodes(forXPath: "./*[local-name()='ol']")) as? [XMLElement] ?? []
             let children = childLists.flatMap { parseNavList($0, base: base, depth: depth + 1, order: &order) }
             let decoded = href.removingPercentEncoding ?? href
-            return TOCEntry(title: title, href: decoded, absoluteURL: resolveLocalURL(href, relativeTo: base), playOrder: currentOrder, depth: depth, children: children)
+            return TOCEntry(
+                title: title, href: decoded, absoluteURL: resolveLocalURL(href, relativeTo: base),
+                playOrder: currentOrder, depth: depth, children: children)
         }
     }
 

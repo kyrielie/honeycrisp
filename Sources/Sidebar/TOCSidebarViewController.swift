@@ -70,7 +70,7 @@ final class TOCSidebarViewController: NSViewController {
             scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
             emptyLabel.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor)
         ])
 
         self.view = root
@@ -122,8 +122,8 @@ extension TOCSidebarViewController: NSOutlineViewDataSource {
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        if item == nil { return entries[index] }
-        return (item as! TOCEntry).children[index]
+        guard let entry = item as? TOCEntry else { return entries[index] }
+        return entry.children[index]
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
@@ -151,7 +151,7 @@ extension TOCSidebarViewController: NSOutlineViewDelegate {
             NSLayoutConstraint.activate([
                 tf.leadingAnchor.constraint(equalTo: cell!.leadingAnchor, constant: 4),
                 tf.centerYAnchor.constraint(equalTo: cell!.centerYAnchor),
-                tf.trailingAnchor.constraint(equalTo: cell!.trailingAnchor, constant: -4),
+                tf.trailingAnchor.constraint(equalTo: cell!.trailingAnchor, constant: -4)
             ])
         }
 

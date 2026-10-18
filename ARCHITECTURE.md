@@ -115,18 +115,24 @@ Two independent HTML-generation paths (`buildScrollHTML` for scroll mode, one do
 
 `SettingsManager` is a thin, direct `UserDefaults` wrapper — every property is a computed `get`/`set` pair reading/writing a `UserDefaults` key, with no separate serialized settings object and no export/import path. `Theme` and `KeyBinding` values are `Codable` and stored as encoded `Data` blobs under single keys (`themes`, key-binding dictionary). Legacy-key migration (e.g. `migrateLegacyFontFamily`, `migrateLegacyThemes`) is handled inline, per-property, at read time.
 
+## 5a. Stored data durability and anchor layout
+
+Storage durability. `HistoryManager` (bare `[HistoryEntry]` array) and `BookmarkManager` (versioned envelope) decode element by element. An element that fails to decode is kept as raw JSON and written back on the next save, so one bad element never wipes the rest. A blob that is not readable at all, or a bookmark envelope with a version other than the supported one, is first copied to `<key>.quarantine.<unix-seconds>` by `StorageQuarantine` (newest 3 kept), before the first overwrite. Loading alone never writes. In history, unreadable elements count toward `maxEntries` and are dropped first; `clearAll` removes them too.
+
+Anchor layout. Saved character offsets are only valid for the text extraction that produced them. `EPUBAnchor.currentLayout` (`Reader/PaginationEngine.swift`) is stored as `anchorLayout` on `HistoryEntry` and `ReadingBookmark`; data without the field decodes as `EPUBAnchor.legacyLayout`. Rule: bump `currentLayout` whenever a change alters character offsets, meaning anything touching `extractedChapterBody`, `searchableText`, indent stripping, preface stripping, or first-chapter formatting. Nothing reads the field yet. The PR that first bumps it must also choose the fallback for entries with an older layout (for example, restore by fraction from `readingProgressPercent`). `HistoryManager.record` carries `anchorLayout` forward with the position it describes; only `updatePosition` re-stamps it.
+
 ## 6. Known non-goals (intentional, not gaps)
 
 - No library/catalog view — File > Open / drag-drop / Open Recent / explicit bookmarks only.
 - No cross-book full-text search — `SearchBarViewController` is in-book only.
 - No publisher-CSS respect — the reader CSS reset in `EPUBParser.readerCSS` is deliberate.
-- No quote sharing — quote attribution and sharing are outside the reader's current scope.
 - No per-window/per-book reading mode override — `currentMode` always initializes from the global `SettingsManager.shared.defaultReadingMode`.
 
 ## 7. Known architectural gaps and their resolution (see `docs/honeycrisp-settings-window-plan.md` for the Settings-window rebuild plan; other gaps below have no separate plan doc)
 
 - **DRM**: no detection today — a DRM-protected EPUB falls into the generic `.malformed`/`.opfNotFound` path. Resolution: detect `META-INF/encryption.xml` in `EPUBParser.parsePackage`, add `EPUBParseError.drmProtected`; the existing in-webview `showError` path already surfaces `errorDescription` with no further plumbing needed.
 - **Calibre annotations**: not supported (read or write). Blocked on confirming Calibre's actual on-disk format — Calibre stores highlights/bookmarks in its own library metadata (`metadata.db`/sidecar), not embedded in the EPUB file itself, and a standalone-opened EPUB (Honeycrisp's only input mode — see §6) generally won't carry that sidecar. Needs a real sample before a parser is written. When built: read-only by hard constraint, no write path to the EPUB or any sidecar, enforced in code (not just documented).
+- **Quote sharing**: deferred. Previously listed as a non-goal. No design or code yet; the README lists it under "Planned".
 - **Reading aids**: optional scroll-mode auto-scroll and current-spine native speech are menu-driven. Speech starts from the current selection/location and does not promise continuous multi-spine playback.
 - **Scroll-mode page count**: the plan's premise ("no cheap whole-book page count in scroll mode") turned out to already be **false as currently implemented** — `EPUBParser.readerJS`'s `honeycrispPageInfo()` already computes `ceil(scrollHeight/innerHeight)`, and `ReaderViewController.didReceiveScrollPageInfo` already displays it correctly. The only real defect found is a doc comment in `ReaderViewController` that mis-scopes a paginated-mode caveat onto scroll mode too. This item is closer to "verify and fix a comment" than "implement a new calculation."
 - **HIG cleanup**: four independent, all confirmed present — `window.title` forced empty in `ReaderViewController.setToolbarTitle` (window title should be set even while hidden from the titlebar, since Window menu/Mission Control/VoiceOver read the model value independent of `titleVisibility`); `ReaderWindowController.setupWindow` sets `isRestorable = false` with state restoration to be implemented (persisting book URL + frame via a security-scoped bookmark, not reading position — see below); 19 `NSLog` debug call sites across `SettingsWindowController`, `ShortcutsSettingsViewController`, `AppDelegate.openSettingsAction`, and one in `ReaderViewController.showThemePopover`, all left over from diagnosing a since-fixed Settings-menu bug, to be deleted; toolbar buttons in `ReaderViewController.makeToolbarButton` accessibility-labeled only via the underlying `NSImage`, to get `setAccessibilityLabel` on the control itself, matching the pattern `SettingsWindowController` already uses correctly elsewhere.
@@ -135,7 +141,7 @@ Two independent HTML-generation paths (`buildScrollHTML` for scroll mode, one do
 ## 8. Decisions carried over from the revision plan
 
 - **Per-window/per-book reading-mode override**: audited, confirmed already absent from the code (`ReaderViewController.currentMode` and `HistoryEntry` both already have no per-book mode field) — closed with no code change, documented here so it stops being re-flagged as missing.
-- **Non-goals** (no library view, no cross-book search, no publisher styling, no share-quote) are confirmed intentional and get a README "Non-goals" section; no code changes.
+- **Non-goals** (no library view, no cross-book search, no publisher styling) are confirmed intentional and get a README "Non-goals" section; no code changes. Quote sharing was removed from this list: the earlier scoping was outdated, and it is now deferred rather than ruled out.
 
 ## 9. Settings window: per-tab resize is wired but inert (by design, undocumented in the plan)
 

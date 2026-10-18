@@ -15,8 +15,9 @@
 //  • Window menu added (previously entirely absent; standard convention for a
 //    multi-window Mac app — Honeycrisp opens one ReaderWindowController per book)
 //  • Reading menu added: theme picker, columns-per-screen picker, font size
-//    +/-, and a "Show Page Count" toggle for the toolbar's new page-count label
+//    +/-. The page-count label is shown or hidden through toolbar customization.
 
+// swiftlint:disable file_length
 import AppKit
 import CoreServices
 import AVFoundation
@@ -31,6 +32,7 @@ private final class BookmarkMenuContext {
     }
 }
 
+// swiftlint:disable:next type_body_length
 class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -92,7 +94,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if !unsupported.isEmpty {
             let alert = NSAlert()
             alert.messageText = "Unsupported File Type"
-            alert.informativeText = "Honeycrisp opens EPUB books. Unsupported items were skipped: \(unsupported.map(\.lastPathComponent).joined(separator: ", "))"
+            let skippedNames = unsupported.map(\.lastPathComponent).joined(separator: ", ")
+            alert.informativeText = "Honeycrisp opens EPUB books. Unsupported items were skipped: \(skippedNames)"
             alert.alertStyle = .warning
             alert.runModal()
         }
@@ -124,6 +127,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Menu Setup
 
+    // swiftlint:disable:next function_body_length
     private func setupMenus() {
         let mainMenu = NSMenu()
         NSApp.mainMenu = mainMenu
@@ -283,7 +287,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         readingMenu.addItem(NSMenuItem(title: "Decrease Font Size", action: #selector(decreaseFontSize), keyEquivalent: "-"))
 
         readingMenu.addItem(.separator())
-        for (title, action) in [("Previous Chapter", #selector(previousChapter)), ("Next Chapter", #selector(nextChapter)), ("Beginning of Chapter", #selector(chapterBeginning)), ("End of Chapter", #selector(chapterEnd))] {
+        let chapterItems: [(String, Selector)] = [
+            ("Previous Chapter", #selector(previousChapter)),
+            ("Next Chapter", #selector(nextChapter)),
+            ("Beginning of Chapter", #selector(chapterBeginning)),
+            ("End of Chapter", #selector(chapterEnd))
+        ]
+        for (title, action) in chapterItems {
             readingMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: ""))
         }
 
@@ -345,7 +355,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .searchInBook: #selector(searchInBook),
             .showTOC: #selector(showTOC),
             .toggleFloat: #selector(ReaderWindowController.toggleFloat(_:)),
-            .toggleReadingMode: #selector(toggleReadingMode),
+            .toggleReadingMode: #selector(toggleReadingMode)
         ]
         // Invert once: selector -> binding, so the recursive walk below is a
         // single dictionary lookup per item instead of re-scanning all five
@@ -420,7 +430,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func startReading() { readerVC()?.startReading() }
     @objc private func goToBeginning() { readerVC()?.goToBeginning() }
-    @objc private func addBookmark() { readerVC()?.addCurrentBookmark() }
+    @objc private func toggleBookmark() { readerVC()?.toggleBookmarkAtCurrentPosition() }
     @objc private func openRecent(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID,
               let entry = HistoryManager.shared.entries.first(where: { $0.id == id }) else { return }
@@ -498,6 +508,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 // Paginated Mode checkmark, not separately scoped work.
 
 extension AppDelegate: NSMenuDelegate {
+    // swiftlint:disable:next function_body_length
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu.title == "View",
            let modeItem = menu.items.first(where: { $0.action == #selector(toggleReadingMode) }) {
@@ -523,10 +534,13 @@ extension AppDelegate: NSMenuDelegate {
         }
         if menu.title == "Bookmarks" {
             menu.items.removeAll()
-            let add = NSMenuItem(title: "Add Bookmark", action: #selector(addBookmark), keyEquivalent: "")
-            add.target = self
-            add.isEnabled = readerVC()?.currentBookURL() != nil
-            menu.addItem(add)
+            let isBookmarked = readerVC()?.isCurrentPositionBookmarked ?? false
+            let toggle = NSMenuItem(
+                title: isBookmarked ? "Remove Bookmark" : "Add Bookmark",
+                action: #selector(toggleBookmark), keyEquivalent: "")
+            toggle.target = self
+            toggle.isEnabled = readerVC()?.currentBookURL() != nil
+            menu.addItem(toggle)
             menu.addItem(.separator())
             guard let reader = readerVC(), let url = reader.currentBookURL() else { return }
             for bookmark in BookmarkManager.shared.bookmarks(for: url) {
@@ -571,13 +585,22 @@ extension AppDelegate: NSMenuItemValidation {
             // when there's no reader window open at all to be consistent with).
             return readerVC()?.currentMode == .paginated
         }
-        if [#selector(previousChapter), #selector(nextChapter), #selector(chapterBeginning), #selector(chapterEnd), #selector(startAutoScroll), #selector(stopAutoScroll), #selector(speakCurrentLocation), #selector(toggleSpeechPause), #selector(stopSpeech), #selector(slowerSpeech), #selector(fasterSpeech)].contains(menuItem.action) {
+        let readingActions: [Selector?] = [
+            #selector(previousChapter), #selector(nextChapter), #selector(chapterBeginning), #selector(chapterEnd),
+            #selector(startAutoScroll), #selector(stopAutoScroll), #selector(speakCurrentLocation),
+            #selector(toggleSpeechPause), #selector(stopSpeech), #selector(slowerSpeech), #selector(fasterSpeech)
+        ]
+        if readingActions.contains(menuItem.action) {
             if menuItem.action == #selector(startAutoScroll) || menuItem.action == #selector(stopAutoScroll) {
                 return readerVC()?.currentBookURL() != nil && readerVC()?.currentMode == .scroll
             }
             return readerVC()?.currentBookURL() != nil
         }
-        if [#selector(startReading), #selector(goToBeginning), #selector(searchInBook), #selector(showTOC), #selector(addBookmark)].contains(menuItem.action) {
+        let bookActions: [Selector?] = [
+            #selector(startReading), #selector(goToBeginning), #selector(searchInBook), #selector(showTOC),
+            #selector(toggleBookmark)
+        ]
+        if bookActions.contains(menuItem.action) {
             return readerVC()?.currentBookURL() != nil
         }
         guard let vc = readerVC() else {

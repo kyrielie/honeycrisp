@@ -18,10 +18,12 @@
 //    scoped per spine item (see EPUBParser.honeycrispPageInfo, PaginationEngine.spineDidLoad)
 //  • "Format for AO3" rename propagated; EPUBParser receives updated flag name
 
+// swiftlint:disable file_length
 import AppKit
 import WebKit
 import AVFoundation
 
+// swiftlint:disable:next type_body_length
 final class ReaderViewController: NSViewController {
 
     // MARK: - State
@@ -29,6 +31,8 @@ final class ReaderViewController: NSViewController {
     private var webView: ReaderWebView!
     private var loadingIndicator: NSProgressIndicator!
     private var emptyStateView: NSView!
+    private var emptyStateHintLabel: NSTextField?
+    private var didScheduleEmptyStateHintFade = false
 
     private var currentPackage: EPUBPackage?
     private var currentEPUBURL: URL?
@@ -133,6 +137,13 @@ final class ReaderViewController: NSViewController {
     private weak var searchButton: NSButton?
     private weak var tocButton: NSButton?
     private weak var titleLabel: NSTextField?   // centered title in toolbar
+    /// Last values shown in the title and page-count labels. A toolbar item removed
+    /// through Customize Toolbar is destroyed, and re-adding it builds a brand-new
+    /// label; these let that label start with the current text instead of blank.
+    private var toolbarTitleText = ""
+    private var toolbarTitleTooltip: String?
+    private var pageCountText = ""
+    private var appearanceObservation: NSKeyValueObservation?
 
     /// Debounce timer for search input
     private var searchDebounceTimer: Timer?
@@ -156,6 +167,7 @@ final class ReaderViewController: NSViewController {
 
     // MARK: - View Lifecycle
 
+    // swiftlint:disable:next function_body_length
     override func loadView() {
         // ── WebView ───────────────────────────────────────────────────────────
         let prefs = WKPreferences()
@@ -229,7 +241,7 @@ final class ReaderViewController: NSViewController {
             webView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             webView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
-            webView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            webView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
         ])
         // enclosingScrollView is nil until now that webView is in the hierarchy.
         // Scrollbar visibility itself is set per-mode by applyScrollbarVisibility,
@@ -249,7 +261,7 @@ final class ReaderViewController: NSViewController {
         NSLayoutConstraint.activate([
             searchOverlay.topAnchor.constraint(equalTo: contentContainer.topAnchor, constant: 12),
             searchOverlay.centerXAnchor.constraint(equalTo: contentContainer.centerXAnchor),
-            searchOverlay.widthAnchor.constraint(equalToConstant: 410),
+            searchOverlay.widthAnchor.constraint(equalToConstant: 410)
         ])
         searchOverlayHeightConstraint = searchOverlay.heightAnchor.constraint(equalToConstant: 48)
         searchOverlayHeightConstraint.isActive = true
@@ -257,7 +269,7 @@ final class ReaderViewController: NSViewController {
         contentContainer.addSubview(loadingIndicator)
         NSLayoutConstraint.activate([
             loadingIndicator.centerXAnchor.constraint(equalTo: contentContainer.centerXAnchor),
-            loadingIndicator.centerYAnchor.constraint(equalTo: contentContainer.centerYAnchor),
+            loadingIndicator.centerYAnchor.constraint(equalTo: contentContainer.centerYAnchor)
         ])
 
         let empty = EPUBDropTargetView()
@@ -265,22 +277,19 @@ final class ReaderViewController: NSViewController {
         empty.onDrop = { [weak self] url in
             (self?.view.window?.windowController as? ReaderWindowController)?.loadEPUB(at: url)
         }
-        let dropSymbol = NSImageView(image: NSImage(systemSymbolName: "arrow.down.to.line.compact", accessibilityDescription: "Drop EPUB here")!)
-        dropSymbol.contentTintColor = .white
+        let dropSymbolImage = NSImage(
+            systemSymbolName: "tray.and.arrow.down",
+            accessibilityDescription: "Drop EPUB here"
+        )
+        let dropSymbol = NSImageView(image: dropSymbolImage ?? NSImage())
+        dropSymbol.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 72, weight: .regular)
+        dropSymbol.contentTintColor = .tertiaryLabelColor
         dropSymbol.imageScaling = .scaleProportionallyDown
         dropSymbol.translatesAutoresizingMaskIntoConstraints = false
-        dropSymbol.wantsLayer = true
-        dropSymbol.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        dropSymbol.layer?.cornerRadius = 14
-        dropSymbol.layer?.borderWidth = 1
-        dropSymbol.layer?.borderColor = NSColor.white.withAlphaComponent(0.25).cgColor
-        dropSymbol.layer?.shadowColor = NSColor.black.cgColor
-        dropSymbol.layer?.shadowOpacity = 0.28
-        dropSymbol.layer?.shadowRadius = 5
-        dropSymbol.layer?.shadowOffset = CGSize(width: 0, height: -2)
         dropSymbol.setAccessibilityLabel("Drop EPUB here")
-        let hint = NSTextField(labelWithString: "Drop an EPUB here")
+        let hint = NSTextField(labelWithString: "Drag and drop EPUB files")
         hint.textColor = .secondaryLabelColor
+        emptyStateHintLabel = hint
         hint.translatesAutoresizingMaskIntoConstraints = false
         empty.addSubview(dropSymbol)
         empty.addSubview(hint)
@@ -292,11 +301,8 @@ final class ReaderViewController: NSViewController {
             empty.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
             dropSymbol.centerXAnchor.constraint(equalTo: empty.centerXAnchor),
             dropSymbol.centerYAnchor.constraint(equalTo: empty.centerYAnchor, constant: -32),
-            dropSymbol.widthAnchor.constraint(equalToConstant: 88),
-            dropSymbol.heightAnchor.constraint(equalToConstant: 88),
             hint.centerXAnchor.constraint(equalTo: empty.centerXAnchor),
-            hint.topAnchor.constraint(equalTo: dropSymbol.bottomAnchor, constant: 14),
-            hint.bottomAnchor.constraint(equalTo: empty.bottomAnchor),
+            hint.topAnchor.constraint(equalTo: dropSymbol.bottomAnchor, constant: 14)
         ])
         emptyStateView = empty
         webView.isHidden = true
@@ -322,7 +328,7 @@ final class ReaderViewController: NSViewController {
             splitView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             splitView.topAnchor.constraint(equalTo: root.topAnchor),
-            splitView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            splitView.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         ])
 
         self.view = root
@@ -343,15 +349,8 @@ final class ReaderViewController: NSViewController {
         // Every theme now carries both a light and dark ThemeColorSet (see
         // SettingsManager.effectiveColorSet), so a system appearance flip changes
         // the active theme's actual colors, not just the .system special case.
-        NSApp.addObserver(self, forKeyPath: "effectiveAppearance", options: [], context: nil)
-    }
-
-    override func observeValue(forKeyPath keyPath: String?, of object: Any?,
-                                change: [NSKeyValueChangeKey: Any]?, context: UnsafeMutableRawPointer?) {
-        if keyPath == "effectiveAppearance" {
-            applyCosmeticCSSUpdate()
-        } else {
-            super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
+        appearanceObservation = NSApp.observe(\.effectiveAppearance, options: []) { [weak self] _, _ in
+            self?.applyCosmeticCSSUpdate()
         }
     }
 
@@ -361,6 +360,22 @@ final class ReaderViewController: NSViewController {
         if currentMode == .paginated {
             installScrollWheelMonitorIfNeeded()
             installKeyDownMonitor()
+        }
+        fadeOutEmptyStateHintOnce()
+    }
+
+    /// Shows the supported-format reminder for a few seconds the first time an empty window
+    /// appears, then fades it out. The drop icon stays.
+    private func fadeOutEmptyStateHintOnce() {
+        guard !didScheduleEmptyStateHintFade, emptyStateView?.isHidden == false,
+            let hint = emptyStateHintLabel
+        else { return }
+        didScheduleEmptyStateHintFade = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak hint] in
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 1.2
+                hint?.animator().alphaValue = 0
+            }
         }
     }
 
@@ -383,7 +398,7 @@ final class ReaderViewController: NSViewController {
             try? FileManager.default.removeItem(at: directory)
         }
         NotificationCenter.default.removeObserver(self)
-        NSApp.removeObserver(self, forKeyPath: "effectiveAppearance")
+        appearanceObservation?.invalidate()
     }
 
     // MARK: - Security
@@ -396,6 +411,7 @@ final class ReaderViewController: NSViewController {
 
     // MARK: - EPUB Loading
 
+    // swiftlint:disable:next function_body_length
     func loadEPUB(at url: URL) {
         emptyStateView?.isHidden = true
         webView?.isHidden = false
@@ -620,28 +636,83 @@ final class ReaderViewController: NSViewController {
         }
     }
 
-    func addCurrentBookmark() {
-        changeBookmarkAtCurrentPosition(forceAdd: true)
+    /// Where the reader is right now: the offset used when a bookmark is created,
+    /// plus the character range currently on screen used to decide whether this
+    /// page already has one.
+    private struct PageLocation {
+        let offset: Int
+        let visibleRange: ClosedRange<Int>?
     }
 
-    private func changeBookmarkAtCurrentPosition(forceAdd: Bool) {
-        guard let url = currentEPUBURL else { return }
-        let offsetFunction = currentMode == .scroll ? "window.honeycrispCurrentChapterCharacterOffset" : "window.honeycrispCurrentCharacterOffset"
-        webView.evaluateJavaScript("\(offsetFunction) ? \(offsetFunction)() : 0") { [weak self] result, _ in
-            guard let self else { return }
-            let offset = (result as? NSNumber)?.intValue ?? 0
-            let spineIndex = self.currentMode == .scroll ? self.activeScrollSpineIndex : self.currentSpineIndex
-            let existing = BookmarkManager.shared.bookmarks(for: url).first {
-                $0.spineIndex == spineIndex && abs($0.characterOffset - offset) <= 64
+    /// Reads the current page location from the web view. The visible range is
+    /// what makes "is this page bookmarked" reliable: the offset read at a fixed
+    /// screen point rarely equals the offset saved earlier, so equality (or a small
+    /// tolerance) cannot recognise a bookmark after navigating back to its page.
+    private func readPageLocation(spineIndex: Int, completion: @escaping (PageLocation) -> Void) {
+        let isScroll = currentMode == .scroll
+        let offsetFunction = isScroll
+            ? "window.honeycrispCurrentChapterCharacterOffset"
+            : "window.honeycrispCurrentCharacterOffset"
+        let rangeFunction = "window.honeycrispVisibleCharacterRange"
+        let script = "(function(){"
+            + "var o=\(offsetFunction)?\(offsetFunction)():0;"
+            + "var r=\(rangeFunction)?\(rangeFunction)(\(isScroll),\(spineIndex)):null;"
+            + "return JSON.stringify({offset:o,range:r});})()"
+        webView.evaluateJavaScript(script) { result, _ in
+            var offset = 0
+            var visible: ClosedRange<Int>?
+            if let text = result as? String,
+               let data = text.data(using: .utf8),
+               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                offset = (dict["offset"] as? NSNumber)?.intValue ?? 0
+                if let bounds = dict["range"] as? [NSNumber], bounds.count == 2,
+                   bounds[0].intValue <= bounds[1].intValue {
+                    visible = bounds[0].intValue...bounds[1].intValue
+                }
             }
-            if let existing, !forceAdd {
-                BookmarkManager.shared.remove(id: existing.id)
-                self.currentPositionBookmarkID = nil
-            } else if existing == nil {
+            completion(PageLocation(offset: offset, visibleRange: visible))
+        }
+    }
+
+    /// Bookmarks that belong to the page at `location`. Falls back to the old
+    /// proximity test only when the visible range could not be measured.
+    private func bookmarks(
+        in all: [ReadingBookmark], spineIndex: Int, location: PageLocation
+    ) -> [ReadingBookmark] {
+        all.filter { bookmark in
+            guard bookmark.spineIndex == spineIndex else { return false }
+            if let range = location.visibleRange { return range.contains(bookmark.characterOffset) }
+            return abs(bookmark.characterOffset - location.offset) <= 64
+        }
+    }
+
+    private var currentBookmarkSpineIndex: Int {
+        currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex
+    }
+
+    /// True when the page on screen already carries a bookmark.
+    var isCurrentPositionBookmarked: Bool { currentPositionBookmarkID != nil }
+
+    /// Adds a bookmark for the visible page, or removes the one that is already there.
+    func toggleBookmarkAtCurrentPosition() {
+        guard let url = currentEPUBURL else { return }
+        let spineIndex = currentBookmarkSpineIndex
+        readPageLocation(spineIndex: spineIndex) { [weak self] location in
+            guard let self else { return }
+            let onPage = self.bookmarks(
+                in: BookmarkManager.shared.bookmarks(for: url), spineIndex: spineIndex, location: location)
+            if onPage.isEmpty {
                 let ordinal = spineIndex + 1
                 let label = self.currentChapterTitle.map { "\($0) · \(ordinal)" } ?? "Bookmark · \(ordinal)"
-                let bookmark = BookmarkManager.shared.add(bookURL: url, label: label, spineIndex: spineIndex, characterOffset: offset, chapterTitle: self.currentChapterTitle)
+                let bookmark = BookmarkManager.shared.add(
+                    bookURL: url, label: label, spineIndex: spineIndex,
+                    characterOffset: location.offset, chapterTitle: self.currentChapterTitle)
                 self.currentPositionBookmarkID = bookmark.id
+            } else {
+                // Removes every bookmark on this page, including duplicates created
+                // before the page-range check existed, so the icon always clears.
+                onPage.forEach { BookmarkManager.shared.remove(id: $0.id) }
+                self.currentPositionBookmarkID = nil
             }
             self.updateBookmarkButton()
             NSApp.mainMenu?.item(withTitle: "Bookmarks")?.submenu?.update()
@@ -656,31 +727,28 @@ final class ReaderViewController: NSViewController {
         }
         bookmarkRefreshGeneration += 1
         let generation = bookmarkRefreshGeneration
-        let spineIndex = currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex
-        let offsetFunction = currentMode == .scroll ? "window.honeycrispCurrentChapterCharacterOffset" : "window.honeycrispCurrentCharacterOffset"
-        webView.evaluateJavaScript("\(offsetFunction) ? \(offsetFunction)() : 0") { [weak self] result, _ in
+        let spineIndex = currentBookmarkSpineIndex
+        readPageLocation(spineIndex: spineIndex) { [weak self] location in
             guard let self, self.bookmarkRefreshGeneration == generation else { return }
-            let offset = (result as? NSNumber)?.intValue ?? 0
-            self.currentPositionBookmarkID = BookmarkManager.shared.bookmarks(for: url).first {
-                $0.spineIndex == spineIndex && abs($0.characterOffset - offset) <= 64
-            }?.id
+            self.currentPositionBookmarkID = self.bookmarks(
+                in: BookmarkManager.shared.bookmarks(for: url), spineIndex: spineIndex, location: location
+            ).first?.id
             self.updateBookmarkButton()
         }
     }
 
     private func updateBookmarkButton() {
         let isBookmarked = currentPositionBookmarkID != nil
+        let title = isBookmarked ? "Remove Bookmark" : "Add Bookmark"
         bookmarkButton?.image = NSImage(
             systemSymbolName: isBookmarked ? "bookmark.fill" : "bookmark",
-            accessibilityDescription: isBookmarked ? "Remove Bookmark" : "Add Bookmark"
+            accessibilityDescription: title
         )
-        bookmarkButton?.contentTintColor = isBookmarked ? .secondaryLabelColor : nil
-        bookmarkButton?.toolTip = isBookmarked ? "Remove Bookmark" : "Add Bookmark"
-        bookmarkButton?.setAccessibilityLabel(isBookmarked ? "Remove Bookmark" : "Add Bookmark")
-    }
-
-    func toggleBookmarkAtCurrentPosition() {
-        changeBookmarkAtCurrentPosition(forceAdd: false)
+        // Explicit grey/primary tints in both states: leaving the tint unset lets the
+        // system apply its accent (blue) when it decides the item is "selected".
+        bookmarkButton?.contentTintColor = isBookmarked ? .secondaryLabelColor : .labelColor
+        bookmarkButton?.toolTip = title
+        bookmarkButton?.setAccessibilityLabel(title)
     }
 
     func navigate(to bookmark: ReadingBookmark) {
@@ -766,7 +834,9 @@ final class ReaderViewController: NSViewController {
     func stopAutoScroll() {
         isAutoScrolling = false
         isAdjustingAutoScrollSpeed = false
-        webView.evaluateJavaScript("if (window.honeycrispAutoScrollFrame) cancelAnimationFrame(window.honeycrispAutoScrollFrame); window.honeycrispAutoScrollFrame = null;")
+        webView.evaluateJavaScript(
+            "if (window.honeycrispAutoScrollFrame) cancelAnimationFrame(window.honeycrispAutoScrollFrame); "
+            + "window.honeycrispAutoScrollFrame = null;")
     }
 
     func speakCurrentLocation() {
@@ -788,9 +858,13 @@ final class ReaderViewController: NSViewController {
     }
 
     func toggleSpeechPause() {
-        if speechSynthesizer.isPaused { speechSynthesizer.continueSpeaking() }
-        else if speechSynthesizer.isSpeaking { speechSynthesizer.pauseSpeaking(at: .immediate) }
-        else { speakCurrentLocation() }
+        if speechSynthesizer.isPaused {
+            speechSynthesizer.continueSpeaking()
+        } else if speechSynthesizer.isSpeaking {
+            speechSynthesizer.pauseSpeaking(at: .immediate)
+        } else {
+            speakCurrentLocation()
+        }
     }
 
     func adjustSpeechRate(by delta: Float) {
@@ -918,8 +992,10 @@ final class ReaderViewController: NSViewController {
     private func setToolbarTitle(_ title: String, author: String = "") {
         let cleanAuthor = author.trimmingCharacters(in: .whitespacesAndNewlines)
         view.window?.title = cleanAuthor.isEmpty ? title : "\(title) — \(cleanAuthor)"
-        titleLabel?.stringValue = title
-        titleLabel?.toolTip = cleanAuthor.isEmpty ? title : "\(title) by \(cleanAuthor)"
+        toolbarTitleText = title
+        toolbarTitleTooltip = cleanAuthor.isEmpty ? title : "\(title) by \(cleanAuthor)"
+        titleLabel?.stringValue = toolbarTitleText
+        titleLabel?.toolTip = toolbarTitleTooltip
     }
 
     // MARK: - TOC Sidebar
@@ -1103,7 +1179,8 @@ final class ReaderViewController: NSViewController {
             // reader actually was, not wherever they were the last time the book was opened.
             self.webView.evaluateJavaScript("window.honeycrispCurrentCharacterOffset ? window.honeycrispCurrentCharacterOffset() : 0") { result, _ in
                 if let offset = result as? Int {
-                    HistoryManager.shared.updatePosition(url: url, spineIndex: self.currentMode == .scroll ? 0 : self.currentSpineIndex, characterOffset: offset)
+                    let spineIndex = self.currentMode == .scroll ? 0 : self.currentSpineIndex
+                    HistoryManager.shared.updatePosition(url: url, spineIndex: spineIndex, characterOffset: offset)
                 }
                 self.renderCurrentContent()
             }
@@ -1253,7 +1330,7 @@ final class ReaderViewController: NSViewController {
         if let pkg = currentPackage, pkg.spineURLs.indices.contains(activeScrollSpineIndex) {
             updateCurrentChapter(for: pkg.spineURLs[activeScrollSpineIndex])
         }
-        pageCountLabel?.stringValue = "\(page)/\(totalPages)"
+        setPageCountText("\(page)/\(totalPages)")
         refreshBookmarkButton()
     }
 
@@ -1264,7 +1341,12 @@ final class ReaderViewController: NSViewController {
         guard currentMode == .paginated else { return }
         let spineCount = currentPackage?.spineURLs.count ?? 1
         let page = paginatedCurrentColumn + 1
-        pageCountLabel?.stringValue = "\(page)/\(paginatedTotalColumns) \(currentSpineIndex + 1)/\(spineCount)"
+        setPageCountText("\(page)/\(paginatedTotalColumns) \(currentSpineIndex + 1)/\(spineCount)")
+    }
+
+    private func setPageCountText(_ text: String) {
+        pageCountText = text
+        pageCountLabel?.stringValue = text
     }
 
     // MARK: - Navigation
@@ -1285,7 +1367,7 @@ final class ReaderViewController: NSViewController {
     func handleKeyDown(_ event: NSEvent) -> Bool {
         if SettingsManager.shared.adjustScrollSpeedWhilePaging,
            isAutoScrolling,
-           (event.keyCode == 126 || event.keyCode == 125) {
+           event.keyCode == 126 || event.keyCode == 125 {
             isAdjustingAutoScrollSpeed = true
             let adjustment = event.keyCode == 126 ? 25.0 : -25.0
             setAutoScrollSpeed(autoScrollSpeed + adjustment)
@@ -1303,7 +1385,7 @@ final class ReaderViewController: NSViewController {
     }
 
     func handleKeyUp(_ event: NSEvent) -> Bool {
-        guard isAdjustingAutoScrollSpeed, (event.keyCode == 126 || event.keyCode == 125) else { return false }
+        guard isAdjustingAutoScrollSpeed, event.keyCode == 126 || event.keyCode == 125 else { return false }
         isAdjustingAutoScrollSpeed = false
         return true
     }
@@ -1465,7 +1547,8 @@ final class ReaderViewController: NSViewController {
             systemSymbolName: isFloating ? "pin.fill" : "pin",
             accessibilityDescription: "Float on top"
         )
-        floatButton?.contentTintColor = isFloating ? .secondaryLabelColor : nil
+        floatButton?.state = .off
+        floatButton?.contentTintColor = isFloating ? .secondaryLabelColor : .labelColor
         floatButton?.toolTip = isFloating ? "Stop floating on top" : "Float on top"
     }
 
@@ -1473,8 +1556,11 @@ final class ReaderViewController: NSViewController {
 
     private func showLoading(_ loading: Bool) {
         loadingIndicator.isHidden = !loading
-        if loading { loadingIndicator.startAnimation(nil) }
-        else        { loadingIndicator.stopAnimation(nil) }
+        if loading {
+            loadingIndicator.startAnimation(nil)
+        } else {
+            loadingIndicator.stopAnimation(nil)
+        }
     }
 
     private func showError(_ error: Error) {
@@ -1580,7 +1666,9 @@ extension ReaderViewController: SearchBarDelegate {
         searchDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self, weak bar] _ in
             guard let self, let bar, let package = self.currentPackage else { return }
             let titleMap = Dictionary(uniqueKeysWithValues: package.spineURLs.indices.map { index in
-                let chapter = self.flattenTOCEntries(self.tocEntries).first(where: { $0.absoluteURL.standardizedFileURL.path == package.spineURLs[index].standardizedFileURL.path })?.title ?? "Chapter \(index + 1)"
+                let targetPath = package.spineURLs[index].standardizedFileURL.path
+                let chapter = self.flattenTOCEntries(self.tocEntries)
+                    .first(where: { $0.absoluteURL.standardizedFileURL.path == targetPath })?.title ?? "Chapter \(index + 1)"
                 return (index, chapter)
             })
             DispatchQueue.global(qos: .userInitiated).async {
@@ -1742,6 +1830,7 @@ extension ReaderViewController: NSToolbarDelegate {
         [.openFile, .titleLabel, .search, .toc, .pageCount, .fontSize, .themePopover, .history, .floatToggle, .bookmark, .space, .flexibleSpace]
     }
 
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
     func toolbar(_ toolbar: NSToolbar,
                  itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -1784,9 +1873,13 @@ extension ReaderViewController: NSToolbarDelegate {
             // Fix a reasonable width so it truncates gracefully
             label.widthAnchor.constraint(lessThanOrEqualToConstant: 340).isActive = true
             label.widthAnchor.constraint(greaterThanOrEqualToConstant: 60).isActive = true
+            label.stringValue = toolbarTitleText
+            label.toolTip = toolbarTitleTooltip
             titleLabel = label
             item.view = label
-            item.label = ""
+            // Non-empty so the item is visible and draggable in Customize Toolbar.
+            item.label = "Title"
+            item.paletteLabel = "Title"
             return item
 
         case .fontSize:
@@ -1794,11 +1887,10 @@ extension ReaderViewController: NSToolbarDelegate {
             let seg = NSSegmentedControl(
                 images: [
                     NSImage(systemSymbolName: "textformat.size.smaller", accessibilityDescription: "Decrease Font")!,
-                    NSImage(systemSymbolName: "textformat.size.larger",  accessibilityDescription: "Increase Font")!
+                    NSImage(systemSymbolName: "textformat.size.larger", accessibilityDescription: "Increase Font")!
                 ],
                 trackingMode: .momentary, target: self, action: #selector(adjustFontSize(_:))
             )
-            seg.segmentStyle = .separated
             seg.setAccessibilityLabel("Font Size")
             // Per-segment tooltips so VoiceOver / hover can distinguish the
             // two icon-only segments individually, not just the control's
@@ -1831,9 +1923,13 @@ extension ReaderViewController: NSToolbarDelegate {
             label.translatesAutoresizingMaskIntoConstraints = false
             label.widthAnchor.constraint(lessThanOrEqualToConstant: 180).isActive = true
             label.widthAnchor.constraint(greaterThanOrEqualToConstant: 60).isActive = true
+            label.stringValue = pageCountText
             pageCountLabel = label
             item.view = label
-            item.label = ""
+            // Non-empty so the item is visible and draggable in Customize Toolbar;
+            // an empty label made it a blank, effectively unfindable palette entry.
+            item.label = "Page Count"
+            item.paletteLabel = "Page Count"
             return item
 
         case .themePopover:
@@ -1875,6 +1971,13 @@ extension ReaderViewController: NSToolbarDelegate {
         btn.toolTip = tooltip
         btn.isBordered = false
         btn.setButtonType(.momentaryLight)
+        // Toolbar buttons never take keyboard focus. Without this the first button
+        // (Open) can be drawn highlighted after the web view is dragged in, and the
+        // system may tint a focused item with the accent color.
+        btn.refusesFirstResponder = true
+        btn.focusRingType = .none
+        btn.showsBorderOnlyWhileMouseInside = false
+        btn.contentTintColor = .labelColor
         // VoiceOver reads the control's own accessibility label over the
         // underlying NSImage's accessibilityDescription when both exist, and
         // an NSButton doesn't reliably inherit the image's description as its
@@ -1992,7 +2095,7 @@ final class ReaderWebView: WKWebView {
         // public AppKit API; no private header import needed.
         let idsToRemove: Set<String> = [
             "WKMenuItemIdentifierShareMenu",
-            "WKMenuItemIdentifierSearchWeb",
+            "WKMenuItemIdentifierSearchWeb"
         ]
         // "Copy Link with Highlight" doesn't have a confirmed stable identifier;
         // match by title instead. Honeycrisp has no localization (no .lproj
