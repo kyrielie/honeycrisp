@@ -11,6 +11,50 @@ struct EPUBPackage {
     let title: String
     let author: String
     let coverURL: URL?
+    let manifest: [String: EPUBManifestItem]
+    let spine: [EPUBSpineItem]
+    let version: String?
+    let navigationURL: URL?
+    let landmarks: [EPUBLandmark]
+
+    init(rootFolder: URL, spineURLs: [URL], title: String, author: String, coverURL: URL?, manifest: [String: EPUBManifestItem] = [:], spine: [EPUBSpineItem]? = nil, version: String? = nil, navigationURL: URL? = nil, landmarks: [EPUBLandmark] = []) {
+        self.rootFolder = rootFolder
+        self.spineURLs = spineURLs
+        self.title = title
+        self.author = author
+        self.coverURL = coverURL
+        self.manifest = manifest
+        self.spine = spine ?? spineURLs.enumerated().map { EPUBSpineItem(manifestID: "spine-\($0.offset)", url: $0.element, isLinear: true) }
+        self.version = version
+        self.navigationURL = navigationURL
+        self.landmarks = landmarks
+    }
+}
+
+struct EPUBManifestItem {
+    let id: String
+    let href: String
+    let mediaType: String
+    let properties: Set<String>
+    let url: URL
+}
+
+struct EPUBSpineItem {
+    let manifestID: String
+    let url: URL
+    let isLinear: Bool
+}
+
+struct EPUBLandmark {
+    let type: String
+    let title: String
+    let url: URL
+}
+
+struct BookSearchResult {
+    let spineIndex: Int
+    let characterOffset: Int
+    let excerpt: String
 }
 
 /// Snapshot of the reader's cosmetic settings (font, size, theme colors,
@@ -60,6 +104,11 @@ enum EPUBParseError: Error, LocalizedError {
 }
 
 final class EPUBParser: NSObject {
+
+    static func javaScriptStringLiteral(_ value: String) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
 
     func unpackEPUB(at epubURL: URL, to workDir: URL) throws -> URL {
         let fm = FileManager.default
@@ -111,6 +160,65 @@ final class EPUBParser: NSObject {
         throw EPUBParseError.opfNotFound
     }
 
+    func searchResults(for term: String, in package: EPUBPackage, limit: Int = 250) -> [BookSearchResult] {
+        let query = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+        var results: [BookSearchResult] = []
+        for index in package.spineURLs.indices {
+            guard let html = try? Self.extractedChapterBody(from: package, index: index, base: package.rootFolder, formatFirstChapter: false, removeParagraphIndents: false) else { continue }
+            let text = Self.searchableText(fromHTML: html)
+            let nsText = text as NSString
+            var searchRange = NSRange(location: 0, length: nsText.length)
+            while searchRange.length > 0 && results.count < limit {
+                let match = nsText.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], range: searchRange)
+                guard match.location != NSNotFound else { break }
+                let before = max(0, match.location - 65)
+                let after = min(nsText.length, NSMaxRange(match) + 90)
+                var excerpt = nsText.substring(with: NSRange(location: before, length: after - before))
+                    .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if before > 0 { excerpt = "…" + excerpt }
+                if after < nsText.length { excerpt += "…" }
+                results.append(BookSearchResult(spineIndex: index, characterOffset: match.location, excerpt: excerpt))
+                let nextLocation = NSMaxRange(match)
+                searchRange = NSRange(location: nextLocation, length: nsText.length - nextLocation)
+            }
+            if results.count >= limit { break }
+        }
+        return results
+    }
+
+    func speechText(in package: EPUBPackage, at index: Int) -> String? {
+        guard package.spineURLs.indices.contains(index),
+              let html = try? Self.extractedChapterBody(
+                from: package,
+                index: index,
+                base: package.rootFolder,
+                formatFirstChapter: false,
+                removeParagraphIndents: false
+              ) else { return nil }
+        let text = Self.searchableText(fromHTML: html)
+        return text.isEmpty ? nil : text
+    }
+
+    private static func searchableText(fromHTML html: String) -> String {
+        var text = html.replacingOccurrences(of: #"(?is)<(script|style)[^>]*>.*?</\1>"#, with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(?s)<[^>]+>"#, with: "", options: .regularExpression)
+        let entities: [(String, String)] = [("&nbsp;", "\u{00a0}"), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'")]
+        for (entity, value) in entities { text = text.replacingOccurrences(of: entity, with: value, options: .caseInsensitive) }
+        text = text.replacingOccurrences(of: #"&#(\d+);"#, with: { _, matched in
+            let digits = matched.dropFirst(2).dropLast()
+            guard let value = UInt32(digits), let scalar = UnicodeScalar(value) else { return "" }
+            return String(scalar)
+        })
+        text = text.replacingOccurrences(of: #"&#x([0-9a-f]+);"#, with: { _, matched in
+            let digits = matched.dropFirst(3).dropLast()
+            guard let value = UInt32(digits, radix: 16), let scalar = UnicodeScalar(value) else { return "" }
+            return String(scalar)
+        })
+        return text
+    }
+
     private func parseOPF(at opfURL: URL) throws -> EPUBPackage {
         let rootFolder = opfURL.deletingLastPathComponent()
         let opfData = try Data(contentsOf: opfURL)
@@ -118,18 +226,26 @@ final class EPUBParser: NSObject {
 
         let titleNode = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='title']")).first as? XMLElement
         let authorNode = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='creator']")).first as? XMLElement
-        let bookTitle = titleNode?.stringValue ?? "Unknown Title"
-        let bookAuthor = authorNode?.stringValue ?? ""
+        let bookTitle = titleNode?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let bookAuthor = authorNode?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         var hrefByID: [String: String] = [:]
         var mediaTypeByID: [String: String] = [:]
+        var manifest: [String: EPUBManifestItem] = [:]
         let itemNodes = (try opf.nodes(forXPath: "//*[local-name()='manifest']/*[local-name()='item']")) as? [XMLElement] ?? []
         for item in itemNodes {
             if let id = item.attribute(forName: "id")?.stringValue, let href = item.attribute(forName: "href")?.stringValue {
                 hrefByID[id] = href
-                mediaTypeByID[id] = item.attribute(forName: "media-type")?.stringValue ?? ""
+                let mediaType = item.attribute(forName: "media-type")?.stringValue ?? ""
+                mediaTypeByID[id] = mediaType
+                let properties = Set((item.attribute(forName: "properties")?.stringValue ?? "").split(whereSeparator: \.isWhitespace).map(String.init))
+                manifest[id] = EPUBManifestItem(id: id, href: href, mediaType: mediaType, properties: properties, url: Self.resolve(href, relativeTo: rootFolder))
             }
         }
+
+        let version = (try opf.nodes(forXPath: "/*[local-name()='package']/@version")).first?.stringValue
+        let navItem = manifest.values.first(where: { $0.properties.contains("nav") })
+        let navigationURL = navItem?.url
 
         var coverURL: URL?
         let coverMeta = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='meta'][@name='cover']")) as? [XMLElement]
@@ -149,22 +265,65 @@ final class EPUBParser: NSObject {
             }
         }
 
-        var spineHrefs: [String] = []
+        var spineItems: [EPUBSpineItem] = []
         let spineNodes = (try opf.nodes(forXPath: "//*[local-name()='spine']/*[local-name()='itemref']")) as? [XMLElement] ?? []
         for node in spineNodes {
             if let ref = node.attribute(forName: "idref")?.stringValue, let href = hrefByID[ref] {
-                spineHrefs.append(href)
+                let url = Self.resolve(href, relativeTo: rootFolder)
+                if ["xhtml", "html", "htm"].contains(url.pathExtension.lowercased()) {
+                    spineItems.append(EPUBSpineItem(manifestID: ref, url: url, isLinear: node.attribute(forName: "linear")?.stringValue?.lowercased() != "no"))
+                }
             }
         }
 
-        let spineURLs: [URL] = spineHrefs.compactMap { href in
-            let decoded = href.removingPercentEncoding ?? href
-            let u = URL(fileURLWithPath: decoded, relativeTo: rootFolder).standardizedFileURL
-            return ["xhtml", "html", "htm"].contains(u.pathExtension.lowercased()) ? u : nil
-        }
+        let spineURLs = spineItems.map(\.url)
 
         guard !spineURLs.isEmpty else { throw EPUBParseError.malformed }
-        return EPUBPackage(rootFolder: rootFolder, spineURLs: spineURLs, title: bookTitle, author: bookAuthor, coverURL: coverURL)
+        let landmarks = navigationURL.map { Self.parseLandmarks(at: $0) } ?? []
+        return EPUBPackage(rootFolder: rootFolder, spineURLs: spineURLs, title: bookTitle, author: bookAuthor, coverURL: coverURL, manifest: manifest, spine: spineItems, version: version, navigationURL: navigationURL, landmarks: landmarks)
+    }
+
+    private static func resolve(_ href: String, relativeTo base: URL) -> URL {
+        let components = URLComponents(string: href)
+        let path = (components?.percentEncodedPath.removingPercentEncoding ?? components?.path ?? href).removingPercentEncoding ?? href
+        let file = URL(fileURLWithPath: path, relativeTo: base).standardizedFileURL
+        guard var resolved = URLComponents(url: file, resolvingAgainstBaseURL: false) else { return file }
+        resolved.query = components?.query
+        resolved.fragment = components?.fragment
+        return resolved.url ?? file
+    }
+
+    private static func parseLandmarks(at url: URL) -> [EPUBLandmark] {
+        guard let source = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        guard let navRegex = try? NSRegularExpression(pattern: #"(?is)<nav\b([^>]*)>(.*?)</nav\s*>"#),
+              let linkRegex = try? NSRegularExpression(pattern: #"(?is)<a\b([^>]*)>(.*?)</a\s*>"#),
+              let attributeRegex = try? NSRegularExpression(pattern: #"(?i)([\w:-]+)\s*=\s*([\"'])(.*?)\2"#) else { return [] }
+        func attributes(_ source: String, range: NSRange) -> [String: String] {
+            guard let range = Range(range, in: source) else { return [:] }
+            let text = String(source[range])
+            let fullRange = NSRange(text.startIndex..., in: text)
+            return Dictionary(attributeRegex.matches(in: text, range: fullRange).compactMap { match in
+                guard let keyRange = Range(match.range(at: 1), in: text), let valueRange = Range(match.range(at: 3), in: text) else { return nil }
+                return (String(text[keyRange]).lowercased(), String(text[valueRange]))
+            }, uniquingKeysWith: { first, _ in first })
+        }
+        var landmarks: [EPUBLandmark] = []
+        for navMatch in navRegex.matches(in: source, range: NSRange(source.startIndex..., in: source)) {
+            let navAttrs = attributes(source, range: navMatch.range(at: 1))
+            guard navAttrs["epub:type"]?.split(whereSeparator: \.isWhitespace).contains("landmarks") == true,
+                  let bodyRange = Range(navMatch.range(at: 2), in: source) else { continue }
+            let body = String(source[bodyRange])
+            for linkMatch in linkRegex.matches(in: body, range: NSRange(body.startIndex..., in: body)) {
+                let linkAttrs = attributes(body, range: linkMatch.range(at: 1))
+                guard let type = linkAttrs["epub:type"], let href = linkAttrs["href"],
+                      let titleRange = Range(linkMatch.range(at: 2), in: body) else { continue }
+                let title = String(body[titleRange]).replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+                for semantic in type.split(whereSeparator: \.isWhitespace) {
+                    landmarks.append(EPUBLandmark(type: semantic.lowercased(), title: title, url: resolve(href, relativeTo: url.deletingLastPathComponent())))
+                }
+            }
+        }
+        return landmarks
     }
 
     // MARK: - HTML building
@@ -178,7 +337,8 @@ final class EPUBParser: NSObject {
     func buildScrollHTML(
         from pkg: EPUBPackage, cosmetics: ReaderCosmeticSettings,
         scrollRestoreJS: String = "",
-        formatFirstChapter: Bool = false, removeParagraphIndents: Bool = false
+        formatFirstChapter: Bool = false, removeParagraphIndents: Bool = false,
+        hideImages: Bool = false
     ) throws -> String {
         var body = ""
         let base = pkg.rootFolder
@@ -201,6 +361,7 @@ final class EPUBParser: NSObject {
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style id="honeycrisp-vars">\(Self.readerVarsCSS(cosmetics))</style>
             <style>\(Self.readerCSS)</style>
+            <style>\(Self.imageVisibilityCSS(hideImages: hideImages))</style>
         </head>
         <body>
         <div id="content">\(body)</div>
@@ -233,7 +394,8 @@ final class EPUBParser: NSObject {
         paddingH: CGFloat = 24,
         paddingV: CGFloat = 24,
         formatFirstChapter: Bool = false,
-        removeParagraphIndents: Bool = false
+        removeParagraphIndents: Bool = false,
+        hideImages: Bool = false
     ) throws -> String {
         let base = pkg.rootFolder
         let extracted = try Self.extractedChapterBody(
@@ -274,6 +436,7 @@ final class EPUBParser: NSObject {
             <style id="honeycrisp-vars">\(Self.readerVarsCSS(cosmetics))</style>
             <style>\(Self.readerCSS)</style>
             <style>\(columnCSS)</style>
+            <style>\(Self.imageVisibilityCSS(hideImages: hideImages))</style>
         </head>
         <body>
         <div id="content">\(body)</div>
@@ -283,6 +446,11 @@ final class EPUBParser: NSObject {
         </body>
         </html>
         """
+    }
+
+    private static func imageVisibilityCSS(hideImages: Bool) -> String {
+        guard hideImages else { return "" }
+        return "img, picture, svg image { display: none !important; }"
     }
 
     /// Horizontal CSS multi-column layout, ported from Ambrosia's
@@ -491,12 +659,14 @@ final class EPUBParser: NSObject {
 
     var _hits = [];
     var _hitIdx = -1;
+    var _nativeSearchTerm = null;
 
     /**
      * Highlight all occurrences of `term` across all chapter sections.
      * Returns the total hit count (read by Swift via evaluateJavaScript).
      */
     window.searchText = function(term) {
+      var clearNativeSelection = _nativeSearchTerm !== null;
       // 1. Remove previous highlights
       document.querySelectorAll('mark.ql-hit').forEach(function(m) {
         var parent = m.parentNode;
@@ -505,8 +675,28 @@ final class EPUBParser: NSObject {
       });
       _hits = [];
       _hitIdx = -1;
+      _nativeSearchTerm = null;
 
-      if (!term || term.length < 2) return 0;
+      if (!term || term.length < 1) {
+        if (clearNativeSelection) window.getSelection().removeAllRanges();
+        return 0;
+      }
+
+      if (window._qlPaginated) {
+        _nativeSearchTerm = term;
+        var escaped = term.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+        var matcher = new RegExp(escaped, 'gi');
+        var count = 0;
+        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        var textNode;
+        while ((textNode = walker.nextNode()) !== null) {
+          var matches = textNode.textContent.match(matcher);
+          if (matches) count += matches.length;
+        }
+        window.getSelection().removeAllRanges();
+        window.find(term, false, false, true, false, false, false);
+        return count;
+      }
 
       // 2. Walk all text nodes and wrap matches
       var escapedTerm = term.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
@@ -558,6 +748,10 @@ final class EPUBParser: NSObject {
      * Advance (+1) or retreat (-1) through search results.
      */
     window.nextSearchResult = function(direction) {
+      if (_nativeSearchTerm) {
+        window.find(_nativeSearchTerm, false, direction < 0, true, false, false, false);
+        return;
+      }
       if (_hits.length === 0) return;
       _hits[_hitIdx].classList.remove('ql-active');
       _hitIdx = (_hitIdx + direction + _hits.length) % _hits.length;
@@ -574,15 +768,52 @@ final class EPUBParser: NSObject {
 
     window.navigateToChapter = function(idx) {
       var sections = document.querySelectorAll('.ql-chapter');
-      if (idx >= 0 && idx < sections.length) {
+      if (window._qlPaginated) {
+        if (idx >= 0 && idx < sections.length) sections[idx].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (idx >= 0 && idx < sections.length) {
         sections[idx].scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     };
 
     window.navigateToFragment = function(id) {
-      var el = document.getElementById(id) || document.querySelector('[name="' + id + '"]');
+      var el = document.getElementById(id);
+      if (!el) {
+        var named = document.getElementsByName(id);
+        el = named.length ? named[0] : null;
+      }
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
+
+    window.navigateToChapterEnd = function(idx) {
+      var section = document.getElementById('chapter-' + idx);
+      if (section) section.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    };
+
+    window.honeycrispCurrentSpeechText = function(spineIndex) {
+      var section = document.getElementById('chapter-' + spineIndex);
+      if (!section) return '';
+      var selection = window.getSelection();
+      if (selection && !selection.isCollapsed && selection.toString().trim()) return selection.toString();
+      var x = Math.round(window.innerWidth / 2), y = Math.round(window.innerHeight / 3);
+      var range = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+      var target = range && section.contains(range.startContainer) ? range.startContainer : null;
+      var offset = target ? range.startOffset : 0, started = !target, parts = [];
+      var walker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT, null), node;
+      while ((node = walker.nextNode()) !== null) {
+        if (!started && node === target) started = true;
+        if (started) parts.push(node.textContent.slice(node === target ? offset : 0));
+      }
+      return parts.join(' ').replace(/\\s+/g, ' ').trim();
+    };
+
+    ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(function(type) {
+      window.addEventListener(type, function() {
+        if (window.honeycrispAutoScrollFrame) {
+          cancelAnimationFrame(window.honeycrispAutoScrollFrame);
+          window.honeycrispAutoScrollFrame = null;
+        }
+      }, { passive: true });
+    });
 
     // ── Reading progress ──────────────────────────────────────────────────────────
 
@@ -632,6 +863,50 @@ final class EPUBParser: NSObject {
         count += node.length;
       }
       return count;
+    };
+
+    window.honeycrispCurrentChapterCharacterOffset = function() {
+      var sections = document.querySelectorAll('.ql-chapter');
+      var section = sections[window.honeycrispPageInfo().spineIndex];
+      if (!section) return 0;
+      var x = Math.round(window.innerWidth / 2);
+      var y = HONEYCRISP_POSITION_REFERENCE_Y;
+      var range = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+      var target = range && range.startContainer && section.contains(range.startContainer) ? range.startContainer : null;
+      var localOffset = target ? range.startOffset : 0;
+      var walker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT, null);
+      var count = 0, node;
+      while ((node = walker.nextNode()) !== null) {
+        if (node === target) return count + localOffset;
+        count += node.length;
+      }
+      return count;
+    };
+
+    window.honeycrispNavigateToChapterOffset = function(spineIndex, targetOffset) {
+      var section = document.getElementById('chapter-' + spineIndex);
+      if (!section) return;
+      var walker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT, null);
+      var count = 0, node, lastNode = null;
+      while ((node = walker.nextNode()) !== null) {
+        lastNode = node;
+        if (targetOffset <= count + node.length) {
+          var range = document.createRange();
+          range.setStart(node, Math.max(0, Math.min(node.length, targetOffset - count)));
+          range.setEnd(range.startContainer, range.startOffset);
+          var rect = range.getBoundingClientRect();
+          window.scrollTo(0, Math.max(0, window.scrollY + rect.top - HONEYCRISP_POSITION_REFERENCE_Y));
+          return;
+        }
+        count += node.length;
+      }
+      if (lastNode) {
+        var end = document.createRange();
+        end.selectNodeContents(lastNode);
+        end.collapse(false);
+        var rect = end.getBoundingClientRect();
+        window.scrollTo(0, Math.max(0, window.scrollY + rect.top - HONEYCRISP_POSITION_REFERENCE_Y));
+      }
     };
 
     // Seeks scroll mode to a given spine item at a given fraction (0.0-1.0)
@@ -799,8 +1074,8 @@ final class EPUBParser: NSObject {
         padding: 0 1px;
     }
     mark.ql-hit.ql-active {
-        background: #FF9800;
-        outline: 2px solid #E65100;
+        background: Highlight;
+        color: HighlightText;
     }
 
     html {

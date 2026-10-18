@@ -112,6 +112,10 @@ final class HistoryViewController: NSViewController {
         ])
 
         self.view = container
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(historyDidChange),
+            name: HistoryManager.entriesDidChangeNotification, object: nil
+        )
     }
 
     func reload() {
@@ -124,6 +128,10 @@ final class HistoryViewController: NSViewController {
         emptyLabel.isHidden = !entries.isEmpty
         scrollView.isHidden = entries.isEmpty
     }
+
+    @objc private func historyDidChange() { reload() }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
 
     @objc private func openSelectedEntry(_ sender: Any?) {
         let row = tableView.selectedRow
@@ -157,9 +165,9 @@ enum HistoryEntryOpener {
             showMissingFileAlert(for: entry, onRemoved: onRemoved)
             return
         }
-        let didStart = url.startAccessingSecurityScopedResource()
+        // The reader controller starts and retains security-scoped access
+        // synchronously in loadEPUB(at:) before its asynchronous extraction.
         onOpen(url)
-        if didStart { url.stopAccessingSecurityScopedResource() }
     }
 
     private static func showMissingFileAlert(for entry: HistoryEntry, onRemoved: () -> Void) {
@@ -182,6 +190,7 @@ extension HistoryViewController: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { entries.count }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard entries.indices.contains(row) else { return nil }
         let entry = entries[row]
 
         let cell = HistoryRowView()

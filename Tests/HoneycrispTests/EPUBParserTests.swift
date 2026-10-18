@@ -48,6 +48,78 @@ final class EPUBParserTests: XCTestCase {
         XCTAssertEqual(package.spineURLs.map(\.lastPathComponent), ["chapter1.xhtml", "chapter 2.xhtml"])
         XCTAssertEqual(package.coverURL?.lastPathComponent, "cover.jpg")
         XCTAssertEqual(package.spineURLs.first?.deletingLastPathComponent().lastPathComponent, "Text")
+        XCTAssertEqual(package.version, "3.0")
+        XCTAssertEqual(package.manifest["chapter-two"]?.mediaType, "application/xhtml+xml")
+        XCTAssertEqual(package.spine.map(\.isLinear), [true, true])
+    }
+
+    func testManifestNavigationLandmarksAndNonLinearSpineAreRetained() throws {
+        let root = try makeEPUBRoot(
+            opfPath: "OPS/package.opf",
+            opf: """
+            <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+              <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>  </dc:title><dc:creator> Author </dc:creator></metadata>
+              <manifest>
+                <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+                <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>
+                <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+              </manifest>
+              <spine><itemref idref="cover" linear="no"/><itemref idref="chapter"/></spine>
+            </package>
+            """,
+            files: ["OPS/nav.xhtml", "OPS/cover.xhtml", "OPS/chapter.xhtml"]
+        )
+        let nav = """
+        <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>
+          <nav epub:type="landmarks"><ol>
+            <li><a href="chapter.xhtml#start" epub:type="bodymatter text">Start Reading</a></li>
+          </ol></nav>
+          <nav epub:type="toc"><ol><li><a href="chapter.xhtml">Chapter</a></li></ol></nav>
+        </body></html>
+        """
+        try Data(nav.utf8).write(to: root.appendingPathComponent("OPS/nav.xhtml"))
+
+        let package = try EPUBParser().parsePackage(at: root)
+
+        XCTAssertEqual(package.title, "")
+        XCTAssertEqual(package.author, "Author")
+        XCTAssertEqual(package.navigationURL?.lastPathComponent, "nav.xhtml")
+        XCTAssertEqual(package.spine.map(\.isLinear), [false, true])
+        XCTAssertEqual(package.landmarks.map(\.type), ["bodymatter", "text"])
+        XCTAssertEqual(package.landmarks.first?.url.fragment, "start")
+    }
+
+    func testSearchResultsRetainChapterAndUTF16TextOffsets() throws {
+        let root = try makeEPUBRoot(
+            opfPath: "package.opf",
+            opf: """
+            <package><metadata><title>Search</title></metadata><manifest>
+              <item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+            </manifest><spine><itemref idref="one"/></spine></package>
+            """,
+            files: ["one.xhtml"]
+        )
+        try Data("<html><body><p>😀 before &amp; after Needle.</p></body></html>".utf8).write(to: root.appendingPathComponent("one.xhtml"))
+        let package = try EPUBParser().parsePackage(at: root)
+
+        let results = EPUBParser().searchResults(for: "needle", in: package)
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results.first?.spineIndex, 0)
+        XCTAssertEqual(results.first?.characterOffset, 18)
+        XCTAssertTrue(results.first?.excerpt.contains("Needle") == true)
+    }
+
+    func testJavaScriptStringLiteralEscapesExecutableInput() throws {
+        let input = "x'); alert(1); // \\\n \" \u{2028}"
+
+        let literal = try XCTUnwrap(EPUBParser.javaScriptStringLiteral(input))
+
+        XCTAssertTrue(literal.hasPrefix("\""))
+        XCTAssertTrue(literal.hasSuffix("\""))
+        XCTAssertFalse(literal.contains("\n"))
+        let decoded = try JSONDecoder().decode(String.self, from: Data(literal.utf8))
+        XCTAssertEqual(decoded, input)
     }
 
     func testParsePackageRejectsAnEmptyOrNonHTMLSpine() throws {

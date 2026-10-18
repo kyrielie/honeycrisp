@@ -68,6 +68,11 @@ xattr -d com.apple.quarantine /path/to/app
 - **Scroll mode** — all chapters merged into one continuous scroll
 - **Float on top** — pin any window above all others (⌘⇧T or toolbar pin button)
 - **Reading history** — recent books saved with open date, accessible via clock toolbar button
+- **Open Recent** — reopen supported EPUBs from File > Open Recent
+- **Persistent bookmarks** — save and rename multiple return points per book from the Bookmarks menu
+- **In-book search** — ⌘F opens a focused overlay with excerpts and chapter locations
+- **Start Reading** — follows EPUB landmarks when available, with a direct route to the beginning and TOC
+- **Drag and drop** — drop an EPUB onto an empty reader window or an open book
 - **Themes** - save your prefered formatting as a theme
 - **Dark mode** — automatic, follows system appearance
 - **Page counter** - page / total pages (and spine / total spines in paged mode)
@@ -80,7 +85,7 @@ These are intentional scope boundaries, not missing features:
 - **No library view** — File > Open, drag-drop, and the History popover are the only ways to open a book. Honeycrisp is a reader, not a library manager; see [ambrosia](https://github.com/kyrielie/ambrosia) for that.
 - **No cross-library full-text search** — search is scoped to the currently open book only.
 - **No publisher CSS** — Honeycrisp deliberately strips inline/publisher styling and applies its own reader CSS (Lora typeface, warm paper palette). This is by design, not a rendering bug.
-- **No "share quote"** — without a metadata parser for title/author/ISBN, there's nothing reliable to attribute a quote to, so this isn't offered.
+- **No quote sharing** — quote attribution and sharing are outside the reader's current scope.
 - **No per-window/per-book reading mode** — paginated vs. scroll mode is a single global default (Settings' General tab); every window and every book opens in whichever mode was last chosen.
 
 ## Keyboard shortcuts
@@ -116,6 +121,14 @@ Run the macOS unit-test suite with:
 
 The script generates the Xcode project from `project.yml` and runs the suite. The GitHub Actions test workflow does the same on pushes and pull requests. Override the destination with `HONEYCRISP_TEST_DESTINATION` or the Derived Data folder with `HONEYCRISP_DERIVED_DATA` when needed.
 
+Lint Swift source with Apple's formatter from the selected Xcode toolchain:
+
+```bash
+xcrun swift-format lint --configuration .swift-format --recursive Sources Tests
+```
+
+To format specific files intentionally, use `xcrun swift-format format --configuration .swift-format --in-place <file>`. Formatting is currently a local check; CI enforcement can be enabled after the existing source baseline has been reviewed.
+
 ### Requirements
 
 - macOS 13.0+ (Ventura or later)
@@ -135,6 +148,11 @@ The script generates the Xcode project from `project.yml` and runs the suite. Th
 | `HistoryViewController.swift` | Popover showing recent books with open/remove actions |
 
 `project.yml` is the source of truth for the generated Xcode project and shared scheme. Run `xcodegen generate` after changing the project configuration; do not hand-edit `Honeycrisp.xcodeproj`. The root `Package.swift` remains a secondary SwiftPM build entry point.
+
+The local EPUB compatibility corpus is described in
+[docs/compatibility-corpus.md](docs/compatibility-corpus.md). Local book files
+are excluded from source control unless their redistribution terms are
+verified and they are intentionally added as test fixtures.
 
 The QuickLook plugin (`EPUBQuickLook`) provided the `EPUBParser` core and the basic WebKit rendering approach. (I think, I just told claude to use it.)
 

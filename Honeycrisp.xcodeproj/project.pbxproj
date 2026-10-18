@@ -10,6 +10,7 @@
 		1E2A23A179E9E431B847A219 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = C370DDE7FF3633C345885900 /* ZIPFoundation */; };
 		233DF86951D89EA649906521 /* EPUBParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6AF0111CC06DF971978EA85 /* EPUBParser.swift */; };
 		2E0CF8473FA4C535018A4E14 /* EPUBParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D7A71536E4271892DCBEA5D /* EPUBParserTests.swift */; };
+		2E4E0BB7A1C6FC97CA4C1601 /* EPUBDropTargetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B37C758887D0E0E7A0FF269 /* EPUBDropTargetView.swift */; };
 		3074E42E9A78108A9A710C4A /* HistoryManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57905595980F86BCF0BF22C /* HistoryManagerTests.swift */; };
 		39BDB4E2BFD42A448CC1A1BC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 17849096AFD48A179A872DAF /* Assets.xcassets */; };
 		61CF0C1F9AFAB75F0BEE1CE7 /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4795D4B98C18E527455301B /* SettingsWindowController.swift */; };
@@ -24,9 +25,12 @@
 		AC6F67A5AEF94BD816A3B7EB /* HistoryViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC41BE4A21F89BE9FC192BB6 /* HistoryViewController.swift */; };
 		AFF12E36B7BFE28704C83415 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD8CE02E7FF7134CD584D680 /* SettingsManager.swift */; };
 		B6513658596AEE36C6A4C0D9 /* TOCSidebarViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 558D77A25915C25866CFBB4E /* TOCSidebarViewController.swift */; };
+		B680C7A68901EE501F5D884F /* ReadingBookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C732C5FE33BDF3FD3F02202 /* ReadingBookmark.swift */; };
 		BAAF42E5BDCA665DF6199740 /* SearchBarViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E6AECE767118C9C82BD47E2 /* SearchBarViewController.swift */; };
+		D12773522D7105FA69988AC1 /* TOCPopupViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2ECC47150C3BCCE72539630 /* TOCPopupViewController.swift */; };
 		D47AC7DB4A41999330AE8ED7 /* TOCParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BD2302421A452C68A29E99B /* TOCParserTests.swift */; };
 		D672A3076CA8E36B195381FB /* ReaderWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 419C82A5F21CB272A280918E /* ReaderWindowController.swift */; };
+		DB195C19702B8905C3405301 /* BookmarkManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1CC74B3F8BECB61DE0E6818 /* BookmarkManagerTests.swift */; };
 		E4853EE86A831985282A645E /* HistoryManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A3888F3BFD3E49F146D6F6 /* HistoryManager.swift */; };
 		EAAFF3274F0623CD744C1A52 /* EPUBReaderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B823536A76522BE13E2CC662 /* EPUBReaderApp.swift */; };
 		F3459BE233A29B79143A48BF /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81924E5CB1173EE2EA991828 /* AppDelegate.swift */; };
@@ -47,6 +51,7 @@
 		0E2554BC564FF46DB3CB5B22 /* ReaderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderViewController.swift; sourceTree = "<group>"; };
 		174EA7CA464A9360B247E651 /* HistoryEntryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryEntryTests.swift; sourceTree = "<group>"; };
 		17849096AFD48A179A872DAF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		1B37C758887D0E0E7A0FF269 /* EPUBDropTargetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBDropTargetView.swift; sourceTree = "<group>"; };
 		39A3888F3BFD3E49F146D6F6 /* HistoryManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryManager.swift; sourceTree = "<group>"; };
 		3C9471638B8828EFDD666DFD /* TOCParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TOCParser.swift; sourceTree = "<group>"; };
 		419C82A5F21CB272A280918E /* ReaderWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderWindowController.swift; sourceTree = "<group>"; };
@@ -56,8 +61,10 @@
 		64638D9FC519C746453D9AD3 /* RestorePositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestorePositionTests.swift; sourceTree = "<group>"; };
 		81924E5CB1173EE2EA991828 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		8BD2302421A452C68A29E99B /* TOCParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TOCParserTests.swift; sourceTree = "<group>"; };
+		8C732C5FE33BDF3FD3F02202 /* ReadingBookmark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingBookmark.swift; sourceTree = "<group>"; };
 		9A069142949F8343F88586C4 /* ShortcutsSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsSettingsViewController.swift; sourceTree = "<group>"; };
 		A0E9BCD033A4ACC98412CA40 /* Honeycrisp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Honeycrisp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1CC74B3F8BECB61DE0E6818 /* BookmarkManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkManagerTests.swift; sourceTree = "<group>"; };
 		A55DBC10E11877AB03BEFDD2 /* ThemePopoverViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemePopoverViewController.swift; sourceTree = "<group>"; };
 		A57905595980F86BCF0BF22C /* HistoryManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryManagerTests.swift; sourceTree = "<group>"; };
 		B0752E79749B6B99C8F0D7D7 /* PaginationJS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaginationJS.swift; sourceTree = "<group>"; };
@@ -65,6 +72,7 @@
 		B823536A76522BE13E2CC662 /* EPUBReaderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBReaderApp.swift; sourceTree = "<group>"; };
 		BE9949F1E18751FD925074FD /* PaginationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaginationEngine.swift; sourceTree = "<group>"; };
 		DD8CE02E7FF7134CD584D680 /* SettingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManager.swift; sourceTree = "<group>"; };
+		F2ECC47150C3BCCE72539630 /* TOCPopupViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TOCPopupViewController.swift; sourceTree = "<group>"; };
 		F6AF0111CC06DF971978EA85 /* EPUBParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPUBParser.swift; sourceTree = "<group>"; };
 		F98FFB8B3D9076F0C861AD54 /* HoneycrispTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HoneycrispTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FC41BE4A21F89BE9FC192BB6 /* HistoryViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryViewController.swift; sourceTree = "<group>"; };
@@ -99,6 +107,7 @@
 			children = (
 				5E6AECE767118C9C82BD47E2 /* SearchBarViewController.swift */,
 				A55DBC10E11877AB03BEFDD2 /* ThemePopoverViewController.swift */,
+				F2ECC47150C3BCCE72539630 /* TOCPopupViewController.swift */,
 				558D77A25915C25866CFBB4E /* TOCSidebarViewController.swift */,
 			);
 			path = Sidebar;
@@ -107,6 +116,7 @@
 		4252471E4D4CBA2B0D8A7DB2 /* Reader */ = {
 			isa = PBXGroup;
 			children = (
+				1B37C758887D0E0E7A0FF269 /* EPUBDropTargetView.swift */,
 				BE9949F1E18751FD925074FD /* PaginationEngine.swift */,
 				B0752E79749B6B99C8F0D7D7 /* PaginationJS.swift */,
 				0E2554BC564FF46DB3CB5B22 /* ReaderViewController.swift */,
@@ -144,6 +154,7 @@
 		82830D1BE2291620AE8E9C5F /* HoneycrispTests */ = {
 			isa = PBXGroup;
 			children = (
+				A1CC74B3F8BECB61DE0E6818 /* BookmarkManagerTests.swift */,
 				4D7A71536E4271892DCBEA5D /* EPUBParserTests.swift */,
 				174EA7CA464A9360B247E651 /* HistoryEntryTests.swift */,
 				A57905595980F86BCF0BF22C /* HistoryManagerTests.swift */,
@@ -158,6 +169,7 @@
 			children = (
 				39A3888F3BFD3E49F146D6F6 /* HistoryManager.swift */,
 				FC41BE4A21F89BE9FC192BB6 /* HistoryViewController.swift */,
+				8C732C5FE33BDF3FD3F02202 /* ReadingBookmark.swift */,
 			);
 			path = History;
 			sourceTree = "<group>";
@@ -289,6 +301,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F3459BE233A29B79143A48BF /* AppDelegate.swift in Sources */,
+				2E4E0BB7A1C6FC97CA4C1601 /* EPUBDropTargetView.swift in Sources */,
 				233DF86951D89EA649906521 /* EPUBParser.swift in Sources */,
 				EAAFF3274F0623CD744C1A52 /* EPUBReaderApp.swift in Sources */,
 				E4853EE86A831985282A645E /* HistoryManager.swift in Sources */,
@@ -298,11 +311,13 @@
 				7648BCD6E01A04942D82A9FA /* PaginationJS.swift in Sources */,
 				67067130D28D406AA2E7C67B /* ReaderViewController.swift in Sources */,
 				D672A3076CA8E36B195381FB /* ReaderWindowController.swift in Sources */,
+				B680C7A68901EE501F5D884F /* ReadingBookmark.swift in Sources */,
 				BAAF42E5BDCA665DF6199740 /* SearchBarViewController.swift in Sources */,
 				AFF12E36B7BFE28704C83415 /* SettingsManager.swift in Sources */,
 				61CF0C1F9AFAB75F0BEE1CE7 /* SettingsWindowController.swift in Sources */,
 				99C94D59CDB5A55C8F1F28B0 /* ShortcutsSettingsViewController.swift in Sources */,
 				A515FC054CAE90D8D16B8E82 /* TOCParser.swift in Sources */,
+				D12773522D7105FA69988AC1 /* TOCPopupViewController.swift in Sources */,
 				B6513658596AEE36C6A4C0D9 /* TOCSidebarViewController.swift in Sources */,
 				762E19EFB80DE6C51B396D14 /* ThemePopoverViewController.swift in Sources */,
 			);
@@ -312,6 +327,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DB195C19702B8905C3405301 /* BookmarkManagerTests.swift in Sources */,
 				2E0CF8473FA4C535018A4E14 /* EPUBParserTests.swift in Sources */,
 				FE78096058576B9D15B86006 /* HistoryEntryTests.swift in Sources */,
 				3074E42E9A78108A9A710C4A /* HistoryManagerTests.swift in Sources */,

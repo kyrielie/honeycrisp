@@ -3,7 +3,6 @@
 
 import AppKit
 import WebKit
-import UniformTypeIdentifiers
 
 final class ReaderWindowController: NSWindowController, NSWindowDelegate {
 
@@ -46,10 +45,11 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
 
         window.setContentSize(NSSize(width: 980, height: 960))   // wider to accommodate sidebar
 
-        let toolbar = NSToolbar(identifier: "ReaderToolbar_\(UUID().uuidString.prefix(8))")
+        let toolbar = NSToolbar(identifier: "HoneycrispReaderToolbar")
         toolbar.delegate = readerViewController
         toolbar.displayMode = .iconOnly
-        toolbar.allowsUserCustomization = false
+        toolbar.allowsUserCustomization = true
+        toolbar.autosavesConfiguration = true
         window.toolbar = toolbar
 
         let openCount = ReaderWindowController.openWindows.count
@@ -64,6 +64,14 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func loadEPUB(at url: URL) {
+        guard url.isFileURL, url.pathExtension.lowercased() == "epub" else {
+            let alert = NSAlert()
+            alert.messageText = "Unsupported File"
+            alert.informativeText = "Honeycrisp can open EPUB books."
+            alert.alertStyle = .warning
+            if let window { alert.beginSheetModal(for: window) }
+            return
+        }
         readerViewController.loadEPUB(at: url)
         // Title shown only if setting is on; ReaderViewController handles this
     }
@@ -81,6 +89,18 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
                 self?.loadEPUB(at: url)
             }
         }
+    }
+
+    func loadRecent(_ entry: HistoryEntry) {
+        guard let url = HistoryManager.shared.resolveURL(for: entry) else {
+            let alert = NSAlert()
+            alert.messageText = "Book Not Found"
+            alert.informativeText = "\(entry.title) could not be found. The other recent books are still available."
+            alert.alertStyle = .warning
+            if let window { alert.beginSheetModal(for: window) }
+            return
+        }
+        loadEPUB(at: url)
     }
 
     @objc func toggleFloat(_ sender: Any?) {
@@ -112,6 +132,14 @@ final class ReaderWindow: NSWindow {
         }
         super.keyDown(with: event)
     }
+
+    override func keyUp(with event: NSEvent) {
+        if let vc = contentViewController as? ReaderViewController, vc.handleKeyUp(event) {
+            return
+        }
+        super.keyUp(with: event)
+    }
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+
 }

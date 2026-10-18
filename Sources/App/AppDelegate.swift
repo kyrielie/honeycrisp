@@ -19,6 +19,17 @@
 
 import AppKit
 import CoreServices
+import AVFoundation
+
+private final class BookmarkMenuContext {
+    let bookmark: ReadingBookmark
+    weak var reader: ReaderViewController?
+
+    init(bookmark: ReadingBookmark, reader: ReaderViewController?) {
+        self.bookmark = bookmark
+        self.reader = reader
+    }
+}
 
 class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -77,6 +88,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         let epubURLs = urls.filter { $0.pathExtension.lowercased() == "epub" }
+        let unsupported = urls.filter { !$0.isFileURL || $0.pathExtension.lowercased() != "epub" }
+        if !unsupported.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "Unsupported File Type"
+            alert.informativeText = "Honeycrisp opens EPUB books. Unsupported items were skipped: \(unsupported.map(\.lastPathComponent).joined(separator: ", "))"
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
         for url in epubURLs {
             let wc = ReaderWindowController()
             // "New tab" means a tab of the frontmost reader window, the same
@@ -133,6 +152,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let fileMenu = NSMenu(title: "File")
         fileMenuItem.submenu = fileMenu
         fileMenu.addItem(NSMenuItem(title: "Open…", action: #selector(openDocumentAction), keyEquivalent: "o"))
+        let recentMenu = NSMenu(title: "Open Recent")
+        recentMenu.delegate = self
+        let recentItem = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+        recentItem.submenu = recentMenu
+        fileMenu.addItem(recentItem)
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(NSMenuItem(title: "New Window", action: #selector(newWindowAction), keyEquivalent: "n"))
+        fileMenu.items.last?.keyEquivalentModifierMask = [.command]
+        fileMenu.addItem(.separator())
         // Standard AppKit responder-chain action — the correct way to make a
         // window's built-in close button/behavior also reachable by keyboard, and
         // what every other closable-window Mac app does. Not in RebindableAction:
@@ -183,6 +211,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         viewMenu.addItem(tocItem)
 
+        let startItem = NSMenuItem(title: "Start Reading", action: #selector(startReading), keyEquivalent: "")
+        viewMenu.addItem(startItem)
+        viewMenu.addItem(NSMenuItem(title: "Go to Beginning", action: #selector(goToBeginning), keyEquivalent: ""))
+
         viewMenu.addItem(.separator())
 
         // Float on Top (⇧⌘T)
@@ -194,9 +226,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         floatItem.keyEquivalentModifierMask = [.command, .shift]
         viewMenu.addItem(floatItem)
 
-        // Paginated Mode (⇧⌘P) — static title + checkmark (HIG), not a title-swap.
-        // ⇧⌘P is unused today and deliberately avoids colliding with the
-        // HIG-reserved plain ⌘P ("Print") convention.
+        // Reading mode uses a fixed title and a checkmark to show the active mode.
         let readingModeItem = NSMenuItem(
             title: "Paginated Mode",
             action: #selector(toggleReadingMode),
@@ -205,6 +235,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         readingModeItem.keyEquivalentModifierMask = [.command, .shift]
         viewMenu.addItem(.separator())
         viewMenu.addItem(readingModeItem)
+
+        let bookmarksItem = NSMenuItem()
+        mainMenu.addItem(bookmarksItem)
+        let bookmarksMenu = NSMenu(title: "Bookmarks")
+        bookmarksMenu.delegate = self
+        bookmarksItem.title = "Bookmarks"
+        bookmarksItem.submenu = bookmarksMenu
 
         // Reflect any previously-saved rebinding immediately on launch, not only
         // after the next change.
@@ -246,8 +283,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         readingMenu.addItem(NSMenuItem(title: "Decrease Font Size", action: #selector(decreaseFontSize), keyEquivalent: "-"))
 
         readingMenu.addItem(.separator())
-        let pageCountItem = NSMenuItem(title: "Show Page Count", action: #selector(toggleShowPageCount), keyEquivalent: "")
-        readingMenu.addItem(pageCountItem)
+        for (title, action) in [("Previous Chapter", #selector(previousChapter)), ("Next Chapter", #selector(nextChapter)), ("Beginning of Chapter", #selector(chapterBeginning)), ("End of Chapter", #selector(chapterEnd))] {
+            readingMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: ""))
+        }
+
+        let autoScrollMenu = NSMenu(title: "Auto-Scroll")
+        autoScrollMenu.addItem(NSMenuItem(title: "Start / Resume", action: #selector(startAutoScroll), keyEquivalent: ""))
+        autoScrollMenu.addItem(NSMenuItem(title: "Stop", action: #selector(stopAutoScroll), keyEquivalent: ""))
+        autoScrollMenu.addItem(.separator())
+        let autoScrollItem = NSMenuItem(title: "Auto-Scroll", action: nil, keyEquivalent: "")
+        autoScrollItem.submenu = autoScrollMenu
+        readingMenu.addItem(autoScrollItem)
+
+        let speechMenu = NSMenu(title: "Speak Current Chapter")
+        speechMenu.addItem(NSMenuItem(title: "Speak from Current Location", action: #selector(speakCurrentLocation), keyEquivalent: ""))
+        speechMenu.addItem(NSMenuItem(title: "Pause / Resume", action: #selector(toggleSpeechPause), keyEquivalent: ""))
+        speechMenu.addItem(NSMenuItem(title: "Stop Speaking", action: #selector(stopSpeech), keyEquivalent: ""))
+        speechMenu.addItem(.separator())
+        speechMenu.addItem(NSMenuItem(title: "Slower Speech", action: #selector(slowerSpeech), keyEquivalent: ""))
+        speechMenu.addItem(NSMenuItem(title: "Faster Speech", action: #selector(fasterSpeech), keyEquivalent: ""))
+        speechMenu.addItem(.separator())
+        let speechItem = NSMenuItem(title: "Speak Current Chapter", action: nil, keyEquivalent: "")
+        speechItem.submenu = speechMenu
+        readingMenu.addItem(speechItem)
 
         // ── Window Menu ───────────────────────────────────────────────────────
         // Previously absent entirely. Standard convention for a multi-window Mac
@@ -313,6 +371,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Actions
 
+    @objc private func newWindowAction() {
+        let controller = ReaderWindowController()
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+    }
+
     @objc func openSettingsAction(_ sender: Any?) {
         let controller = SettingsWindowController.shared
         controller.showWindow(nil)
@@ -354,6 +418,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         readerVC()?.toggleReadingMode(nil)
     }
 
+    @objc private func startReading() { readerVC()?.startReading() }
+    @objc private func goToBeginning() { readerVC()?.goToBeginning() }
+    @objc private func addBookmark() { readerVC()?.addCurrentBookmark() }
+    @objc private func openRecent(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID,
+              let entry = HistoryManager.shared.entries.first(where: { $0.id == id }) else { return }
+        let wc = ReaderWindowController()
+        wc.showWindow(nil)
+        wc.loadRecent(entry)
+    }
+    @objc private func openBookmark(_ sender: NSMenuItem) {
+        guard let context = sender.representedObject as? BookmarkMenuContext,
+              let vc = context.reader,
+              let url = vc.currentBookURL(), ReadingBookmark.normalizedPath(for: url) == context.bookmark.bookPath else { return }
+        vc.navigate(to: context.bookmark)
+    }
+    @objc private func removeBookmark(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        BookmarkManager.shared.remove(id: id)
+        NSApp.mainMenu?.item(withTitle: "Bookmarks")?.submenu?.update()
+    }
+    @objc private func renameBookmark(_ sender: NSMenuItem) {
+        guard let bookmark = sender.representedObject as? ReadingBookmark else { return }
+        let alert = NSAlert()
+        alert.messageText = "Rename Bookmark"
+        let field = NSTextField(string: bookmark.label)
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        BookmarkManager.shared.rename(id: bookmark.id, to: field.stringValue)
+        NSApp.mainMenu?.item(withTitle: "Bookmarks")?.submenu?.update()
+    }
+
     @objc private func selectTheme(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID else { return }
         SettingsManager.shared.currentThemeID = id
@@ -372,9 +471,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsManager.shared.fontSizePercent = max(50, SettingsManager.shared.fontSizePercent - 10)
     }
 
-    @objc private func toggleShowPageCount() {
-        SettingsManager.shared.showPageCount.toggle()
-    }
+    @objc private func previousChapter() { readerVC()?.navigateChapter(forward: false) }
+    @objc private func nextChapter() { readerVC()?.navigateChapter(forward: true) }
+    @objc private func chapterBeginning() { readerVC()?.goToChapterBeginning() }
+    @objc private func chapterEnd() { readerVC()?.goToChapterEnd() }
+    @objc private func startAutoScroll() { readerVC()?.startAutoScroll() }
+    @objc private func stopAutoScroll() { readerVC()?.stopAutoScroll() }
+    @objc private func speakCurrentLocation() { readerVC()?.speakCurrentLocation() }
+    @objc private func toggleSpeechPause() { readerVC()?.toggleSpeechPause() }
+    @objc private func stopSpeech() { readerVC()?.stopSpeech() }
+    @objc private func slowerSpeech() { readerVC()?.adjustSpeechRate(by: -0.05) }
+    @objc private func fasterSpeech() { readerVC()?.adjustSpeechRate(by: 0.05) }
 
     // MARK: - Helpers
 
@@ -392,6 +499,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu.title == "View",
+           let modeItem = menu.items.first(where: { $0.action == #selector(toggleReadingMode) }) {
+            modeItem.title = "Paginated Mode"
+            modeItem.state = SettingsManager.shared.defaultReadingMode == .paginated ? .on : .off
+            modeItem.isEnabled = readerVC() != nil
+        }
+        if menu.title == "Open Recent" {
+            menu.items.removeAll()
+            for entry in HistoryManager.shared.entries {
+                let item = NSMenuItem(title: entry.title, action: #selector(openRecent(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = entry.id
+                item.isEnabled = true
+                menu.addItem(item)
+            }
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            let clear = NSMenuItem(title: "Clear Menu", action: #selector(clearRecent), keyEquivalent: "")
+            clear.target = self
+            clear.isEnabled = !HistoryManager.shared.entries.isEmpty
+            menu.addItem(clear)
+            return
+        }
+        if menu.title == "Bookmarks" {
+            menu.items.removeAll()
+            let add = NSMenuItem(title: "Add Bookmark", action: #selector(addBookmark), keyEquivalent: "")
+            add.target = self
+            add.isEnabled = readerVC()?.currentBookURL() != nil
+            menu.addItem(add)
+            menu.addItem(.separator())
+            guard let reader = readerVC(), let url = reader.currentBookURL() else { return }
+            for bookmark in BookmarkManager.shared.bookmarks(for: url) {
+                let item = NSMenuItem(title: bookmark.label, action: #selector(openBookmark(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = BookmarkMenuContext(bookmark: bookmark, reader: reader)
+                let actions = NSMenu(title: bookmark.label)
+                let rename = NSMenuItem(title: "Rename…", action: #selector(renameBookmark(_:)), keyEquivalent: "")
+                rename.target = self
+                rename.representedObject = bookmark
+                let remove = NSMenuItem(title: "Remove", action: #selector(removeBookmark(_:)), keyEquivalent: "")
+                remove.target = self
+                remove.representedObject = bookmark.id
+                actions.addItem(rename)
+                actions.addItem(remove)
+                item.submenu = actions
+                menu.addItem(item)
+            }
+            return
+        }
         menu.items.removeAll()
         for theme in SettingsManager.shared.themes {
             let item = NSMenuItem(title: theme.name, action: #selector(selectTheme(_:)), keyEquivalent: "")
@@ -400,6 +555,8 @@ extension AppDelegate: NSMenuDelegate {
             menu.addItem(item)
         }
     }
+
+    @objc private func clearRecent() { HistoryManager.shared.clearAll() }
 }
 
 extension AppDelegate: NSMenuItemValidation {
@@ -414,18 +571,22 @@ extension AppDelegate: NSMenuItemValidation {
             // when there's no reader window open at all to be consistent with).
             return readerVC()?.currentMode == .paginated
         }
-        if menuItem.action == #selector(toggleShowPageCount) {
-            menuItem.state = SettingsManager.shared.showPageCount ? .on : .off
-            return true
+        if [#selector(previousChapter), #selector(nextChapter), #selector(chapterBeginning), #selector(chapterEnd), #selector(startAutoScroll), #selector(stopAutoScroll), #selector(speakCurrentLocation), #selector(toggleSpeechPause), #selector(stopSpeech), #selector(slowerSpeech), #selector(fasterSpeech)].contains(menuItem.action) {
+            if menuItem.action == #selector(startAutoScroll) || menuItem.action == #selector(stopAutoScroll) {
+                return readerVC()?.currentBookURL() != nil && readerVC()?.currentMode == .scroll
+            }
+            return readerVC()?.currentBookURL() != nil
+        }
+        if [#selector(startReading), #selector(goToBeginning), #selector(searchInBook), #selector(showTOC), #selector(addBookmark)].contains(menuItem.action) {
+            return readerVC()?.currentBookURL() != nil
         }
         guard let vc = readerVC() else {
             // No reader window/content: these don't apply yet.
-            return menuItem.action != #selector(toggleReadingMode)
-                && menuItem.action != #selector(searchInBook)
-                && menuItem.action != #selector(showTOC)
+            return true
         }
         if menuItem.action == #selector(toggleReadingMode) {
             menuItem.state = vc.currentMode == .paginated ? .on : .off
+            menuItem.title = vc.currentMode == .paginated ? "Switch to Continuous Scroll" : "Switch to Paginated Mode"
         }
         return true
     }

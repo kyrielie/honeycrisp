@@ -29,6 +29,7 @@
 //    already-visited tab animates directly to the cached size.
 
 import AppKit
+import AVFoundation
 import UniformTypeIdentifiers
 
 // MARK: - Pane sizing protocol
@@ -56,7 +57,7 @@ extension SettingsPaneSizing where Self: NSViewController {
 
 // MARK: - Window Controller
 
-/// Every settings pane's fixed content size. All four tabs report this exact
+/// Every settings pane's fixed content size. All five tabs report this exact
 /// same size (rather than each measuring its own content) so the window
 /// never visibly resizes when switching tabs -- previously each pane
 /// reported its own real content height, and NSTabViewController's own
@@ -183,6 +184,7 @@ final class SettingsTabViewController: NSTabViewController {
         // Typography tab intentionally removed.
         let tabSpecs: [(() -> NSViewController, String, String)] = [
             ({ GeneralSettingsViewController() },    "General",    "gear"),
+            ({ ReaderSettingsViewController() },     "Reading",    "text.book.closed"),
             ({ AppearanceSettingsViewController() }, "Appearance", "paintbrush"),
             ({ HistorySettingsViewController() },    "History",    "clock"),
             ({ ShortcutsSettingsViewController() },  "Shortcuts",  "keyboard"),
@@ -336,6 +338,26 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         indentHint.textColor = .secondaryLabelColor
         stack.addArrangedSubview(indentHint)
 
+        let hideImagesCheckbox = NSButton(
+            checkboxWithTitle: "Hide images while reading",
+            target: self,
+            action: #selector(toggleHideImages(_:))
+        )
+        hideImagesCheckbox.state = SettingsManager.shared.hideImages ? .on : .off
+        hideImagesCheckbox.toolTip = "Images remain in the book and reappear when this setting is turned off."
+        stack.addArrangedSubview(hideImagesCheckbox)
+        self.hideImagesCheckbox = hideImagesCheckbox
+
+        let skipCoverCheckbox = NSButton(
+            checkboxWithTitle: "Skip cover when opening",
+            target: self,
+            action: #selector(toggleSkipCover(_:))
+        )
+        skipCoverCheckbox.state = SettingsManager.shared.skipCoverWhenOpening ? .on : .off
+        skipCoverCheckbox.toolTip = "Only applies when the EPUB explicitly marks a cover page. Saved reading positions are preserved."
+        stack.addArrangedSubview(skipCoverCheckbox)
+        self.skipCoverCheckbox = skipCoverCheckbox
+
         // Reading mode — moved here from the toolbar's paged/scroll toggle button
         // (replaced there by the Settings gear icon). This mirrors the View-menu
         // "Paginated Mode" item (⇧⌘P): it's per-window, session-only state, not a
@@ -413,7 +435,7 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         stack.setCustomSpacing(16, after: divider)
 
         let resetHint = NSTextField(wrappingLabelWithString:
-            "Resets every tab -- General, Appearance, History display, and Shortcuts -- back to its original defaults. History entries themselves aren't affected."
+            "Resets every tab -- General, Reading, Appearance, History, and Shortcuts -- back to their original defaults. History entries themselves aren't affected."
         )
         resetHint.font = NSFont.systemFont(ofSize: 11)
         resetHint.textColor = .secondaryLabelColor
@@ -428,12 +450,19 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
 
         self.view = root
         resolvePreferredPaneSize()
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(readingModeSettingChanged(_:)),
+            name: SettingsManager.settingsChangedNotification, object: nil
+        )
     }
 
     private weak var readingModeCheckbox: NSButton?
     private weak var linkClicksCheckbox: NSButton?
     private weak var formatCheckbox: NSButton?
     private weak var indentCheckbox: NSButton?
+    private weak var hideImagesCheckbox: NSButton?
+    private weak var skipCoverCheckbox: NSButton?
     private weak var newBookControl: NSSegmentedControl?
 
     override func viewWillAppear() {
@@ -443,13 +472,17 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
     }
 
     private func refreshReadingModeCheckbox() {
-        guard let vc = frontmostReaderVC() else {
+        guard frontmostReaderVC() != nil else {
             readingModeCheckbox?.state = .off
             readingModeCheckbox?.isEnabled = false
             return
         }
         readingModeCheckbox?.isEnabled = true
-        readingModeCheckbox?.state = vc.currentMode == .paginated ? .on : .off
+        readingModeCheckbox?.state = SettingsManager.shared.defaultReadingMode == .paginated ? .on : .off
+    }
+
+    @objc private func readingModeSettingChanged(_ notification: Notification) {
+        refreshReadingModeCheckbox()
     }
 
     /// Unlike AppDelegate.readerVC()'s NSApp.keyWindow lookup (right for the
@@ -470,8 +503,8 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         // toggleReadingMode(_:) finishes asynchronously (it round-trips through
         // webView.evaluateJavaScript to capture the current scroll fraction before
         // switching), so vc.currentMode is still the OLD mode right after this
-        // call returns. The checkbox's own just-set state is what the user
-        // intended and is correct here without waiting on that round-trip.
+        // call returns. The default mode setting updates synchronously, so the
+        // checkbox refreshes from that source via settingsChangedNotification.
         vc.toggleReadingMode(nil)
     }
 
@@ -483,6 +516,14 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
 
     @objc private func toggleRemoveParagraphIndents(_ sender: NSButton) {
         SettingsManager.shared.removeParagraphIndents = sender.state == .on
+    }
+
+    @objc private func toggleHideImages(_ sender: NSButton) {
+        SettingsManager.shared.hideImages = sender.state == .on
+    }
+
+    @objc private func toggleSkipCover(_ sender: NSButton) {
+        SettingsManager.shared.skipCoverWhenOpening = sender.state == .on
     }
 
     @objc private func toggleLinkClicks(_ sender: NSButton) {
@@ -517,9 +558,135 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         // refresh gating, not here.
         formatCheckbox?.state = SettingsManager.shared.formatFirstChapter ? .on : .off
         indentCheckbox?.state = SettingsManager.shared.removeParagraphIndents ? .on : .off
+        hideImagesCheckbox?.state = SettingsManager.shared.hideImages ? .on : .off
+        skipCoverCheckbox?.state = SettingsManager.shared.skipCoverWhenOpening ? .on : .off
         linkClicksCheckbox?.state = SettingsManager.shared.allowReaderLinkClicks ? .on : .off
         newBookControl?.selectedSegment = SettingsManager.shared.newBookOpensIn.rawValue
         refreshReadingModeCheckbox()
+    }
+}
+
+final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
+    var preferredPaneSize: NSSize?
+    let isResizableView = false
+    private weak var speedValue: NSTextField?
+    private weak var speedStepper: NSStepper?
+    private weak var voicePopup: NSPopUpButton?
+    private weak var adjustScrollSpeedCheckbox: NSButton?
+
+    override func loadView() {
+        let root = NSView(frame: NSRect(origin: .zero, size: SettingsPaneMetrics.size))
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let speedTitle = NSTextField(labelWithString: "Auto-scroll speed")
+        stack.addArrangedSubview(speedTitle)
+        let speedRow = NSStackView()
+        speedRow.orientation = .horizontal
+        speedRow.alignment = .centerY
+        speedRow.spacing = 8
+        let speedValue = NSTextField(labelWithString: "\(Int(SettingsManager.shared.autoScrollSpeed)) px/s")
+        speedValue.widthAnchor.constraint(equalToConstant: 100).isActive = true
+        speedValue.alignment = .right
+        let speedStepper = NSStepper()
+        speedStepper.minValue = 10
+        speedStepper.maxValue = 1200
+        speedStepper.increment = 25
+        speedStepper.integerValue = Int(SettingsManager.shared.autoScrollSpeed)
+        speedStepper.target = self
+        speedStepper.action = #selector(autoScrollSpeedChanged(_:))
+        speedRow.addArrangedSubview(speedValue)
+        speedRow.addArrangedSubview(speedStepper)
+        stack.addArrangedSubview(speedRow)
+
+        let speedHint = NSTextField(wrappingLabelWithString: "Use the plus and minus controls to set a speed from 10 to 1,200 pixels per second. Auto-scroll is available in continuous scroll mode.")
+        speedHint.font = NSFont.systemFont(ofSize: 11)
+        speedHint.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(speedHint)
+
+        let adjustScrollSpeedCheckbox = NSButton(
+            checkboxWithTitle: "Adjust auto-scroll speed with scroll buttons",
+            target: self,
+            action: #selector(toggleAdjustScrollSpeed(_:))
+        )
+        adjustScrollSpeedCheckbox.state = SettingsManager.shared.adjustScrollSpeedWhilePaging ? .on : .off
+        stack.addArrangedSubview(adjustScrollSpeedCheckbox)
+
+        stack.addArrangedSubview(NSTextField(labelWithString: "Speech voice"))
+        let voicePopup = NSPopUpButton()
+        voicePopup.addItem(withTitle: "System Default")
+        voicePopup.lastItem?.representedObject = ""
+        for voice in AVSpeechSynthesisVoice.speechVoices().sorted(by: {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }) {
+            voicePopup.addItem(withTitle: "\(voice.name) (\(voice.language))")
+            voicePopup.lastItem?.representedObject = voice.identifier
+        }
+        selectSpeechVoice(in: voicePopup, identifier: SettingsManager.shared.speechVoiceIdentifier)
+        voicePopup.target = self
+        voicePopup.action = #selector(speechVoiceChanged(_:))
+        stack.addArrangedSubview(voicePopup)
+
+        let speechHint = NSTextField(wrappingLabelWithString: "Speech starts at the current reading position, then continues through the remaining chapters.")
+        speechHint.font = NSFont.systemFont(ofSize: 11)
+        speechHint.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(speechHint)
+
+        root.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -20),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 24),
+        ])
+        self.speedValue = speedValue
+        self.speedStepper = speedStepper
+        self.voicePopup = voicePopup
+        self.adjustScrollSpeedCheckbox = adjustScrollSpeedCheckbox
+        self.view = root
+        resolvePreferredPaneSize()
+    }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        speedStepper?.integerValue = Int(SettingsManager.shared.autoScrollSpeed)
+        speedValue?.stringValue = "\(Int(SettingsManager.shared.autoScrollSpeed)) px/s"
+        if let voicePopup {
+            selectSpeechVoice(in: voicePopup, identifier: SettingsManager.shared.speechVoiceIdentifier)
+        }
+    }
+
+    private func selectSpeechVoice(in popup: NSPopUpButton, identifier: String?) {
+        let representedIdentifier = identifier ?? ""
+        guard let item = popup.itemArray.first(where: {
+            ($0.representedObject as? String) == representedIdentifier
+        }) else { return }
+        popup.select(item)
+    }
+
+    @objc private func autoScrollSpeedChanged(_ sender: NSStepper) {
+        SettingsManager.shared.autoScrollSpeed = Double(sender.integerValue)
+        speedValue?.stringValue = "\(sender.integerValue) px/s"
+        if let reader = NSApp.orderedWindows.lazy.compactMap({ $0.contentViewController as? ReaderViewController }).first {
+            reader.setAutoScrollSpeed(Double(sender.integerValue))
+        }
+    }
+
+    @objc private func toggleAdjustScrollSpeed(_ sender: NSButton) {
+        SettingsManager.shared.adjustScrollSpeedWhilePaging = sender.state == .on
+    }
+
+    @objc private func speechVoiceChanged(_ sender: NSPopUpButton) {
+        let identifier = sender.selectedItem?.representedObject as? String
+        let voiceIdentifier = identifier?.isEmpty == true ? nil : identifier
+        let readers = NSApp.orderedWindows.compactMap { $0.contentViewController as? ReaderViewController }
+        if readers.isEmpty {
+            SettingsManager.shared.speechVoiceIdentifier = voiceIdentifier
+        } else {
+            readers.forEach { $0.setSpeechVoice(identifier: voiceIdentifier) }
+        }
     }
 }
 
@@ -1633,6 +1800,7 @@ final class HistorySettingsViewController: NSViewController, SettingsPaneSizing 
     var preferredPaneSize: NSSize?
     let isResizableView = false
     private var tableView: NSTableView!
+    private var historyEntries: [HistoryEntry] = []
 
     override func loadView() {
         let root = NSView(frame: NSRect(origin: .zero, size: SettingsPaneMetrics.size))
@@ -1686,13 +1854,21 @@ final class HistorySettingsViewController: NSViewController, SettingsPaneSizing 
             self, selector: #selector(reload),
             name: SettingsManager.settingsChangedNotification, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(reload),
+            name: HistoryManager.entriesDidChangeNotification, object: nil
+        )
+        historyEntries = HistoryManager.shared.entries
     }
 
-    @objc private func reload() { tableView.reloadData() }
+    @objc private func reload() {
+        historyEntries = HistoryManager.shared.entries
+        tableView.reloadData()
+    }
 
     @objc private func clearHistory(_ sender: Any?) {
         HistoryManager.shared.clearAll()
-        tableView.reloadData()
+        reload()
     }
 
     deinit { NotificationCenter.default.removeObserver(self) }
@@ -1700,11 +1876,12 @@ final class HistorySettingsViewController: NSViewController, SettingsPaneSizing 
 
 extension HistorySettingsViewController: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int {
-        HistoryManager.shared.entries.count
+        historyEntries.count
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let entry = HistoryManager.shared.entries[row]
+        guard historyEntries.indices.contains(row) else { return nil }
+        let entry = historyEntries[row]
         let cell = HistorySettingsCellView()
         cell.configure(with: entry)
         return cell
@@ -1719,15 +1896,14 @@ extension HistorySettingsViewController: NSTableViewDataSource, NSTableViewDeleg
     // already uses for Finder/dock opens.
     func tableViewSelectionDidChange(_ notification: Notification) {
         let row = tableView.selectedRow
-        let entries = HistoryManager.shared.entries
-        guard row >= 0, row < entries.count else { return }
-        let entry = entries[row]
+        guard historyEntries.indices.contains(row) else { return }
+        let entry = historyEntries[row]
         HistoryEntryOpener.open(entry, onOpen: { url in
             let wc = ReaderWindowController()
             wc.showWindow(nil)
             wc.loadEPUB(at: url)
         }, onRemoved: { [weak self] in
-            self?.tableView.reloadData()
+            self?.reload()
         })
     }
 }

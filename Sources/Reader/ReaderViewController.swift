@@ -3,14 +3,13 @@
 // TOC sidebar, in-book search, reading-progress tracking, dynamic title.
 //
 // CHANGES vs original:
-//  • Toolbar: removed .search, .toc, .settings items; added centered .titleLabel item
+//  • Toolbar: centered book title plus customizable Search and Contents controls
 //  • Title: always shown centered in toolbar (truncated); window.title is also
 //    set (setToolbarTitle) so the Window menu/Mission Control/VoiceOver still
 //    read the real title even though titleVisibility hides it from the titlebar
-//  • TOC: driven entirely from menu bar "Show Table of Contents" (⌘T); sidebar
-//    collapsed/expanded state is independent of toolbar buttons
+//  • TOC: available from a centered popup and the menu bar "Show Table of Contents" (⌘T)
 //  • TOC re-open bug fixed: setSidebarVisible checks collapsed state via splitView API
-//  • Search: moved to menu bar (⌘F); debounced via a 0.3 s Timer
+//  • Search: available from the toolbar and menu bar (⌘F); debounced via a 0.3 s Timer
 //  • Search highlighting: window.searchText() now returns count AND highlights via
 //    CSS mark elements injected by the JS embedded in the HTML template
 //  • Settings gear button back in the toolbar (replaces the old paged/scroll
@@ -21,6 +20,7 @@
 
 import AppKit
 import WebKit
+import AVFoundation
 
 final class ReaderViewController: NSViewController {
 
@@ -28,6 +28,7 @@ final class ReaderViewController: NSViewController {
 
     private var webView: ReaderWebView!
     private var loadingIndicator: NSProgressIndicator!
+    private var emptyStateView: NSView!
 
     private var currentPackage: EPUBPackage?
     private var currentEPUBURL: URL?
@@ -41,6 +42,11 @@ final class ReaderViewController: NSViewController {
     private(set) var currentMode: ReadingMode = .scroll
     private var paginationEngine: PaginationEngine?
     private var currentSpineIndex: Int = 0
+    private var activeScrollSpineIndex: Int = 0
+    private var tocEntries: [TOCEntry] = []
+    private var currentChapterTitle: String?
+    private var pendingSearchTerm: String?
+    private var pendingFragment: String?
     // MARK: - Page count (menu bar display)
     //
     // "Page" is scoped per spine item / chapter for PAGINATED mode only (see
@@ -59,6 +65,9 @@ final class ReaderViewController: NSViewController {
     private var paginatedCurrentColumn: Int = 0
     private var paginatedTotalColumns: Int = 1
     private weak var pageCountLabel: NSTextField?
+    private weak var bookmarkButton: NSButton?
+    private var bookmarkRefreshGeneration = 0
+    private var currentPositionBookmarkID: UUID?
     /// Flips true the first time `viewDidLayout()` runs with the view attached to
     /// a real window — guards the first paginated load against racing the
     /// window's first layout pass, ported from Ambrosia's `isLayoutReady`/
@@ -83,6 +92,9 @@ final class ReaderViewController: NSViewController {
     /// live paginated position instead of falling back to the possibly-stale
     /// persisted HistoryEntry offset. Consumed and cleared on use.
     private var pendingScrollRestore: (spineIndex: Int, fraction: Double)?
+    /// Initial scroll-mode landing point when the user opted to skip an
+    /// explicitly identified EPUB cover. Consumed once during first render.
+    private var pendingInitialScrollSpineIndex: Int?
     /// Snapshot of the cosmetics actually baked into whatever HTML is
     /// currently loading/loaded (set alongside each buildScrollHTML/
     /// buildPageHTML call). Compared against current settings in
@@ -109,12 +121,17 @@ final class ReaderViewController: NSViewController {
     private var contentContainer: NSView!
     private var searchOverlay: NSView!
     private var searchBarVisible = false
+    private var searchOverlayHeightConstraint: NSLayoutConstraint!
+    private var tocPopup: NSPanel?
 
     // MARK: - Toolbar
 
     /// Weak refs to toolbar controls that need state updates
     private weak var floatButton: NSButton?
+    private var isFloatingWindow = false
     private weak var historyButton: NSButton?
+    private weak var searchButton: NSButton?
+    private weak var tocButton: NSButton?
     private weak var titleLabel: NSTextField?   // centered title in toolbar
 
     /// Debounce timer for search input
@@ -128,6 +145,14 @@ final class ReaderViewController: NSViewController {
     /// belt-and-suspenders alongside the debounced-scroll save, so a reader who
     /// stops scrolling and just sits reading still gets saved periodically.
     private var positionSaveTimer: Timer?
+    private let speechSynthesizer = AVSpeechSynthesizer()
+    private var speechRate: Float = AVSpeechUtteranceDefaultSpeechRate
+    private var speechQueueGeneration = 0
+    private var speechNextSpineIndex: Int?
+    private var speechCurrentText: String?
+    private var autoScrollSpeed: Double { SettingsManager.shared.autoScrollSpeed }
+    private var isAutoScrolling = false
+    private var isAdjustingAutoScrollSpeed = false
 
     // MARK: - View Lifecycle
 
@@ -156,6 +181,7 @@ final class ReaderViewController: NSViewController {
 
         webView = ReaderWebView(frame: NSRect(x: 0, y: 0, width: 780, height: 920), configuration: cfg)
         webView.navigationDelegate = self
+        speechSynthesizer.delegate = self
         webView.allowsMagnification = true
         webView.setValue(false, forKey: "drawsBackground")
         webView.readerViewController = self
@@ -212,6 +238,9 @@ final class ReaderViewController: NSViewController {
         // Search bar overlay (hidden initially)
         searchBarVC = SearchBarViewController()
         searchBarVC.delegate = self
+        searchBarVC.onExpandedChange = { [weak self] expanded in
+            self?.searchOverlayHeightConstraint.constant = expanded ? 340 : 48
+        }
         addChild(searchBarVC)
         searchOverlay = searchBarVC.view
         searchOverlay.translatesAutoresizingMaskIntoConstraints = false
@@ -220,15 +249,57 @@ final class ReaderViewController: NSViewController {
         NSLayoutConstraint.activate([
             searchOverlay.topAnchor.constraint(equalTo: contentContainer.topAnchor, constant: 12),
             searchOverlay.centerXAnchor.constraint(equalTo: contentContainer.centerXAnchor),
-            searchOverlay.widthAnchor.constraint(equalToConstant: 380),
-            searchOverlay.heightAnchor.constraint(equalToConstant: 44),
+            searchOverlay.widthAnchor.constraint(equalToConstant: 410),
         ])
+        searchOverlayHeightConstraint = searchOverlay.heightAnchor.constraint(equalToConstant: 48)
+        searchOverlayHeightConstraint.isActive = true
 
         contentContainer.addSubview(loadingIndicator)
         NSLayoutConstraint.activate([
             loadingIndicator.centerXAnchor.constraint(equalTo: contentContainer.centerXAnchor),
             loadingIndicator.centerYAnchor.constraint(equalTo: contentContainer.centerYAnchor),
         ])
+
+        let empty = EPUBDropTargetView()
+        empty.translatesAutoresizingMaskIntoConstraints = false
+        empty.onDrop = { [weak self] url in
+            (self?.view.window?.windowController as? ReaderWindowController)?.loadEPUB(at: url)
+        }
+        let dropSymbol = NSImageView(image: NSImage(systemSymbolName: "arrow.down.to.line.compact", accessibilityDescription: "Drop EPUB here")!)
+        dropSymbol.contentTintColor = .white
+        dropSymbol.imageScaling = .scaleProportionallyDown
+        dropSymbol.translatesAutoresizingMaskIntoConstraints = false
+        dropSymbol.wantsLayer = true
+        dropSymbol.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        dropSymbol.layer?.cornerRadius = 14
+        dropSymbol.layer?.borderWidth = 1
+        dropSymbol.layer?.borderColor = NSColor.white.withAlphaComponent(0.25).cgColor
+        dropSymbol.layer?.shadowColor = NSColor.black.cgColor
+        dropSymbol.layer?.shadowOpacity = 0.28
+        dropSymbol.layer?.shadowRadius = 5
+        dropSymbol.layer?.shadowOffset = CGSize(width: 0, height: -2)
+        dropSymbol.setAccessibilityLabel("Drop EPUB here")
+        let hint = NSTextField(labelWithString: "Drop an EPUB here")
+        hint.textColor = .secondaryLabelColor
+        hint.translatesAutoresizingMaskIntoConstraints = false
+        empty.addSubview(dropSymbol)
+        empty.addSubview(hint)
+        contentContainer.addSubview(empty)
+        NSLayoutConstraint.activate([
+            empty.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            empty.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            empty.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            empty.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            dropSymbol.centerXAnchor.constraint(equalTo: empty.centerXAnchor),
+            dropSymbol.centerYAnchor.constraint(equalTo: empty.centerYAnchor, constant: -32),
+            dropSymbol.widthAnchor.constraint(equalToConstant: 88),
+            dropSymbol.heightAnchor.constraint(equalToConstant: 88),
+            hint.centerXAnchor.constraint(equalTo: empty.centerXAnchor),
+            hint.topAnchor.constraint(equalTo: dropSymbol.bottomAnchor, constant: 14),
+            hint.bottomAnchor.constraint(equalTo: empty.bottomAnchor),
+        ])
+        emptyStateView = empty
+        webView.isHidden = true
 
         // ── Split view ────────────────────────────────────────────────────────
         splitView = NSSplitView()
@@ -268,11 +339,7 @@ final class ReaderViewController: NSViewController {
         NotificationCenter.default.addObserver(self,
             selector: #selector(scheduleStructuralReload),
             name: .readerStructuralSettingsChanged, object: nil)
-        NotificationCenter.default.addObserver(self,
-            selector: #selector(applyPageCountVisibility),
-            name: SettingsManager.settingsChangedNotification, object: nil)
         applyDynamicSettings()
-        applyPageCountVisibility()
         // Every theme now carries both a light and dark ThemeColorSet (see
         // SettingsManager.effectiveColorSet), so a system appearance flip changes
         // the active theme's actual colors, not just the .system special case.
@@ -286,14 +353,6 @@ final class ReaderViewController: NSViewController {
         } else {
             super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
         }
-    }
-
-    /// Reflects SettingsManager.shared.showPageCount (Reading menu's "Show Page
-    /// Count" toggle). Hides the label itself rather than removing the toolbar
-    /// item outright — simpler than reconstructing toolbarDefaultItemIdentifiers
-    /// live, at the cost of leaving a small empty gap in the toolbar when hidden.
-    @objc private func applyPageCountVisibility() {
-        pageCountLabel?.isHidden = !SettingsManager.shared.showPageCount
     }
 
     override func viewDidAppear() {
@@ -338,6 +397,9 @@ final class ReaderViewController: NSViewController {
     // MARK: - EPUB Loading
 
     func loadEPUB(at url: URL) {
+        emptyStateView?.isHidden = true
+        webView?.isHidden = false
+        pendingInitialScrollSpineIndex = nil
         currentEPUBURL = url
         showLoading(true)
         beginSecurityAccess(for: url)
@@ -366,23 +428,40 @@ final class ReaderViewController: NSViewController {
                     self.currentPackage = pkg
                     self.extractionWorkDirectories.append(createdWorkDir)
                     // Always show title centered in toolbar; never in window chrome
-                    let title = pkg.title.isEmpty
+                    let title = pkg.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         ? url.deletingPathExtension().lastPathComponent
                         : pkg.title
-                    self.setToolbarTitle(title)
-                    HistoryManager.shared.record(url: url, title: pkg.title)
+                    self.setToolbarTitle(title, author: pkg.author)
+                    HistoryManager.shared.record(url: url, title: title)
+                    self.tocEntries = tocEntries
                     self.tocSidebar.load(entries: tocEntries)
 
                     self.currentMode = SettingsManager.shared.defaultReadingMode
                     self.applyScrollbarVisibility()
+                    let savedPosition = HistoryManager.shared.savedPosition(for: url)
+                    let hasMeaningfulSavedPosition = (savedPosition?.spineIndex ?? 0) > 0
+                        || (savedPosition?.characterOffset ?? 0) > 0
+                    let coverStartIndex = SettingsManager.shared.skipCoverWhenOpening
+                        ? tocParser.firstSpineIndex(afterCoverIn: pkg)
+                        : nil
+                    let shouldSkipCover = !hasMeaningfulSavedPosition && coverStartIndex != nil
+                    let initialSpineIndex = shouldSkipCover
+                        ? (coverStartIndex ?? 0)
+                        : min(savedPosition?.spineIndex ?? 0, max(0, pkg.spineURLs.count - 1))
+                    self.currentSpineIndex = initialSpineIndex
+                    if self.currentMode == .scroll && shouldSkipCover {
+                        self.pendingInitialScrollSpineIndex = initialSpineIndex
+                    }
                     if self.currentMode == .paginated {
                         self.installScrollWheelMonitorIfNeeded()
                         self.installKeyDownMonitor()
-                        if let saved = HistoryManager.shared.savedPosition(for: url) {
-                            self.currentSpineIndex = min(saved.spineIndex, max(0, pkg.spineURLs.count - 1))
-                            self.pendingPaginatedRestorePosition = saved.characterOffset > 0
-                                ? .characterOffset(saved.characterOffset) : .start
+                        if let savedPosition {
+                            self.pendingPaginatedRestorePosition = savedPosition.characterOffset > 0
+                                ? .characterOffset(savedPosition.characterOffset) : .start
                         }
+                    }
+                    if let savedPosition, self.currentMode == .scroll, savedPosition.characterOffset > 0 {
+                        self.pendingPaginatedRestorePosition = .characterOffset(savedPosition.characterOffset)
                     }
 
                     self.renderCurrentContent()
@@ -422,7 +501,8 @@ final class ReaderViewController: NSViewController {
             let html = try parser.buildScrollHTML(
                 from: pkg, cosmetics: cosmetics,
                 scrollRestoreJS: scrollRestoreBootstrapJS(),
-                formatFirstChapter: format, removeParagraphIndents: removeIndents
+                formatFirstChapter: format, removeParagraphIndents: removeIndents,
+                hideImages: SettingsManager.shared.hideImages
             )
             let indexURL = pkg.rootFolder.appendingPathComponent(Self.readerHTMLFilename)
             try html.write(to: indexURL, atomically: true, encoding: .utf8)
@@ -453,6 +533,10 @@ final class ReaderViewController: NSViewController {
            saved.characterOffset > 0 {
             return "window.honeycrispNavigateToOffset(\(saved.characterOffset));"
         }
+        if let initialSpineIndex = pendingInitialScrollSpineIndex {
+            pendingInitialScrollSpineIndex = nil
+            return "window.navigateToChapter(\(initialSpineIndex));"
+        }
         return ""
     }
 
@@ -474,6 +558,7 @@ final class ReaderViewController: NSViewController {
             return
         }
         currentSpineIndex = index
+        updateCurrentChapter(for: pkg.spineURLs[index])
         pendingPaginatedRestorePosition = restorePosition
         do {
             let parser = EPUBParser()
@@ -491,7 +576,8 @@ final class ReaderViewController: NSViewController {
                 maxWidth: CGFloat(SettingsManager.shared.maxWidth),
                 paddingH: CGFloat(SettingsManager.shared.paddingH),
                 paddingV: CGFloat(SettingsManager.shared.paddingV),
-                formatFirstChapter: format, removeParagraphIndents: removeIndents
+                formatFirstChapter: format, removeParagraphIndents: removeIndents,
+                hideImages: SettingsManager.shared.hideImages
             )
             let indexURL = pkg.rootFolder.appendingPathComponent(Self.readerHTMLFilename)
             try html.write(to: indexURL, atomically: true, encoding: .utf8)
@@ -500,6 +586,245 @@ final class ReaderViewController: NSViewController {
             showError(error)
         }
     }
+
+    private func updateCurrentChapter(for url: URL) {
+        let match = tocEntries.flatMap(flattenTOC)
+            .filter { $0.absoluteURL.standardizedFileURL.path == url.standardizedFileURL.path }
+            .min(by: { $0.depth < $1.depth })
+        currentChapterTitle = match?.title
+        tocSidebar.selectEntry(matching: url)
+    }
+
+    private func flattenTOC(_ entry: TOCEntry) -> [TOCEntry] { [entry] + entry.children.flatMap(flattenTOC) }
+
+    private func navigate(to spineIndex: Int, offset: Int = 0, chapterLocalOffset: Bool = false) {
+        guard let pkg = currentPackage, !pkg.spineURLs.isEmpty else { return }
+        let spineIndex = min(max(0, spineIndex), pkg.spineURLs.count - 1)
+        let offset = max(0, offset)
+        stopAutoScroll()
+        stopSpeech()
+        if currentMode == .paginated {
+            currentSpineIndex = spineIndex
+        } else {
+            activeScrollSpineIndex = spineIndex
+        }
+        updateCurrentChapter(for: pkg.spineURLs[spineIndex])
+        if currentMode == .paginated {
+            loadSpineItem(index: spineIndex, restorePosition: offset > 0 ? .characterOffset(offset) : .start, pkg: pkg)
+        } else if offset > 0 && chapterLocalOffset {
+            webView.evaluateJavaScript("window.honeycrispNavigateToChapterOffset(\(spineIndex), \(offset));", completionHandler: nil)
+        } else if offset > 0 {
+            webView.evaluateJavaScript("window.honeycrispNavigateToOffset(\(offset));", completionHandler: nil)
+        } else {
+            webView.evaluateJavaScript("window.navigateToChapter(\(spineIndex));", completionHandler: nil)
+        }
+    }
+
+    func addCurrentBookmark() {
+        changeBookmarkAtCurrentPosition(forceAdd: true)
+    }
+
+    private func changeBookmarkAtCurrentPosition(forceAdd: Bool) {
+        guard let url = currentEPUBURL else { return }
+        let offsetFunction = currentMode == .scroll ? "window.honeycrispCurrentChapterCharacterOffset" : "window.honeycrispCurrentCharacterOffset"
+        webView.evaluateJavaScript("\(offsetFunction) ? \(offsetFunction)() : 0") { [weak self] result, _ in
+            guard let self else { return }
+            let offset = (result as? NSNumber)?.intValue ?? 0
+            let spineIndex = self.currentMode == .scroll ? self.activeScrollSpineIndex : self.currentSpineIndex
+            let existing = BookmarkManager.shared.bookmarks(for: url).first {
+                $0.spineIndex == spineIndex && abs($0.characterOffset - offset) <= 64
+            }
+            if let existing, !forceAdd {
+                BookmarkManager.shared.remove(id: existing.id)
+                self.currentPositionBookmarkID = nil
+            } else if existing == nil {
+                let ordinal = spineIndex + 1
+                let label = self.currentChapterTitle.map { "\($0) · \(ordinal)" } ?? "Bookmark · \(ordinal)"
+                let bookmark = BookmarkManager.shared.add(bookURL: url, label: label, spineIndex: spineIndex, characterOffset: offset, chapterTitle: self.currentChapterTitle)
+                self.currentPositionBookmarkID = bookmark.id
+            }
+            self.updateBookmarkButton()
+            NSApp.mainMenu?.item(withTitle: "Bookmarks")?.submenu?.update()
+        }
+    }
+
+    private func refreshBookmarkButton() {
+        guard let url = currentEPUBURL else {
+            currentPositionBookmarkID = nil
+            updateBookmarkButton()
+            return
+        }
+        bookmarkRefreshGeneration += 1
+        let generation = bookmarkRefreshGeneration
+        let spineIndex = currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex
+        let offsetFunction = currentMode == .scroll ? "window.honeycrispCurrentChapterCharacterOffset" : "window.honeycrispCurrentCharacterOffset"
+        webView.evaluateJavaScript("\(offsetFunction) ? \(offsetFunction)() : 0") { [weak self] result, _ in
+            guard let self, self.bookmarkRefreshGeneration == generation else { return }
+            let offset = (result as? NSNumber)?.intValue ?? 0
+            self.currentPositionBookmarkID = BookmarkManager.shared.bookmarks(for: url).first {
+                $0.spineIndex == spineIndex && abs($0.characterOffset - offset) <= 64
+            }?.id
+            self.updateBookmarkButton()
+        }
+    }
+
+    private func updateBookmarkButton() {
+        let isBookmarked = currentPositionBookmarkID != nil
+        bookmarkButton?.image = NSImage(
+            systemSymbolName: isBookmarked ? "bookmark.fill" : "bookmark",
+            accessibilityDescription: isBookmarked ? "Remove Bookmark" : "Add Bookmark"
+        )
+        bookmarkButton?.contentTintColor = isBookmarked ? .secondaryLabelColor : nil
+        bookmarkButton?.toolTip = isBookmarked ? "Remove Bookmark" : "Add Bookmark"
+        bookmarkButton?.setAccessibilityLabel(isBookmarked ? "Remove Bookmark" : "Add Bookmark")
+    }
+
+    func toggleBookmarkAtCurrentPosition() {
+        changeBookmarkAtCurrentPosition(forceAdd: false)
+    }
+
+    func navigate(to bookmark: ReadingBookmark) {
+        navigate(to: bookmark.spineIndex, offset: bookmark.characterOffset, chapterLocalOffset: currentMode == .scroll)
+    }
+
+    func startReading() {
+        guard let pkg = currentPackage else { return }
+        let parser = TOCParser()
+        if let node = parser.startReadingNode(in: pkg, toc: tocEntries), let index = node.spineIndex {
+            if let fragment = URLComponents(url: node.url, resolvingAgainstBaseURL: false)?.fragment {
+                pendingFragment = fragment
+                navigate(to: index)
+                if currentMode == .scroll, let encoded = EPUBParser.javaScriptStringLiteral(fragment) {
+                    webView.evaluateJavaScript("window.navigateToFragment(\(encoded));", completionHandler: nil)
+                    pendingFragment = nil
+                }
+            } else {
+                navigate(to: index)
+            }
+        }
+    }
+
+    func goToBeginning() { navigate(to: 0) }
+
+    func navigateChapter(forward: Bool) {
+        guard let pkg = currentPackage else { return }
+        let index = currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex
+        let next = index + (forward ? 1 : -1)
+        guard pkg.spineURLs.indices.contains(next) else { return }
+        navigate(to: next)
+    }
+
+    func goToChapterBeginning() {
+        stopAutoScroll()
+        let index = currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex
+        if currentMode == .paginated, let pkg = currentPackage {
+            loadSpineItem(index: index, restorePosition: .start, pkg: pkg)
+        } else {
+            webView.evaluateJavaScript("window.navigateToChapter(\(index));", completionHandler: nil)
+        }
+    }
+
+    func goToChapterEnd() {
+        stopAutoScroll()
+        let index = currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex
+        if currentMode == .paginated, let pkg = currentPackage {
+            loadSpineItem(index: index, restorePosition: .end, pkg: pkg)
+        } else {
+            webView.evaluateJavaScript("window.navigateToChapterEnd(\(index));", completionHandler: nil)
+        }
+    }
+
+    func setAutoScrollSpeed(_ speed: Double) {
+        SettingsManager.shared.autoScrollSpeed = speed
+        if isAutoScrolling { startAutoScroll() }
+    }
+
+    func startAutoScroll() {
+        guard currentMode == .scroll else { return }
+        isAutoScrolling = true
+        webView.evaluateJavaScript("""
+        (function() {
+          if (window.honeycrispAutoScrollFrame) cancelAnimationFrame(window.honeycrispAutoScrollFrame);
+          var last = 0;
+          var speed = \(autoScrollSpeed);
+          function step(timestamp) {
+            if (!last) last = timestamp;
+            var elapsed = Math.min(50, timestamp - last);
+            last = timestamp;
+            window.scrollBy(0, speed * elapsed / 1000);
+            if (window.scrollY + window.innerHeight < document.documentElement.scrollHeight - 1) {
+              window.honeycrispAutoScrollFrame = requestAnimationFrame(step);
+            } else {
+              window.honeycrispAutoScrollFrame = null;
+            }
+          }
+          window.honeycrispAutoScrollFrame = requestAnimationFrame(step);
+        })();
+        """)
+    }
+
+    func stopAutoScroll() {
+        isAutoScrolling = false
+        isAdjustingAutoScrollSpeed = false
+        webView.evaluateJavaScript("if (window.honeycrispAutoScrollFrame) cancelAnimationFrame(window.honeycrispAutoScrollFrame); window.honeycrispAutoScrollFrame = null;")
+    }
+
+    func speakCurrentLocation() {
+        guard currentPackage != nil else { return }
+        speechQueueGeneration += 1
+        let generation = speechQueueGeneration
+        let index = currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex
+        speechNextSpineIndex = index + 1
+        webView.evaluateJavaScript("window.honeycrispCurrentSpeechText(\(index));") { [weak self] result, _ in
+            guard let self, self.speechQueueGeneration == generation,
+                  let text = result as? String, !text.isEmpty else { return }
+            self.speechSynthesizer.stopSpeaking(at: .immediate)
+            self.speechCurrentText = text
+            let utterance = AVSpeechUtterance(string: text)
+            utterance.rate = self.speechRate
+            if let id = SettingsManager.shared.speechVoiceIdentifier { utterance.voice = AVSpeechSynthesisVoice(identifier: id) }
+            self.speechSynthesizer.speak(utterance)
+        }
+    }
+
+    func toggleSpeechPause() {
+        if speechSynthesizer.isPaused { speechSynthesizer.continueSpeaking() }
+        else if speechSynthesizer.isSpeaking { speechSynthesizer.pauseSpeaking(at: .immediate) }
+        else { speakCurrentLocation() }
+    }
+
+    func adjustSpeechRate(by delta: Float) {
+        speechRate = min(AVSpeechUtteranceMaximumSpeechRate, max(AVSpeechUtteranceMinimumSpeechRate, speechRate + delta))
+    }
+
+    func stopSpeech() {
+        speechQueueGeneration += 1
+        speechNextSpineIndex = nil
+        speechSynthesizer.stopSpeaking(at: .immediate)
+    }
+    func setSpeechVoice(identifier: String?) {
+        SettingsManager.shared.speechVoiceIdentifier = identifier
+        guard speechSynthesizer.isSpeaking || speechSynthesizer.isPaused,
+              let text = speechCurrentText else { return }
+        let wasPaused = speechSynthesizer.isPaused
+        speechQueueGeneration += 1
+        let generation = speechQueueGeneration
+        speechSynthesizer.stopSpeaking(at: .immediate)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.speechQueueGeneration == generation else { return }
+            let utterance = AVSpeechUtterance(string: text)
+            utterance.rate = self.speechRate
+            if let identifier, !identifier.isEmpty {
+                utterance.voice = AVSpeechSynthesisVoice(identifier: identifier)
+            }
+            self.speechSynthesizer.speak(utterance)
+            if wasPaused { self.speechSynthesizer.pauseSpeaking(at: .immediate) }
+        }
+    }
+
+    func currentBookURL() -> URL? { currentEPUBURL }
+
+    func currentChapterBookmarkLabel() -> String? { currentChapterTitle }
 
     /// Called from PaginationEngine.spineNavigationHandler when a page turn runs
     /// past the current spine item's last/first column.
@@ -542,6 +867,7 @@ final class ReaderViewController: NSViewController {
     /// currentMode even if the window is closed mid-transition.
     @objc func toggleReadingMode(_ sender: Any?) {
         guard let pkg = currentPackage else { return }
+        stopAutoScroll()
         let goingTo: ReadingMode = currentMode == .scroll ? .paginated : .scroll
         SettingsManager.shared.defaultReadingMode = goingTo
 
@@ -559,7 +885,8 @@ final class ReaderViewController: NSViewController {
                 self.installScrollWheelMonitorIfNeeded()
                 self.installKeyDownMonitor()
                 let fraction = (result as? Double) ?? 0
-                self.loadSpineItem(index: 0, restorePosition: .fraction(fraction), pkg: pkg)
+                let spineIndex = min(self.activeScrollSpineIndex, max(0, pkg.spineURLs.count - 1))
+                self.loadSpineItem(index: spineIndex, restorePosition: .fraction(fraction), pkg: pkg)
             }
         } else {
             let spineIndex = currentSpineIndex
@@ -588,9 +915,11 @@ final class ReaderViewController: NSViewController {
     /// NSWindow.title as a model value is read independently of that by the Window
     /// menu, Mission Control, and VoiceOver, so it needs to be the real title, not
     /// permanently blank.
-    private func setToolbarTitle(_ title: String) {
-        view.window?.title = title
+    private func setToolbarTitle(_ title: String, author: String = "") {
+        let cleanAuthor = author.trimmingCharacters(in: .whitespacesAndNewlines)
+        view.window?.title = cleanAuthor.isEmpty ? title : "\(title) — \(cleanAuthor)"
         titleLabel?.stringValue = title
+        titleLabel?.toolTip = cleanAuthor.isEmpty ? title : "\(title) by \(cleanAuthor)"
     }
 
     // MARK: - TOC Sidebar
@@ -616,19 +945,61 @@ final class ReaderViewController: NSViewController {
 
     /// Called from AppDelegate menu action and keyboard shortcut (⌘T).
     @objc func toggleTOC(_ sender: Any?) {
-        setSidebarVisible(!isSidebarVisible)
+        if let tocPopup {
+            tocPopup.close()
+            self.tocPopup = nil
+            tocButton?.state = .off
+            return
+        }
+        guard currentPackage != nil else { return }
+        let currentIndex = currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex
+        guard let currentPackage, currentPackage.spineURLs.indices.contains(currentIndex) else { return }
+        let popup = TOCPopupViewController(entries: tocEntries, currentChapterURL: currentPackage.spineURLs[currentIndex])
+        popup.onSelect = { [weak self] entry in
+            guard let self else { return }
+            self.tocSidebar(self.tocSidebar, didSelectEntry: entry)
+            self.tocPopup?.close()
+            self.tocPopup = nil
+        }
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 520),
+                            styleMask: [.borderless], backing: .buffered, defer: false)
+        panel.title = "Contents"
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.delegate = self
+        panel.contentViewController = popup
+        if let parentFrame = view.window?.frame {
+            panel.setFrameOrigin(NSPoint(x: parentFrame.midX - panel.frame.width / 2,
+                                         y: parentFrame.maxY - panel.frame.height - 72))
+        } else {
+            panel.center()
+        }
+        view.window?.addChildWindow(panel, ordered: .above)
+        panel.makeKeyAndOrderFront(nil)
+        tocPopup = panel
+        tocButton?.state = .on
     }
 
     // MARK: - Search
 
     /// Called from AppDelegate menu action and keyboard shortcut (⌘F).
     @objc func toggleSearch(_ sender: Any?) {
-        searchBarVisible.toggle()
-        searchOverlay.isHidden = !searchBarVisible
+        toggleSearch(with: nil)
+    }
 
-        if searchBarVisible {
-            view.window?.makeFirstResponder(searchOverlay)
+    func toggleSearch(with initialText: String?) {
+        if !searchBarVisible {
+            searchBarVisible = true
+            searchOverlay.isHidden = false
+            searchButton?.state = .on
+            searchBarVC.beginSearch(with: initialText)
         } else {
+            searchBarVisible = false
+            searchOverlay.isHidden = true
+            searchButton?.state = .off
             searchDebounceTimer?.invalidate()
             webView.evaluateJavaScript("window.searchText('')", completionHandler: nil)
             searchBarVC.clear()
@@ -649,6 +1020,13 @@ final class ReaderViewController: NSViewController {
             var comps = URLComponents(string: "https://www.google.com/search")!
             comps.queryItems = [URLQueryItem(name: "q", value: text)]
             if let url = comps.url { NSWorkspace.shared.open(url) }
+        }
+    }
+
+    @objc func searchSelectionInBook() {
+        webView.evaluateJavaScript("window.getSelection().toString()") { [weak self] result, _ in
+            guard let self else { return }
+            self.toggleSearch(with: result as? String)
         }
     }
 
@@ -725,7 +1103,7 @@ final class ReaderViewController: NSViewController {
             // reader actually was, not wherever they were the last time the book was opened.
             self.webView.evaluateJavaScript("window.honeycrispCurrentCharacterOffset ? window.honeycrispCurrentCharacterOffset() : 0") { result, _ in
                 if let offset = result as? Int {
-                    HistoryManager.shared.updatePosition(url: url, spineIndex: 0, characterOffset: offset)
+                    HistoryManager.shared.updatePosition(url: url, spineIndex: self.currentMode == .scroll ? 0 : self.currentSpineIndex, characterOffset: offset)
                 }
                 self.renderCurrentContent()
             }
@@ -763,7 +1141,7 @@ final class ReaderViewController: NSViewController {
     /// scheme.
     func didReceivePosition(_ offset: Int) {
         guard let url = currentEPUBURL else { return }
-        HistoryManager.shared.updatePosition(url: url, spineIndex: currentSpineIndex, characterOffset: offset)
+        HistoryManager.shared.updatePosition(url: url, spineIndex: currentMode == .scroll ? 0 : currentSpineIndex, characterOffset: offset)
     }
 
     private func startPositionSaveTimer() {
@@ -782,7 +1160,7 @@ final class ReaderViewController: NSViewController {
     /// drive readerJS's debounced-scroll save path the way scroll mode's do.
     func flushPositionSave() {
         guard let url = currentEPUBURL else { return }
-        let spineIndex = currentSpineIndex
+        let spineIndex = currentMode == .scroll ? 0 : currentSpineIndex
         webView.evaluateJavaScript("window.honeycrispCurrentCharacterOffset ? window.honeycrispCurrentCharacterOffset() : 0") { result, _ in
             guard let offset = result as? Int else { return }
             HistoryManager.shared.updatePosition(url: url, spineIndex: spineIndex, characterOffset: offset)
@@ -805,6 +1183,7 @@ final class ReaderViewController: NSViewController {
         if let column { paginatedCurrentColumn = column }
         if let totalColumns { paginatedTotalColumns = totalColumns }
         updatePageCountLabel()
+        refreshBookmarkButton()
         flushPositionSave()
         reportPaginatedProgress(column: column, totalColumns: totalColumns)
     }
@@ -870,7 +1249,12 @@ final class ReaderViewController: NSViewController {
     /// fraction being column-within-chapter rather than book-wide.
     func didReceiveScrollPageInfo(page: Int, totalPages: Int, spineIndex: Int, spineCount: Int) {
         guard currentMode == .scroll else { return }
+        activeScrollSpineIndex = min(max(0, spineIndex), max(0, spineCount - 1))
+        if let pkg = currentPackage, pkg.spineURLs.indices.contains(activeScrollSpineIndex) {
+            updateCurrentChapter(for: pkg.spineURLs[activeScrollSpineIndex])
+        }
         pageCountLabel?.stringValue = "\(page)/\(totalPages)"
+        refreshBookmarkButton()
     }
 
     /// Paginated-mode counterpart, driven by spineDidLoad/positionUpdate.
@@ -899,6 +1283,15 @@ final class ReaderViewController: NSViewController {
     /// handled this" beep).
     @discardableResult
     func handleKeyDown(_ event: NSEvent) -> Bool {
+        if SettingsManager.shared.adjustScrollSpeedWhilePaging,
+           isAutoScrolling,
+           (event.keyCode == 126 || event.keyCode == 125) {
+            isAdjustingAutoScrollSpeed = true
+            let adjustment = event.keyCode == 126 ? 25.0 : -25.0
+            setAutoScrollSpeed(autoScrollSpeed + adjustment)
+            return true
+        }
+        stopAutoScroll()
         switch event.keyCode {
         case 123, 126, 116: scrollByPages(-1)
         case 124, 125, 121: scrollByPages(1)
@@ -909,7 +1302,14 @@ final class ReaderViewController: NSViewController {
         return true
     }
 
+    func handleKeyUp(_ event: NSEvent) -> Bool {
+        guard isAdjustingAutoScrollSpeed, (event.keyCode == 126 || event.keyCode == 125) else { return false }
+        isAdjustingAutoScrollSpeed = false
+        return true
+    }
+
     private func scrollByPages(_ pages: Int) {
+        stopAutoScroll()
         let js = "window.scrollBy({ top: \(pages) * window.innerHeight, behavior: 'smooth' });"
         webView.evaluateJavaScript(js, completionHandler: nil)
     }
@@ -940,6 +1340,10 @@ final class ReaderViewController: NSViewController {
         guard scrollWheelMonitor == nil else { return }
         scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             guard let self, self.currentMode == .paginated, self.view.window?.isKeyWindow == true else { return event }
+            if let hitView = self.view.window?.contentView?.hitTest(event.locationInWindow),
+               !hitView.isDescendant(of: self.webView) {
+                return event
+            }
 
             switch event.phase {
             case .began:
@@ -995,6 +1399,7 @@ final class ReaderViewController: NSViewController {
             guard let self, self.currentMode == .paginated, event.window === self.view.window else { return event }
             guard let responder = self.view.window?.firstResponder as? NSView,
                   responder.isDescendant(of: self.view) else { return event }
+            if responder is NSTextView || responder is NSTextField { return event }
 
             switch event.keyCode {
             case 123, 126, 116: // ← ↑ Page Up
@@ -1055,11 +1460,13 @@ final class ReaderViewController: NSViewController {
     // MARK: - Toolbar updates
 
     func updateFloatButton(isFloating: Bool) {
+        isFloatingWindow = isFloating
         floatButton?.image = NSImage(
             systemSymbolName: isFloating ? "pin.fill" : "pin",
             accessibilityDescription: "Float on top"
         )
-        floatButton?.contentTintColor = isFloating ? .systemOrange : nil
+        floatButton?.contentTintColor = isFloating ? .secondaryLabelColor : nil
+        floatButton?.toolTip = isFloating ? "Stop floating on top" : "Float on top"
     }
 
     // MARK: - Helpers
@@ -1101,6 +1508,10 @@ final class ReaderViewController: NSViewController {
         (view.window?.windowController as? ReaderWindowController)?.showOpenPanel()
     }
 
+    @objc private func bookmarkAction(_ sender: Any?) {
+        toggleBookmarkAtCurrentPosition()
+    }
+
     /// Toolbar gear button — shows a quick Apple-Books-style theme popover
     /// rather than opening the full Settings window. The full Settings window
     /// (SettingsWindowController) is now reachable only from the App menu's
@@ -1136,22 +1547,19 @@ extension ReaderViewController: TOCSidebarDelegate {
 
     func tocSidebar(_ sidebar: TOCSidebarViewController, didSelectEntry entry: TOCEntry) {
         guard let pkg = currentPackage else { return }
-
-        let hrefBase = entry.href.components(separatedBy: "#").first ?? entry.href
-        let decodedBase = hrefBase.removingPercentEncoding ?? hrefBase
-
-        if let idx = pkg.spineURLs.firstIndex(where: { url in
-            url.lastPathComponent == URL(fileURLWithPath: decodedBase).lastPathComponent
-        }) {
-            let fragment = entry.href.components(separatedBy: "#").dropFirst().first
-            if let frag = fragment, !frag.isEmpty {
-                let safe = frag.replacingOccurrences(of: "'", with: "\\'")
-                webView.evaluateJavaScript("window.navigateToFragment('\(safe)');", completionHandler: nil)
+        let target = entry.absoluteURL.standardizedFileURL
+        guard let idx = pkg.spineURLs.firstIndex(where: { $0.standardizedFileURL.path == target.path }) else { return }
+        updateCurrentChapter(for: target)
+        if let fragment = URLComponents(url: target, resolvingAgainstBaseURL: false)?.fragment, !fragment.isEmpty,
+           let encoded = EPUBParser.javaScriptStringLiteral(fragment) {
+            if currentMode == .paginated && currentSpineIndex != idx {
+                pendingFragment = fragment
+                loadSpineItem(index: idx, restorePosition: .start, pkg: pkg)
             } else {
-                webView.evaluateJavaScript("window.navigateToChapter(\(idx));", completionHandler: nil)
+                webView.evaluateJavaScript("window.navigateToFragment(\(encoded));", completionHandler: nil)
             }
         } else {
-            webView.evaluateJavaScript("window.navigateToChapter(0);", completionHandler: nil)
+            navigate(to: idx)
         }
     }
 }
@@ -1163,36 +1571,55 @@ extension ReaderViewController: SearchBarDelegate {
     /// Debounce search so JS evaluation only fires 0.3 s after the user stops typing.
     func searchBar(_ bar: SearchBarViewController, didSearch term: String) {
         searchDebounceTimer?.invalidate()
+        pendingSearchTerm = term
         guard !term.isEmpty else {
             webView.evaluateJavaScript("window.searchText('');", completionHandler: nil)
-            bar.resultCount = 0
+            bar.showResults([], chapterTitles: [:])
             return
         }
         searchDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self, weak bar] _ in
-            guard let self, let bar else { return }
-            let safe = term
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "'", with: "\\'")
-            // window.searchText() highlights all matches and returns the count
-            self.webView.evaluateJavaScript("window.searchText('\(safe)');") { result, _ in
-                bar.resultCount = result as? Int ?? 0
+            guard let self, let bar, let package = self.currentPackage else { return }
+            let titleMap = Dictionary(uniqueKeysWithValues: package.spineURLs.indices.map { index in
+                let chapter = self.flattenTOCEntries(self.tocEntries).first(where: { $0.absoluteURL.standardizedFileURL.path == package.spineURLs[index].standardizedFileURL.path })?.title ?? "Chapter \(index + 1)"
+                return (index, chapter)
+            })
+            DispatchQueue.global(qos: .userInitiated).async {
+                let results = EPUBParser().searchResults(for: term, in: package)
+                DispatchQueue.main.async { [weak self, weak bar] in
+                    guard let self, let bar, self.pendingSearchTerm == term else { return }
+                    bar.showResults(results, chapterTitles: titleMap)
+                    if !results.isEmpty { bar.selectResult(at: 0) }
+                    guard let encoded = EPUBParser.javaScriptStringLiteral(term) else { return }
+                    self.webView.evaluateJavaScript("window.searchText(\(encoded));", completionHandler: nil)
+                }
             }
         }
     }
 
+    private func flattenTOCEntries(_ entries: [TOCEntry]) -> [TOCEntry] {
+        entries.flatMap { [$0] + flattenTOCEntries($0.children) }
+    }
+
+    func searchBar(_ bar: SearchBarViewController, didSelect result: BookSearchResult) {
+        navigate(to: result.spineIndex, offset: result.characterOffset, chapterLocalOffset: currentMode == .scroll)
+        if currentMode == .paginated { pendingSearchTerm = searchBarVC.searchFieldValue }
+    }
+
     func searchBarDidRequestNext(_ bar: SearchBarViewController) {
-        webView.evaluateJavaScript("window.nextSearchResult(1);", completionHandler: nil)
+        bar.stepResult(by: 1)
     }
 
     func searchBarDidRequestPrevious(_ bar: SearchBarViewController) {
-        webView.evaluateJavaScript("window.nextSearchResult(-1);", completionHandler: nil)
+        bar.stepResult(by: -1)
     }
 
     func searchBarDidDismiss(_ bar: SearchBarViewController) {
         searchBarVisible = false
         searchOverlay.isHidden = true
+        searchButton?.state = .off
         searchDebounceTimer?.invalidate()
         webView.evaluateJavaScript("window.searchText('')", completionHandler: nil)
+        pendingSearchTerm = nil
         bar.clear()
         view.window?.makeFirstResponder(webView)
     }
@@ -1205,6 +1632,50 @@ extension ReaderViewController: NSSplitViewDelegate {
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMax: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat { 320 }
     func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { subview === tocSidebar.view }
     func splitView(_ splitView: NSSplitView, shouldCollapseSubview subview: NSView, forDoubleClickOnDividerAt dividerIndex: Int) -> Bool { true }
+}
+
+extension ReaderViewController: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        guard let panel = notification.object as? NSPanel, panel === tocPopup else { return }
+        tocPopup = nil
+        tocButton?.state = .off
+    }
+}
+
+extension ReaderViewController: AVSpeechSynthesizerDelegate {
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        guard let nextIndex = speechNextSpineIndex, let package = currentPackage,
+              package.spineURLs.indices.contains(nextIndex) else {
+            speechNextSpineIndex = nil
+            return
+        }
+        let generation = speechQueueGeneration
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let parser = EPUBParser()
+            var candidate = nextIndex
+            var text: String?
+            while package.spineURLs.indices.contains(candidate), text == nil {
+                text = parser.speechText(in: package, at: candidate)
+                if text == nil { candidate += 1 }
+            }
+            let followingIndex = candidate + 1
+            DispatchQueue.main.async {
+                guard let self, self.speechQueueGeneration == generation else { return }
+                guard let text else {
+                    self.speechNextSpineIndex = nil
+                    return
+                }
+                self.speechNextSpineIndex = followingIndex
+                self.speechCurrentText = text
+                let next = AVSpeechUtterance(string: text)
+                next.rate = self.speechRate
+                if let id = SettingsManager.shared.speechVoiceIdentifier {
+                    next.voice = AVSpeechSynthesisVoice(identifier: id)
+                }
+                synthesizer.speak(next)
+            }
+        }
+    }
 }
 
 // MARK: - WKNavigationDelegate
@@ -1242,27 +1713,33 @@ extension ReaderViewController: WKNavigationDelegate {
             paginationEngine?.setColsPerScreen(SettingsManager.shared.colsPerScreen)
             paginationEngine?.applyLayout(restorePosition: pendingPaginatedRestorePosition)
         }
+        if let term = pendingSearchTerm, let encoded = EPUBParser.javaScriptStringLiteral(term) {
+            webView.evaluateJavaScript("window.searchText(\(encoded));", completionHandler: nil)
+        }
+        if let fragment = pendingFragment, let encoded = EPUBParser.javaScriptStringLiteral(fragment) {
+            pendingFragment = nil
+            webView.evaluateJavaScript("window.navigateToFragment(\(encoded));", completionHandler: nil)
+        }
+        refreshBookmarkButton()
     }
 }
 
 // MARK: - NSToolbarDelegate
 //
-// Toolbar items:  [openFile] [flexibleSpace] [titleLabel] [flexibleSpace] [pageCount] [fontSize] [themePopover] [history] [floatToggle]
+// Toolbar items are natively customizable; users can add/remove them from the
+// toolbar context menu and restore the default set from Customize Toolbar.
 //
-// Removed vs original: .toc, .search, .readingModeToggle (moved into Settings' General tab)
-// Added:               .titleLabel (centered, truncated book title), .pageCount
-//                       (centered "page/pages · chapter/chapters"), .themePopover (gear icon;
-//                       quick Apple-Books-style theme switcher, popover only -- the full
-//                       Settings window is reachable only via the App menu's Settings… item)
+// Search and Contents are direct controls; mode and reading preferences live
+// in Settings.
 
 extension ReaderViewController: NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.openFile, .flexibleSpace, .titleLabel, .flexibleSpace, .pageCount, .fontSize, .themePopover, .history, .floatToggle]
+        [.openFile, .flexibleSpace, .titleLabel, .flexibleSpace, .search, .toc, .pageCount, .bookmark, .fontSize, .themePopover, .history, .floatToggle]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar)
+        [.openFile, .titleLabel, .search, .toc, .pageCount, .fontSize, .themePopover, .history, .floatToggle, .bookmark, .space, .flexibleSpace]
     }
 
     func toolbar(_ toolbar: NSToolbar,
@@ -1274,6 +1751,24 @@ extension ReaderViewController: NSToolbarDelegate {
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.view = makeToolbarButton(symbol: "folder", tooltip: "Open EPUB…", action: #selector(openFile(_:)))
             item.label = "Open"
+            return item
+
+        case .search:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            let button = makeToolbarButton(symbol: "magnifyingglass", tooltip: "Search in Book", action: #selector(toggleSearch(_:)))
+            button.setButtonType(.toggle)
+            searchButton = button
+            item.view = button
+            item.label = "Search"
+            return item
+
+        case .toc:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            let button = makeToolbarButton(symbol: "list.bullet", tooltip: "Table of Contents", action: #selector(toggleTOC(_:)))
+            button.setButtonType(.toggle)
+            tocButton = button
+            item.view = button
+            item.label = "Contents"
             return item
 
         case .titleLabel:
@@ -1352,8 +1847,19 @@ extension ReaderViewController: NSToolbarDelegate {
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             let btn = makeToolbarButton(symbol: "pin", tooltip: "Float on top", action: #selector(floatAction(_:)))
             floatButton = btn
+            updateFloatButton(isFloating: isFloatingWindow)
             item.view = btn
             item.label = "Float"
+            return item
+
+        case .bookmark:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            let button = makeToolbarButton(symbol: "bookmark", tooltip: "Add Bookmark", action: #selector(bookmarkAction(_:)))
+            bookmarkButton = button
+            item.view = button
+            item.label = "Bookmark"
+            updateBookmarkButton()
+            refreshBookmarkButton()
             return item
 
         default: return nil
@@ -1368,7 +1874,7 @@ extension ReaderViewController: NSToolbarDelegate {
         btn.bezelStyle = .texturedRounded
         btn.toolTip = tooltip
         btn.isBordered = false
-        btn.setButtonType(.momentaryPushIn)
+        btn.setButtonType(.momentaryLight)
         // VoiceOver reads the control's own accessibility label over the
         // underlying NSImage's accessibilityDescription when both exist, and
         // an NSButton doesn't reliably inherit the image's description as its
@@ -1505,12 +2011,20 @@ final class ReaderWebView: WKWebView {
         // that goes through NSWorkspace, which always respects the user's actual
         // default browser.
         let searchItem = NSMenuItem(
-            title: "Search in Browser",
-            action: #selector(ReaderViewController.searchSelectionInBrowser),
+            title: "Search in Book",
+            action: #selector(ReaderViewController.searchSelectionInBook),
             keyEquivalent: ""
         )
         searchItem.target = readerViewController
         menu.insertItem(searchItem, at: 0)
+
+        let browserSearchItem = NSMenuItem(
+            title: "Search in Browser",
+            action: #selector(ReaderViewController.searchSelectionInBrowser),
+            keyEquivalent: ""
+        )
+        browserSearchItem.target = readerViewController
+        menu.insertItem(browserSearchItem, at: 1)
 
         super.willOpenMenu(menu, with: event)
     }
@@ -1520,10 +2034,13 @@ final class ReaderWebView: WKWebView {
 
 extension NSToolbarItem.Identifier {
     static let openFile     = NSToolbarItem.Identifier("openFile")
+    static let search       = NSToolbarItem.Identifier("search")
+    static let toc          = NSToolbarItem.Identifier("toc")
     static let titleLabel   = NSToolbarItem.Identifier("titleLabel")   // NEW: centered title
     static let pageCount    = NSToolbarItem.Identifier("pageCount")    // NEW: "3 of 12 · Ch 2 of 20"
     static let fontSize     = NSToolbarItem.Identifier("fontSize")
     static let history      = NSToolbarItem.Identifier("history")
+    static let bookmark     = NSToolbarItem.Identifier("bookmark")
     static let floatToggle  = NSToolbarItem.Identifier("floatToggle")
     static let themePopover = NSToolbarItem.Identifier("themePopover")  // NEW: replaces readingModeToggle; Apple-Books-style theme quick switcher
     // .toc, .search, .settings removed — now in menu bar only

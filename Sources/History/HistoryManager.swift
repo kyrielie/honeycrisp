@@ -53,6 +53,7 @@ struct HistoryEntry: Codable, Identifiable {
 
 final class HistoryManager {
     static let shared = HistoryManager()
+    static let entriesDidChangeNotification = Notification.Name("ReadingHistoryEntriesDidChange")
 
     private let defaults: UserDefaults
     private let key: String
@@ -106,6 +107,7 @@ final class HistoryManager {
             entries = Array(entries.prefix(maxEntries))
         }
         save()
+        notifyEntriesChanged()
     }
 
     /// Update reading progress for an entry identified by URL
@@ -139,11 +141,13 @@ final class HistoryManager {
     func remove(id: UUID) {
         entries.removeAll { $0.id == id }
         save()
+        notifyEntriesChanged()
     }
 
     func clearAll() {
         entries.removeAll()
         save()
+        notifyEntriesChanged()
     }
 
     func resolveURL(for entry: HistoryEntry) -> URL? {
@@ -154,7 +158,19 @@ final class HistoryManager {
                 options: .withSecurityScope,
                 relativeTo: nil,
                 bookmarkDataIsStale: &stale
-            ) { return resolved }
+            ) {
+                if stale,
+                   let refreshed = try? resolved.bookmarkData(
+                    options: .withSecurityScope,
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                   ),
+                   let index = entries.firstIndex(where: { $0.id == entry.id }) {
+                    entries[index].bookmarkData = refreshed
+                    save()
+                }
+                return resolved
+            }
         }
         return FileManager.default.fileExists(atPath: entry.url.path) ? entry.url : nil
     }
@@ -162,6 +178,12 @@ final class HistoryManager {
     private func save() {
         if let data = try? JSONEncoder().encode(entries) {
             defaults.set(data, forKey: key)
+        }
+    }
+
+    private func notifyEntriesChanged() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: Self.entriesDidChangeNotification, object: self)
         }
     }
 

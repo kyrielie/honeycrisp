@@ -453,6 +453,21 @@ final class SettingsManager {
         set { defaults.set(newValue, forKey: "readerRemoveParagraphIndents"); notifyStructuralChange() }
     }
 
+    /// Hides embedded images in EPUB reading content while keeping their source
+    /// markup intact. Structural because both reading-mode documents are rebuilt
+    /// when this preference changes; turning it off reveals the original images.
+    var hideImages: Bool {
+        get { defaults.bool(forKey: "readerHideImages") }
+        set { defaults.set(newValue, forKey: "readerHideImages"); notifyStructuralChange() }
+    }
+
+    /// Starts new EPUB sessions after an explicitly identified cover landmark.
+    /// Existing saved positions take precedence.
+    var skipCoverWhenOpening: Bool {
+        get { defaults.bool(forKey: "readerSkipCoverWhenOpening") }
+        set { defaults.set(newValue, forKey: "readerSkipCoverWhenOpening"); notifyStructuralChange() }
+    }
+
     // MARK: Pagination
 
     /// Whether the toolbar's page-count label ("3 of 12 · Ch 2 of 20") is shown.
@@ -469,6 +484,25 @@ final class SettingsManager {
     var defaultReadingMode: ReadingMode {
         get { ReadingMode(rawValue: defaults.integer(forKey: "readerDefaultReadingMode")) ?? .scroll }
         set { defaults.set(newValue.rawValue, forKey: "readerDefaultReadingMode"); notifyStructuralChange() }
+    }
+
+    var autoScrollSpeed: Double {
+        get { defaults.object(forKey: "readerAutoScrollSpeed") == nil ? 60 : defaults.double(forKey: "readerAutoScrollSpeed") }
+        set { defaults.set(min(1200, max(10, newValue)), forKey: "readerAutoScrollSpeed"); notifyChange() }
+    }
+
+    var adjustScrollSpeedWhilePaging: Bool {
+        get { defaults.object(forKey: "readerAdjustScrollSpeedWhilePaging") == nil ? true : defaults.bool(forKey: "readerAdjustScrollSpeedWhilePaging") }
+        set { defaults.set(newValue, forKey: "readerAdjustScrollSpeedWhilePaging"); notifyChange() }
+    }
+
+    var speechVoiceIdentifier: String? {
+        get { defaults.string(forKey: "readerSpeechVoiceIdentifier") }
+        set {
+            if let newValue { defaults.set(newValue, forKey: "readerSpeechVoiceIdentifier") }
+            else { defaults.removeObject(forKey: "readerSpeechVoiceIdentifier") }
+            notifyChange()
+        }
     }
 
     var colsPerScreen: ColsPerScreen {
@@ -679,6 +713,11 @@ final class SettingsManager {
     func resetAllToDefaults() {
         formatFirstChapter = false
         removeParagraphIndents = false
+        hideImages = false
+        skipCoverWhenOpening = false
+        autoScrollSpeed = 60
+        adjustScrollSpeedWhilePaging = true
+        speechVoiceIdentifier = nil
         showPageCount = true
         defaultReadingMode = .scroll
         colsPerScreen = .one

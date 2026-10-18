@@ -13,6 +13,7 @@ final class TOCSidebarViewController: NSViewController {
 
     private var entries: [TOCEntry] = []          // flat list (children inlined with indent)
     private var flatEntries: [TOCEntry] = []
+    private var activeURL: URL?
     private var outlineView: NSOutlineView!
     private var scrollView: NSScrollView!
     private var emptyLabel: NSTextField!
@@ -89,6 +90,19 @@ final class TOCSidebarViewController: NSViewController {
         scrollView.isHidden = entries.isEmpty
     }
 
+    func selectEntry(matching url: URL?) {
+        activeURL = url?.standardizedFileURL
+        guard let activeURL else { outlineView.deselectAll(nil); return }
+        for row in 0..<outlineView.numberOfRows {
+            guard let entry = outlineView.item(atRow: row) as? TOCEntry else { continue }
+            if entry.absoluteURL.standardizedFileURL.path == activeURL.path {
+                outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                outlineView.scrollRowToVisible(row)
+                return
+            }
+        }
+    }
+
     // MARK: - Actions
 
     @objc private func rowClicked(_ sender: Any?) {
@@ -146,6 +160,9 @@ extension TOCSidebarViewController: NSOutlineViewDelegate {
             ? NSFont.systemFont(ofSize: 12, weight: .medium)
             : NSFont.systemFont(ofSize: 11)
         cell?.textField?.textColor = entry.depth == 0 ? .labelColor : .secondaryLabelColor
+        if let activeURL, entry.absoluteURL.standardizedFileURL.path == activeURL.path {
+            cell?.textField?.font = NSFont.systemFont(ofSize: entry.depth == 0 ? 12 : 11, weight: .semibold)
+        }
         return cell
     }
 
