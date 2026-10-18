@@ -31,6 +31,7 @@ final class ReaderViewController: NSViewController {
 
     private var currentPackage: EPUBPackage?
     private var currentEPUBURL: URL?
+    private var extractionWorkDirectories: [URL] = []
 
     // MARK: - Pagination state (Patch 0007)
 
@@ -176,6 +177,9 @@ final class ReaderViewController: NSViewController {
         paginationEngine?.positionDidChange = { [weak self] column, total in
             self?.didReceivePositionUpdate(column: column, totalColumns: total)
         }
+        paginationEngine?.spineNavigationHandler = { [weak self] forward in
+            self?.navigateSpine(forward: forward)
+        }
 
         loadingIndicator = NSProgressIndicator()
         loadingIndicator.style = .spinning
@@ -316,6 +320,9 @@ final class ReaderViewController: NSViewController {
         if let monitor = scrollWheelMonitor { NSEvent.removeMonitor(monitor) }
         if let monitor = keyDownMonitor { NSEvent.removeMonitor(monitor) }
         securityScopedURL?.stopAccessingSecurityScopedResource()
+        for directory in extractionWorkDirectories {
+            try? FileManager.default.removeItem(at: directory)
+        }
         NotificationCenter.default.removeObserver(self)
         NSApp.removeObserver(self, forKeyPath: "effectiveAppearance")
     }
@@ -337,8 +344,14 @@ final class ReaderViewController: NSViewController {
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
-                let workDir = URL(fileURLWithPath: NSTemporaryDirectory())
-                    .appendingPathComponent("EPUBReader_\(UUID().uuidString)")
+                let applicationSupport = try FileManager.default.url(
+                    for: .applicationSupportDirectory,
+                    in: .userDomainMask,
+                    appropriateFor: nil,
+                    create: true
+                )
+                let workDir = applicationSupport
+                    .appendingPathComponent("Honeycrisp/EPUBReader_\(UUID().uuidString)", isDirectory: true)
                 let parser = EPUBParser()
                 let extracted = try parser.unpackEPUB(at: url, to: workDir)
                 let pkg = try parser.parsePackage(at: extracted)
@@ -349,6 +362,7 @@ final class ReaderViewController: NSViewController {
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     self.currentPackage = pkg
+                    self.extractionWorkDirectories.append(workDir)
                     // Always show title centered in toolbar; never in window chrome
                     let title = pkg.title.isEmpty
                         ? url.deletingPathExtension().lastPathComponent
@@ -374,6 +388,7 @@ final class ReaderViewController: NSViewController {
                     self.startPositionSaveTimer()
                 }
             } catch {
+                try? FileManager.default.removeItem(at: workDir)
                 DispatchQueue.main.async { [weak self] in
                     self?.showLoading(false)
                     self?.showError(error)
