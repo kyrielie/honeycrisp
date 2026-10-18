@@ -1,0 +1,21 @@
+# SwiftLint configuration for Honeycrisp.
+excluded:
+  - DerivedData
+  - .build
+  - Honeycrisp.xcodeproj
+
+line_length:
+  warning: 160
+  error: 240
+  ignores_comments: true
+  ignores_urls: true
+
+identifier_name:
+  min_length:
+    warning: 2
+  excluded:
+    - i
+    - r
+    - g
+    - b
+    - id

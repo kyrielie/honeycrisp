@@ -17,6 +17,6 @@ let package = Package(
                 .product(name: "ZIPFoundation", package: "ZIPFoundation")
             ],
             path: "Sources"
-        )
+        ),
     ]
 )

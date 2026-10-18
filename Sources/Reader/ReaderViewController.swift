@@ -1197,8 +1197,7 @@ final class ReaderViewController: NSViewController {
     /// style rather than introducing a dedicated debounce utility for one call site.
     @objc private func scheduleStructuralReload() {
         structuralSettingsDebounceTimer?.invalidate()
-        structuralSettingsDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) {
-            [weak self] _ in
+        structuralSettingsDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
             guard let self, let url = self.currentEPUBURL else { self?.renderCurrentContent(); return }
             // Capture current position first so the reload's baked-in restore
             // (scrollRestoreBootstrapJS in scroll mode, pendingPaginatedRestorePosition
@@ -2209,6 +2208,7 @@ extension NSToolbarItem.Identifier {
     static let history = NSToolbarItem.Identifier("history")
     static let bookmark = NSToolbarItem.Identifier("bookmark")
     static let floatToggle = NSToolbarItem.Identifier("floatToggle")
-    static let themePopover = NSToolbarItem.Identifier("themePopover")  // NEW: replaces readingModeToggle; Apple-Books-style theme quick switcher
+    // NEW: replaces readingModeToggle; Apple-Books-style theme quick switcher
+    static let themePopover = NSToolbarItem.Identifier("themePopover")
     // .toc, .search, .settings removed — now in menu bar only
 }

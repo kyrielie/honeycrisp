@@ -14,7 +14,7 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
 | `Sources/EPUBReader.entitlements` | Bookmarks app-scope entitlement (excluded from compiled sources) |
 | `Assets.xcassets/` | App icon and accent color (in repo, not in upload zips) |
 | `test.sh` | xcodegen + `xcodebuild test` wrapper |
-| `.swift-format` | 4 spaces, 120 columns |
+| `.swiftlint.yml` | SwiftLint rules: line length 160, trailing commas required |
 | `make_upload_zip.sh` | Builds the review zip: tracked files plus `.git-meta/` |
 | `.github/workflows/` | `tests.yml` (push/PR), `build-dmg.yml`, `release.yml` (manual) |
 | `docs/` | Roadmap, corpus notes, settings window status (see Docs map) |

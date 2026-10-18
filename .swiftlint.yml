@@ -1,0 +1,48 @@
+# SwiftLint configuration for Honeycrisp.
+excluded:
+  - DerivedData
+  - .build
+  - Honeycrisp.xcodeproj
+
+line_length:
+  warning: 160
+  error: 240
+  ignores_comments: true
+  ignores_urls: true
+
+identifier_name:
+  min_length:
+    warning: 2
+  excluded:
+    - i
+    - r
+    - g
+    - b
+    - a
+    - c
+    - id
+
+# Trailing commas in multiline collections are required (matches current Swift style).
+trailing_comma:
+  mandatory_comma: true
+
+# Allow 3-member tuples and one extra level of type nesting.
+large_tuple:
+  warning: 3
+  error: 4
+
+nesting:
+  type_level:
+    warning: 2
+
+# Test classes with many cases are long by nature.
+type_body_length:
+  warning: 300
+  error: 400
+
+# Disabled: opening_brace conflicts with multiline-condition layout, and the other two flag
+# doc comments in odd places and Data-to-String conversions that are fine in this code base.
+disabled_rules:
+  - opening_brace
+  - orphaned_doc_comment
+  - optional_data_string_conversion

@@ -147,7 +147,7 @@ final class EPUBParser: NSObject {
     /// are not DRM: the book is otherwise readable.
     private static let fontObfuscationAlgorithms: Set<String> = [
         "http://www.idpf.org/2008/embedding",
-        "http://ns.adobe.com/pdf/enc#RC"
+        "http://ns.adobe.com/pdf/enc#RC",
     ]
 
     /// True when the unpacked package carries a DRM marker. Matches by element local name (as
@@ -174,7 +174,7 @@ final class EPUBParser: NSObject {
         let keyInfo = "//*[local-name()='EncryptedData']/*[local-name()='KeyInfo']"
         let markerPaths = [
             "\(keyInfo)/*[local-name()='RetrievalMethod'][@URI='license.lcpl#/encryption/content_key']",
-            "\(keyInfo)/*[local-name()='resource']"
+            "\(keyInfo)/*[local-name()='resource']",
         ]
         for path in markerPaths {
             if let nodes = try? document.nodes(forXPath: path), !nodes.isEmpty { return true }
@@ -271,7 +271,7 @@ final class EPUBParser: NSObject {
         text = text.replacingOccurrences(of: #"(?s)<[^>]+>"#, with: "", options: .regularExpression)
         let entities: [(String, String)] = [
             ("&nbsp;", "\u{00a0}"), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
-            ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'")
+            ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
         ]
         for (entity, value) in entities { text = text.replacingOccurrences(of: entity, with: value, options: .caseInsensitive) }
         text = text.replacingOccurrences(of: #"&#(\d+);"#, with: { _, matched in

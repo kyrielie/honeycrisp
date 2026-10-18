@@ -102,7 +102,7 @@ final class TOCParserTests: XCTestCase {
         let chapterTwo = temporaryDirectory.appendingPathComponent("chapter-1.xhtml")
         let spine = [
             EPUBSpineItem(manifestID: "title", url: chapterOne, isLinear: true),
-            EPUBSpineItem(manifestID: "chapter", url: chapterTwo, isLinear: true)
+            EPUBSpineItem(manifestID: "chapter", url: chapterTwo, isLinear: true),
         ]
         let noLandmark = EPUBPackage(
             rootFolder: temporaryDirectory, spineURLs: [chapterOne, chapterTwo], title: "Book", author: "",
