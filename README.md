@@ -30,6 +30,27 @@ Also https://github.com/kyrielie/nectar its ios app companion reader.
 
 ## Installation
 
+### Homebrew
+
+This personal tap installs Honeycrisp's published macOS release:
+
+```bash
+brew tap kyrielie/yggdrasil
+brew install --cask honeycrisp
+```
+
+To update it after a tap update has been merged:
+
+```bash
+brew upgrade --cask honeycrisp
+```
+
+The current builds are ad-hoc signed and not notarized. macOS may ask you to
+approve opening Honeycrisp the first time. See the [Yggdrasil tap](https://github.com/kyrielie/homebrew-yggdrasil)
+for the cask and release details.
+
+### Manual download
+
 Download release to try, try to open then click open anyways in Settings / Privacy & Security
 
 Or bypass macos gatekeeper.
