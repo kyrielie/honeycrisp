@@ -49,7 +49,7 @@ final class TOCPopupViewController: NSViewController, NSOutlineViewDataSource, N
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
             scroll.topAnchor.constraint(equalTo: root.topAnchor, constant: 8),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8)
+            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8),
         ])
         self.view = root
     }
@@ -58,10 +58,12 @@ final class TOCPopupViewController: NSViewController, NSOutlineViewDataSource, N
         super.viewDidAppear()
         outlineView.reloadData()
         for entry in entries where !entry.children.isEmpty { outlineView.expandItem(entry) }
-        guard let row = (0..<outlineView.numberOfRows).first(where: { row in
-            guard let entry = outlineView.item(atRow: row) as? TOCEntry else { return false }
-            return Self.chapterURL(for: entry.absoluteURL) == currentChapterURL
-        }) else { return }
+        guard
+            let row = (0..<outlineView.numberOfRows).first(where: { row in
+                guard let entry = outlineView.item(atRow: row) as? TOCEntry else { return false }
+                return Self.chapterURL(for: entry.absoluteURL) == currentChapterURL
+            })
+        else { return }
         outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         outlineView.scrollRowToVisible(row)
     }

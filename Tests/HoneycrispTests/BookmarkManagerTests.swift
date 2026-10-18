@@ -24,7 +24,8 @@ final class BookmarkManagerTests: XCTestCase {
         let firstURL = URL(fileURLWithPath: "/books/one.epub")
         let secondURL = URL(fileURLWithPath: "/books/two.epub")
         let manager = makeManager()
-        let first = manager.add(bookURL: firstURL, label: "Chapter 2 · 2", spineIndex: 1, characterOffset: 87, chapterTitle: "Chapter 2")
+        let first = manager.add(
+            bookURL: firstURL, label: "Chapter 2 · 2", spineIndex: 1, characterOffset: 87, chapterTitle: "Chapter 2")
         manager.add(bookURL: secondURL, label: "Start", spineIndex: 0, characterOffset: 0, chapterTitle: nil)
 
         let reloaded = makeManager()
@@ -160,7 +161,7 @@ final class BookmarkManagerTests: XCTestCase {
             "label": "Legacy",
             "createdAt": 700_000_000.0,
             "spineIndex": 2,
-            "characterOffset": 99
+            "characterOffset": 99,
         ]
         let data = try JSONSerialization.data(withJSONObject: legacy)
         let decoded = try JSONDecoder().decode(ReadingBookmark.self, from: data)

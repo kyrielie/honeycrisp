@@ -39,9 +39,12 @@ struct FontPreset: Identifiable {
 
 enum FontPresets {
     static let all: [FontPreset] = [
-        FontPreset(id: "system", label: "System (SF Pro)", cssStack: "ui-sans-serif, -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif"),
+        FontPreset(
+            id: "system", label: "System (SF Pro)",
+            cssStack: "ui-sans-serif, -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif"),
         FontPreset(id: "newyork", label: "Serif (New York)", cssStack: "ui-serif, Georgia, serif"),
-        FontPreset(id: "monospace", label: "Monospace", cssStack: "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace"),
+        FontPreset(
+            id: "monospace", label: "Monospace", cssStack: "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace"),
         FontPreset(id: "iowan", label: "Iowan Old Style", cssStack: "\"Iowan Old Style\", Georgia, serif"),
         FontPreset(id: "georgia", label: "Georgia", cssStack: "Georgia, serif"),
         FontPreset(id: "palatino", label: "Palatino", cssStack: "Palatino, 'Palatino Linotype', serif"),
@@ -49,7 +52,7 @@ enum FontPresets {
         FontPreset(id: "charter", label: "Charter", cssStack: "Charter, Georgia, serif"),
         FontPreset(id: "avenir", label: "Avenir Next", cssStack: "'Avenir Next', Avenir, sans-serif"),
         FontPreset(id: "seravek", label: "Seravek", cssStack: "Seravek, 'Gill Sans', sans-serif"),
-        FontPreset(id: "courier", label: "Courier New", cssStack: "'Courier New', Courier, monospace")
+        FontPreset(id: "courier", label: "Courier New", cssStack: "'Courier New', Courier, monospace"),
     ]
 
     /// Falls back to the first preset (System/SF Pro) rather than a second
@@ -102,14 +105,16 @@ struct Theme: Codable, Identifiable, Equatable {
     // by id below -- decode as non-default.
     var isDefault: Bool
 
-    init(id: UUID = UUID(), name: String, light: ThemeColorSet, dark: ThemeColorSet,
-         fontFamily: String = FontPresets.defaultStack,
-         fontSizePercent: Int = 100,
-         lineHeight: Double = 1.6,
-         maxWidth: Int = 700,
-         paddingH: Int = 24,
-         paddingV: Int = 24,
-         isDefault: Bool = false) {
+    init(
+        id: UUID = UUID(), name: String, light: ThemeColorSet, dark: ThemeColorSet,
+        fontFamily: String = FontPresets.defaultStack,
+        fontSizePercent: Int = 100,
+        lineHeight: Double = 1.6,
+        maxWidth: Int = 700,
+        paddingH: Int = 24,
+        paddingV: Int = 24,
+        isDefault: Bool = false
+    ) {
         self.id = id
         self.name = name
         self.light = light
@@ -144,7 +149,7 @@ struct Theme: Codable, Identifiable, Equatable {
 }
 
 enum ReadingMode: Int, CaseIterable {
-    case scroll    = 0
+    case scroll = 0
     case paginated = 1
 }
 
@@ -154,7 +159,7 @@ enum ReadingMode: Int, CaseIterable {
 /// so this explicit setting is the only thing controlling tab-vs-window behavior.
 enum NewBookOpensIn: Int, CaseIterable {
     case newWindow = 0
-    case newTab    = 1
+    case newTab = 1
 
     var label: String {
         switch self {
@@ -227,21 +232,24 @@ final class SettingsManager {
     /// order shown in both the Appearance grid and the toolbar popover.
     /// Internal (not private) so tests can check every seeded palette.
     static let seedThemes: [Theme] = [
-        Theme(name: "Original",
-              light: ThemeColorSet(background: "#ffffff", text: "#000000", link: "#0068da"),
-              dark: ThemeColorSet(background: "#1c1c1e", text: "#e8e0d4", link: "#5aa9ff"),
-              fontFamily: FontPresets.all.first { $0.id == "system" }!.cssStack,
-              isDefault: true),
-        Theme(name: "Quiet",
-              light: ThemeColorSet(background: "#2c2c2c", text: "#8a8a8a", link: "#7fb2e8"),
-              dark: ThemeColorSet(background: "#1c1c1e", text: "#8a8a8a", link: "#7fb2e8"),
-              fontFamily: FontPresets.all.first { $0.id == "iowan" }!.cssStack,
-              isDefault: true),
-        Theme(name: "Paper",
-              light: ThemeColorSet(background: "#f4ecd8", text: "#433422", link: "#8a5a2b"),
-              dark: ThemeColorSet(background: "#2b2216", text: "#d8c9a8", link: "#c99a55"),
-              fontFamily: FontPresets.all.first { $0.id == "georgia" }!.cssStack,
-              isDefault: true)
+        Theme(
+            name: "Original",
+            light: ThemeColorSet(background: "#ffffff", text: "#000000", link: "#0068da"),
+            dark: ThemeColorSet(background: "#1c1c1e", text: "#e8e0d4", link: "#5aa9ff"),
+            fontFamily: FontPresets.all.first { $0.id == "system" }!.cssStack,
+            isDefault: true),
+        Theme(
+            name: "Quiet",
+            light: ThemeColorSet(background: "#2c2c2c", text: "#8a8a8a", link: "#7fb2e8"),
+            dark: ThemeColorSet(background: "#1c1c1e", text: "#8a8a8a", link: "#7fb2e8"),
+            fontFamily: FontPresets.all.first { $0.id == "iowan" }!.cssStack,
+            isDefault: true),
+        Theme(
+            name: "Paper",
+            light: ThemeColorSet(background: "#f4ecd8", text: "#433422", link: "#8a5a2b"),
+            dark: ThemeColorSet(background: "#2b2216", text: "#d8c9a8", link: "#c99a55"),
+            fontFamily: FontPresets.all.first { $0.id == "georgia" }!.cssStack,
+            isDefault: true),
     ]
 
     /// One-time migration for installs that persisted themes before `isDefault`
@@ -266,8 +274,9 @@ final class SettingsManager {
     var themes: [Theme] {
         get {
             if let data = defaults.data(forKey: "readerThemes"),
-               let decoded = try? JSONDecoder().decode([Theme].self, from: data),
-               !decoded.isEmpty {
+                let decoded = try? JSONDecoder().decode([Theme].self, from: data),
+                !decoded.isEmpty
+            {
                 if !Self.dataHasPerThemeTypography(data) {
                     // Pre-upgrade storage: every theme shared one global font/
                     // size/line-height/margin setting. Backfill each theme
@@ -277,7 +286,8 @@ final class SettingsManager {
                     // persist the backfilled version so this only runs once.
                     let migrated = decoded.map { theme -> Theme in
                         var updatedTheme = theme
-                        updatedTheme.fontFamily = self.defaults.string(forKey: "readerFontFamily")
+                        updatedTheme.fontFamily =
+                            self.defaults.string(forKey: "readerFontFamily")
                             ?? (self.defaults.object(forKey: "readerFont") != nil
                                 ? Self.migrateLegacyFontFamily(defaults: self.defaults)
                                 : FontPresets.defaultStack)
@@ -287,8 +297,12 @@ final class SettingsManager {
                         updatedTheme.lineHeight = storedLineHeight == 0 ? 1.6 : storedLineHeight
                         let storedMaxWidth = self.defaults.integer(forKey: "readerMaxWidth")
                         updatedTheme.maxWidth = storedMaxWidth == 0 ? 700 : storedMaxWidth
-                        updatedTheme.paddingH = self.defaults.object(forKey: "readerPaddingH") == nil ? 24 : self.defaults.integer(forKey: "readerPaddingH")
-                        updatedTheme.paddingV = self.defaults.object(forKey: "readerPaddingV") == nil ? 24 : self.defaults.integer(forKey: "readerPaddingV")
+                        updatedTheme.paddingH =
+                            self.defaults.object(forKey: "readerPaddingH") == nil
+                            ? 24 : self.defaults.integer(forKey: "readerPaddingH")
+                        updatedTheme.paddingV =
+                            self.defaults.object(forKey: "readerPaddingV") == nil
+                            ? 24 : self.defaults.integer(forKey: "readerPaddingV")
                         return updatedTheme
                     }
                     if let data = try? JSONEncoder().encode(migrated) {
@@ -330,7 +344,7 @@ final class SettingsManager {
     /// hardcoded defaults.
     private static func dataHasPerThemeTypography(_ data: Data) -> Bool {
         guard let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-              let first = array.first
+            let first = array.first
         else { return true }
         return first["fontFamily"] != nil
     }
@@ -340,7 +354,7 @@ final class SettingsManager {
     /// (`?? false`) can't mask "this hasn't been migrated yet".
     private static func dataHasIsDefaultFlag(_ data: Data) -> Bool {
         guard let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-              let first = array.first
+            let first = array.first
         else { return true }
         return first["isDefault"] != nil
     }
@@ -350,7 +364,8 @@ final class SettingsManager {
     private static func migrateLegacyThemes(defaults: UserDefaults) -> [Theme] {
         var result = seedThemes
         if defaults.object(forKey: "readerTheme") != nil,
-           ReaderThemeLegacy(rawValue: defaults.integer(forKey: "readerTheme")) == .custom {
+            ReaderThemeLegacy(rawValue: defaults.integer(forKey: "readerTheme")) == .custom
+        {
             let bg = defaults.string(forKey: "readerCustomBg") ?? "#ffffff"
             let text = defaults.string(forKey: "readerCustomText") ?? "#000000"
             let custom = ThemeColorSet(background: bg, text: text, link: "#0068da")
@@ -413,8 +428,8 @@ final class SettingsManager {
     func deleteTheme(_ id: UUID) {
         var list = themes
         guard list.count > 1,
-              let idx = list.firstIndex(where: { $0.id == id }),
-              !list[idx].isDefault
+            let idx = list.firstIndex(where: { $0.id == id }),
+            !list[idx].isDefault
         else { return }
         list.remove(at: idx)
         themes = list
@@ -482,12 +497,18 @@ final class SettingsManager {
     }
 
     var autoScrollSpeed: Double {
-        get { defaults.object(forKey: "readerAutoScrollSpeed") == nil ? 60 : defaults.double(forKey: "readerAutoScrollSpeed") }
+        get {
+            defaults.object(forKey: "readerAutoScrollSpeed") == nil
+                ? 60 : defaults.double(forKey: "readerAutoScrollSpeed")
+        }
         set { defaults.set(min(1200, max(10, newValue)), forKey: "readerAutoScrollSpeed"); notifyChange() }
     }
 
     var adjustScrollSpeedWhilePaging: Bool {
-        get { defaults.object(forKey: "readerAdjustScrollSpeedWhilePaging") == nil ? true : defaults.bool(forKey: "readerAdjustScrollSpeedWhilePaging") }
+        get {
+            defaults.object(forKey: "readerAdjustScrollSpeedWhilePaging") == nil
+                ? true : defaults.bool(forKey: "readerAdjustScrollSpeedWhilePaging")
+        }
         set { defaults.set(newValue, forKey: "readerAdjustScrollSpeedWhilePaging"); notifyChange() }
     }
 
@@ -571,7 +592,10 @@ final class SettingsManager {
     /// cross-reference. Purely a CSS pointer-events toggle, so this is
     /// cosmetic, not structural.
     var allowReaderLinkClicks: Bool {
-        get { defaults.object(forKey: "readerAllowLinkClicks") == nil ? true : defaults.bool(forKey: "readerAllowLinkClicks") }
+        get {
+            defaults.object(forKey: "readerAllowLinkClicks") == nil
+                ? true : defaults.bool(forKey: "readerAllowLinkClicks")
+        }
         set { defaults.set(newValue, forKey: "readerAllowLinkClicks"); notifyCosmeticChange() }
     }
 
@@ -595,8 +619,8 @@ final class SettingsManager {
     static func applyAppearanceOverride(_ mode: AppearanceMode) {
         switch mode {
         case .system: NSApp.appearance = nil
-        case .light:  NSApp.appearance = NSAppearance(named: .aqua)
-        case .dark:   NSApp.appearance = NSAppearance(named: .darkAqua)
+        case .light: NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
         }
     }
 
@@ -635,7 +659,8 @@ final class SettingsManager {
                     || theme.lineHeight != 1.6
                     || theme.maxWidth != 700
                     || theme.paddingH != 24
-                    || theme.paddingV != 24 {
+                    || theme.paddingV != 24
+                {
                     return true
                 }
             } else {
@@ -644,7 +669,8 @@ final class SettingsManager {
                     || theme.lineHeight != Self.customThemeDefaultLineHeight
                     || theme.maxWidth != Self.customThemeDefaultMaxWidth
                     || theme.paddingH != Self.customThemeDefaultPaddingH
-                    || theme.paddingV != Self.customThemeDefaultPaddingV {
+                    || theme.paddingV != Self.customThemeDefaultPaddingV
+                {
                     return true
                 }
             }
@@ -745,9 +771,9 @@ final class SettingsManager {
     /// Convert an NSColor to a CSS hex string (#rrggbb)
     static func cssHex(from color: NSColor) -> String {
         guard let rgb = color.usingColorSpace(.sRGB) else { return "#000000" }
-        let r = Int(rgb.redComponent   * 255)
+        let r = Int(rgb.redComponent * 255)
         let g = Int(rgb.greenComponent * 255)
-        let b = Int(rgb.blueComponent  * 255)
+        let b = Int(rgb.blueComponent * 255)
         return String(format: "#%02x%02x%02x", r, g, b)
     }
 
@@ -758,8 +784,8 @@ final class SettingsManager {
         guard digits.count == 6, let val = UInt32(digits, radix: 16) else { return .black }
         return NSColor(
             red: CGFloat((val >> 16) & 0xff) / 255,
-            green: CGFloat((val >>  8) & 0xff) / 255,
-            blue: CGFloat( val        & 0xff) / 255,
+            green: CGFloat((val >> 8) & 0xff) / 255,
+            blue: CGFloat(val & 0xff) / 255,
             alpha: 1
         )
     }

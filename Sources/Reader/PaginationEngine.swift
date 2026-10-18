@@ -36,14 +36,14 @@ import WebKit
 // MARK: - ColsPerScreen preference
 
 enum ColsPerScreen: Int, CaseIterable {
-    case one   = 1
-    case two   = 2
+    case one = 1
+    case two = 2
     case three = 3
 
     var label: String {
         switch self {
-        case .one:   return "1 column"
-        case .two:   return "2 columns"
+        case .one: return "1 column"
+        case .two: return "2 columns"
         case .three: return "3 columns"
         }
     }
@@ -58,10 +58,10 @@ enum ColsPerScreen: Int, CaseIterable {
 // honors it).
 
 enum RestorePosition {
-    case start                     // column 0
-    case end                       // last column
-    case fraction(Double)          // 0.0–1.0, saved progress
-    case characterOffset(Int)      // exact UTF-16 offset, from HistoryEntry
+    case start  // column 0
+    case end  // last column
+    case fraction(Double)  // 0.0–1.0, saved progress
+    case characterOffset(Int)  // exact UTF-16 offset, from HistoryEntry
 }
 
 // MARK: - Anchor layout
@@ -159,9 +159,9 @@ final class PaginationEngine: NSObject {
             self.isReady = true
 
             guard error == nil,
-                  let str = result as? String,
-                  let data = str.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let str = result as? String,
+                let data = str.data(using: .utf8),
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else {
                 self.spineDidLoad?(1)
                 return
@@ -192,7 +192,7 @@ final class PaginationEngine: NSObject {
     func handleKeyDown(_ key: NavigationKey) {
         guard isReady else { return }
         switch key {
-        case .forward:  webView?.evaluateJavaScript("window.qlNextPage();", completionHandler: nil)
+        case .forward: webView?.evaluateJavaScript("window.qlNextPage();", completionHandler: nil)
         case .backward: webView?.evaluateJavaScript("window.qlPrevPage();", completionHandler: nil)
         }
     }
@@ -216,16 +216,16 @@ final class PaginationEngine: NSObject {
     func queryProgress(completion: @escaping (_ fraction: Double, _ column: Int, _ total: Int) -> Void) {
         guard isReady, let webViewRef = webView else { completion(0, 0, 1); return }
         let progressJS = """
-        JSON.stringify({
-            f: window.qlProgressFraction(),
-            c: window.qlCurrentColumn(),
-            t: window.qlColumnCount()
-        });
-        """
+            JSON.stringify({
+                f: window.qlProgressFraction(),
+                c: window.qlCurrentColumn(),
+                t: window.qlColumnCount()
+            });
+            """
         webViewRef.evaluateJavaScript(progressJS) { result, _ in
             guard let str = result as? String,
-                  let data = str.data(using: .utf8),
-                  let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Double]
+                let data = str.data(using: .utf8),
+                let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Double]
             else { completion(0, 0, 1); return }
             completion(dict["f"] ?? 0, Int(dict["c"] ?? 0), Int(dict["t"] ?? 1))
         }

@@ -11,7 +11,7 @@ final class TOCSidebarViewController: NSViewController {
 
     weak var delegate: TOCSidebarDelegate?
 
-    private var entries: [TOCEntry] = []          // flat list (children inlined with indent)
+    private var entries: [TOCEntry] = []  // flat list (children inlined with indent)
     private var flatEntries: [TOCEntry] = []
     private var activeURL: URL?
     private var outlineView: NSOutlineView!
@@ -70,7 +70,7 @@ final class TOCSidebarViewController: NSViewController {
             scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
             emptyLabel.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor)
+            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
         ])
 
         self.view = root
@@ -151,12 +151,13 @@ extension TOCSidebarViewController: NSOutlineViewDelegate {
             NSLayoutConstraint.activate([
                 tf.leadingAnchor.constraint(equalTo: cell!.leadingAnchor, constant: 4),
                 tf.centerYAnchor.constraint(equalTo: cell!.centerYAnchor),
-                tf.trailingAnchor.constraint(equalTo: cell!.trailingAnchor, constant: -4)
+                tf.trailingAnchor.constraint(equalTo: cell!.trailingAnchor, constant: -4),
             ])
         }
 
         cell?.textField?.stringValue = entry.title
-        cell?.textField?.font = entry.depth == 0
+        cell?.textField?.font =
+            entry.depth == 0
             ? NSFont.systemFont(ofSize: 12, weight: .medium)
             : NSFont.systemFont(ofSize: 11)
         cell?.textField?.textColor = entry.depth == 0 ? .labelColor : .secondaryLabelColor

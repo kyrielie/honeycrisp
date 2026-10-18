@@ -67,15 +67,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    @objc private func handleOpenEvent(_ event: NSAppleEventDescriptor, withReplyEvent replyEvent: NSAppleEventDescriptor) {
+    @objc private func handleOpenEvent(
+        _ event: NSAppleEventDescriptor, withReplyEvent replyEvent: NSAppleEventDescriptor
+    ) {
         guard let descriptor = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject)) else { return }
 
         var urls: [URL] = []
         if descriptor.numberOfItems > 0 {
             for i in 1...descriptor.numberOfItems {
                 if let fileDescriptor = descriptor.atIndex(i),
-                   let urlString = fileDescriptor.stringValue,
-                   let url = URL(string: urlString) {
+                    let urlString = fileDescriptor.stringValue,
+                    let url = URL(string: urlString)
+                {
                     urls.append(url)
                 }
             }
@@ -107,7 +110,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // existing reader window, it's just a new window regardless of the
             // setting: nothing to tab onto.
             if SettingsManager.shared.newBookOpensIn == .newTab,
-               let existingWindow = NSApp.orderedWindows.first(where: { $0.windowController is ReaderWindowController }) {
+                let existingWindow = NSApp.orderedWindows.first(where: { $0.windowController is ReaderWindowController }
+                )
+            {
                 wc.window.map { existingWindow.addTabbedWindow($0, ordered: .above) }
                 wc.showWindow(nil)
             } else {
@@ -138,11 +143,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenuItem.submenu = appMenu
 
-        appMenu.addItem(NSMenuItem(
-            title: "About \(ProcessInfo.processInfo.processName)",
-            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
-            keyEquivalent: ""
-        ))
+        appMenu.addItem(
+            NSMenuItem(
+                title: "About \(ProcessInfo.processInfo.processName)",
+                action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+                keyEquivalent: ""
+            ))
         appMenu.addItem(.separator())
 
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettingsAction(_:)), keyEquivalent: ",")
@@ -283,22 +289,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         readingMenu.addItem(colsItem)
 
         readingMenu.addItem(.separator())
-        readingMenu.addItem(NSMenuItem(title: "Increase Font Size", action: #selector(increaseFontSize), keyEquivalent: "+"))
-        readingMenu.addItem(NSMenuItem(title: "Decrease Font Size", action: #selector(decreaseFontSize), keyEquivalent: "-"))
+        readingMenu.addItem(
+            NSMenuItem(title: "Increase Font Size", action: #selector(increaseFontSize), keyEquivalent: "+"))
+        readingMenu.addItem(
+            NSMenuItem(title: "Decrease Font Size", action: #selector(decreaseFontSize), keyEquivalent: "-"))
 
         readingMenu.addItem(.separator())
         let chapterItems: [(String, Selector)] = [
             ("Previous Chapter", #selector(previousChapter)),
             ("Next Chapter", #selector(nextChapter)),
             ("Beginning of Chapter", #selector(chapterBeginning)),
-            ("End of Chapter", #selector(chapterEnd))
+            ("End of Chapter", #selector(chapterEnd)),
         ]
         for (title, action) in chapterItems {
             readingMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: ""))
         }
 
         let autoScrollMenu = NSMenu(title: "Auto-Scroll")
-        autoScrollMenu.addItem(NSMenuItem(title: "Start / Resume", action: #selector(startAutoScroll), keyEquivalent: ""))
+        autoScrollMenu.addItem(
+            NSMenuItem(title: "Start / Resume", action: #selector(startAutoScroll), keyEquivalent: ""))
         autoScrollMenu.addItem(NSMenuItem(title: "Stop", action: #selector(stopAutoScroll), keyEquivalent: ""))
         autoScrollMenu.addItem(.separator())
         let autoScrollItem = NSMenuItem(title: "Auto-Scroll", action: nil, keyEquivalent: "")
@@ -306,7 +315,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         readingMenu.addItem(autoScrollItem)
 
         let speechMenu = NSMenu(title: "Speak Current Chapter")
-        speechMenu.addItem(NSMenuItem(title: "Speak from Current Location", action: #selector(speakCurrentLocation), keyEquivalent: ""))
+        speechMenu.addItem(
+            NSMenuItem(title: "Speak from Current Location", action: #selector(speakCurrentLocation), keyEquivalent: "")
+        )
         speechMenu.addItem(NSMenuItem(title: "Pause / Resume", action: #selector(toggleSpeechPause), keyEquivalent: ""))
         speechMenu.addItem(NSMenuItem(title: "Stop Speaking", action: #selector(stopSpeech), keyEquivalent: ""))
         speechMenu.addItem(.separator())
@@ -327,10 +338,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(windowMenuItem)
         let windowMenu = NSMenu(title: "Window")
         windowMenuItem.submenu = windowMenu
-        windowMenu.addItem(NSMenuItem(title: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
+        windowMenu.addItem(
+            NSMenuItem(title: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
         windowMenu.addItem(NSMenuItem(title: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: ""))
         windowMenu.addItem(.separator())
-        windowMenu.addItem(NSMenuItem(title: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: ""))
+        windowMenu.addItem(
+            NSMenuItem(
+                title: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: ""))
         NSApp.windowsMenu = windowMenu
 
         // Reflect any previously-saved rebinding immediately on launch, not only
@@ -355,7 +369,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .searchInBook: #selector(searchInBook),
             .showTOC: #selector(showTOC),
             .toggleFloat: #selector(ReaderWindowController.toggleFloat(_:)),
-            .toggleReadingMode: #selector(toggleReadingMode)
+            .toggleReadingMode: #selector(toggleReadingMode),
         ]
         // Invert once: selector -> binding, so the recursive walk below is a
         // single dictionary lookup per item instead of re-scanning all five
@@ -433,15 +447,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleBookmark() { readerVC()?.toggleBookmarkAtCurrentPosition() }
     @objc private func openRecent(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID,
-              let entry = HistoryManager.shared.entries.first(where: { $0.id == id }) else { return }
+            let entry = HistoryManager.shared.entries.first(where: { $0.id == id })
+        else { return }
         let wc = ReaderWindowController()
         wc.showWindow(nil)
         wc.loadRecent(entry)
     }
     @objc private func openBookmark(_ sender: NSMenuItem) {
         guard let context = sender.representedObject as? BookmarkMenuContext,
-              let vc = context.reader,
-              let url = vc.currentBookURL(), ReadingBookmark.normalizedPath(for: url) == context.bookmark.bookPath else { return }
+            let vc = context.reader,
+            let url = vc.currentBookURL(), ReadingBookmark.normalizedPath(for: url) == context.bookmark.bookPath
+        else { return }
         vc.navigate(to: context.bookmark)
     }
     @objc private func removeBookmark(_ sender: NSMenuItem) {
@@ -511,7 +527,8 @@ extension AppDelegate: NSMenuDelegate {
     // swiftlint:disable:next function_body_length
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu.title == "View",
-           let modeItem = menu.items.first(where: { $0.action == #selector(toggleReadingMode) }) {
+            let modeItem = menu.items.first(where: { $0.action == #selector(toggleReadingMode) })
+        {
             modeItem.title = "Paginated Mode"
             modeItem.state = SettingsManager.shared.defaultReadingMode == .paginated ? .on : .off
             modeItem.isEnabled = readerVC() != nil
@@ -588,7 +605,7 @@ extension AppDelegate: NSMenuItemValidation {
         let readingActions: [Selector?] = [
             #selector(previousChapter), #selector(nextChapter), #selector(chapterBeginning), #selector(chapterEnd),
             #selector(startAutoScroll), #selector(stopAutoScroll), #selector(speakCurrentLocation),
-            #selector(toggleSpeechPause), #selector(stopSpeech), #selector(slowerSpeech), #selector(fasterSpeech)
+            #selector(toggleSpeechPause), #selector(stopSpeech), #selector(slowerSpeech), #selector(fasterSpeech),
         ]
         if readingActions.contains(menuItem.action) {
             if menuItem.action == #selector(startAutoScroll) || menuItem.action == #selector(stopAutoScroll) {
@@ -598,7 +615,7 @@ extension AppDelegate: NSMenuItemValidation {
         }
         let bookActions: [Selector?] = [
             #selector(startReading), #selector(goToBeginning), #selector(searchInBook), #selector(showTOC),
-            #selector(toggleBookmark)
+            #selector(toggleBookmark),
         ]
         if bookActions.contains(menuItem.action) {
             return readerVC()?.currentBookURL() != nil

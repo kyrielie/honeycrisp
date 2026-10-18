@@ -24,7 +24,7 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsPaneSizin
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -20)
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -20),
         ])
 
         for action in RebindableAction.allCases {

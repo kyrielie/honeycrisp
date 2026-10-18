@@ -29,8 +29,8 @@ enum RebindableAction: String, CaseIterable, Codable {
 // MARK: - KeyBinding
 
 struct KeyBinding: Codable, Equatable, Hashable {
-    var key: String                              // NSEvent.charactersIgnoringModifiers, lowercased
-    var modifiers: NSEvent.ModifierFlags.RawValue // stored raw — ModifierFlags itself isn't Codable
+    var key: String  // NSEvent.charactersIgnoringModifiers, lowercased
+    var modifiers: NSEvent.ModifierFlags.RawValue  // stored raw — ModifierFlags itself isn't Codable
 
     init(key: String, modifiers: NSEvent.ModifierFlags) {
         self.key = key.lowercased()
@@ -79,7 +79,8 @@ extension SettingsManager {
             var result: [RebindableAction: KeyBinding] = [:]
             let stored: [String: KeyBinding]
             if let data = UserDefaults.standard.data(forKey: "readerKeyBindings"),
-               let decoded = try? JSONDecoder().decode([String: KeyBinding].self, from: data) {
+                let decoded = try? JSONDecoder().decode([String: KeyBinding].self, from: data)
+            {
                 stored = decoded
             } else {
                 stored = [:]
@@ -123,7 +124,7 @@ extension SettingsManager {
             KeyBinding(key: "v", modifiers: [.command]),
             KeyBinding(key: "x", modifiers: [.command]),
             KeyBinding(key: "z", modifiers: [.command]),
-            KeyBinding(key: "a", modifiers: [.command])
+            KeyBinding(key: "a", modifiers: [.command]),
         ]
         return reserved.contains(binding)
     }

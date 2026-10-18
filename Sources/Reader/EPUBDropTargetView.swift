@@ -30,12 +30,14 @@ final class EPUBDropTargetView: NSView {
 
     private func droppedEPUBURL(from sender: NSDraggingInfo) -> URL? {
         let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
-        guard let urls = sender.draggingPasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: options
-        ) as? [URL],
-              let url = urls.first,
-              url.pathExtension.lowercased() == "epub" else { return nil }
+        guard
+            let urls = sender.draggingPasteboard.readObjects(
+                forClasses: [NSURL.self],
+                options: options
+            ) as? [URL],
+            let url = urls.first,
+            url.pathExtension.lowercased() == "epub"
+        else { return nil }
         return url
     }
 }

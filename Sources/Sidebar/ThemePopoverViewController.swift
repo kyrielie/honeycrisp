@@ -19,7 +19,8 @@ final class ThemePopoverViewController: NSViewController {
         let themes = SettingsManager.shared.themes
         let rowHeight: CGFloat = 36
         let headerHeight: CGFloat = 34
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 220, height: headerHeight + CGFloat(themes.count) * rowHeight + 8))
+        let container = NSView(
+            frame: NSRect(x: 0, y: 0, width: 220, height: headerHeight + CGFloat(themes.count) * rowHeight + 8))
         container.translatesAutoresizingMaskIntoConstraints = false
 
         let headerLabel = NSTextField(labelWithString: "Theme")
@@ -38,7 +39,7 @@ final class ThemePopoverViewController: NSViewController {
 
             sep.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 8),
             sep.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            sep.trailingAnchor.constraint(equalTo: container.trailingAnchor)
+            sep.trailingAnchor.constraint(equalTo: container.trailingAnchor),
         ])
 
         var previousAnchor = sep.bottomAnchor
@@ -53,7 +54,7 @@ final class ThemePopoverViewController: NSViewController {
                 row.topAnchor.constraint(equalTo: previousAnchor),
                 row.leadingAnchor.constraint(equalTo: container.leadingAnchor),
                 row.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-                row.heightAnchor.constraint(equalToConstant: rowHeight)
+                row.heightAnchor.constraint(equalToConstant: rowHeight),
             ])
             previousAnchor = row.bottomAnchor
             rows.append(row)
@@ -148,7 +149,7 @@ private final class ThemeRowView: NSView {
             button.topAnchor.constraint(equalTo: topAnchor),
             button.leadingAnchor.constraint(equalTo: leadingAnchor),
             button.trailingAnchor.constraint(equalTo: trailingAnchor),
-            button.bottomAnchor.constraint(equalTo: bottomAnchor)
+            button.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 

@@ -9,7 +9,7 @@ final class HistoryEntryTests: XCTestCase {
             "url": URL(fileURLWithPath: "/books/legacy.epub").absoluteString,
             "title": "Legacy Book",
             "openedAt": 1_700_000_000.0,
-            "readingProgressPercent": 42
+            "readingProgressPercent": 42,
         ]
         let data = try JSONSerialization.data(withJSONObject: [legacyEntry])
         let entries = try JSONDecoder().decode([HistoryEntry].self, from: data)

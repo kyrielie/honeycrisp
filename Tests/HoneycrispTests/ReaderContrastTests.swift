@@ -67,8 +67,10 @@ final class ReaderContrastTests: XCTestCase {
     }
 
     func testTextOverHitMeetsTheMinimumAcrossTheLuminanceRangeAndForUnparseableInput() {
-        let pages = ["#000000", "#101010", "#2c2c2c", "#555555", "#777777", "#999999", "#cccccc", "#f4ecd8",
-            "#ffffff", "not a color", "", "rgb(10,10,10)"]
+        let pages = [
+            "#000000", "#101010", "#2c2c2c", "#555555", "#777777", "#999999", "#cccccc", "#f4ecd8",
+            "#ffffff", "not a color", "", "rgb(10,10,10)",
+        ]
         for page in pages {
             let colors = ReaderContrast.hitColors(background: page, text: "#808080")
             XCTAssertGreaterThanOrEqual(

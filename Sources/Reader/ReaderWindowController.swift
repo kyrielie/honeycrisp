@@ -36,14 +36,14 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
 
     private func setupWindow(_ window: NSWindow) {
         window.titlebarAppearsTransparent = false
-        window.titleVisibility = .hidden          // hide the title text but keep chrome
+        window.titleVisibility = .hidden  // hide the title text but keep chrome
         window.isMovableByWindowBackground = true
         window.backgroundColor = NSColor.windowBackgroundColor
         window.isOpaque = true
         window.minSize = NSSize(width: 480, height: 500)
         window.isRestorable = false
 
-        window.setContentSize(NSSize(width: 980, height: 960))   // wider to accommodate sidebar
+        window.setContentSize(NSSize(width: 980, height: 960))  // wider to accommodate sidebar
 
         let toolbar = NSToolbar(identifier: "HoneycrispReaderToolbar")
         toolbar.delegate = readerViewController

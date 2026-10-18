@@ -109,7 +109,7 @@ final class HistoryViewController: NSViewController {
             ),
 
             emptyLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor)
+            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
         ])
 
         self.view = container
@@ -174,7 +174,8 @@ enum HistoryEntryOpener {
     private static func showMissingFileAlert(for entry: HistoryEntry, onRemoved: () -> Void) {
         let alert = NSAlert()
         alert.messageText = "File Not Found"
-        alert.informativeText = "\u{201C}\(entry.title)\u{201D} could not be located. It may have been moved or deleted."
+        alert.informativeText =
+            "\u{201C}\(entry.title)\u{201D} could not be located. It may have been moved or deleted."
         alert.addButton(withTitle: "Remove from History")
         alert.addButton(withTitle: "Cancel")
         if alert.runModal() == .alertFirstButtonReturn {
@@ -286,11 +287,14 @@ final class HistoryRowView: NSTableCellView {
             removeBtn.centerYAnchor.constraint(equalTo: centerYAnchor),
             removeBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             removeBtn.widthAnchor.constraint(equalToConstant: 20),
-            removeBtn.heightAnchor.constraint(equalToConstant: 20)
+            removeBtn.heightAnchor.constraint(equalToConstant: 20),
         ])
 
         // Show/hide remove button on hover
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.inVisibleRect, .mouseEnteredAndExited, .activeAlways], owner: self, userInfo: nil))
+        addTrackingArea(
+            NSTrackingArea(
+                rect: .zero, options: [.inVisibleRect, .mouseEnteredAndExited, .activeAlways], owner: self,
+                userInfo: nil))
     }
 
     func configure(with entry: HistoryEntry) {

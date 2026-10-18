@@ -6,8 +6,8 @@ import Foundation
 struct TOCEntry: Identifiable {
     let id: UUID
     let title: String
-    let href: String          // relative path, possibly with fragment  e.g. "Text/chapter1.xhtml#section2"
-    let absoluteURL: URL      // resolved against rootFolder
+    let href: String  // relative path, possibly with fragment  e.g. "Text/chapter1.xhtml#section2"
+    let absoluteURL: URL  // resolved against rootFolder
     let playOrder: Int
     let depth: Int
     var children: [TOCEntry]
@@ -39,19 +39,22 @@ final class TOCParser {
         let root = pkg.rootFolder
 
         if let navURL = pkg.navigationURL,
-           let entries = parseNav(at: navURL, rootFolder: root), !entries.isEmpty {
+            let entries = parseNav(at: navURL, rootFolder: root), !entries.isEmpty
+        {
             return entries
         }
 
         // 1. Try toc.ncx (EPUB 2)
         if let ncxURL = findNCX(in: root),
-           let entries = parseNCX(at: ncxURL, rootFolder: root), !entries.isEmpty {
+            let entries = parseNCX(at: ncxURL, rootFolder: root), !entries.isEmpty
+        {
             return entries
         }
 
         // 2. Try nav.xhtml (EPUB 3)
         if let navURL = findNav(in: root),
-           let entries = parseNav(at: navURL, rootFolder: root), !entries.isEmpty {
+            let entries = parseNav(at: navURL, rootFolder: root), !entries.isEmpty
+        {
             return entries
         }
 
@@ -63,14 +66,19 @@ final class TOCParser {
         func convert(_ entry: TOCEntry) -> TOCNode {
             let base = entry.absoluteURL.standardizedFileURL
             let index = package.spineURLs.firstIndex { $0.standardizedFileURL.path == base.path }
-            return TOCNode(title: entry.title, url: entry.absoluteURL, children: entry.children.map(convert), spineIndex: index, isLandmark: false)
+            return TOCNode(
+                title: entry.title, url: entry.absoluteURL, children: entry.children.map(convert), spineIndex: index,
+                isLandmark: false)
         }
         return entries.map(convert)
     }
 
     func startReadingNode(in package: EPUBPackage, toc: [TOCEntry]) -> TOCNode? {
         if let landmark = package.landmarks.first(where: { ["bodymatter", "text"].contains($0.type.lowercased()) }),
-           let index = package.spineURLs.firstIndex(where: { $0.standardizedFileURL.path == landmark.url.standardizedFileURL.path }) {
+            let index = package.spineURLs.firstIndex(where: {
+                $0.standardizedFileURL.path == landmark.url.standardizedFileURL.path
+            })
+        {
             return TOCNode(
                 title: landmark.title.isEmpty ? "Start Reading" : landmark.title,
                 url: landmark.url, children: [], spineIndex: index, isLandmark: true)
@@ -79,22 +87,30 @@ final class TOCParser {
         // Only skip an initial linear item when its filename/heading clearly
         // identifies it as front matter. Ambiguous first chapters remain the start.
         if let firstLinearIndex = package.spine.firstIndex(where: \.isLinear),
-           let nextLinearIndex = package.spine.indices.first(where: { $0 > firstLinearIndex && package.spine[$0].isLinear }) {
+            let nextLinearIndex = package.spine.indices.first(where: {
+                $0 > firstLinearIndex && package.spine[$0].isLinear
+            })
+        {
             let first = package.spine[firstLinearIndex]
             let firstName = first.url.deletingPathExtension().lastPathComponent.lowercased()
                 .replacingOccurrences(of: "[_-]", with: " ", options: .regularExpression)
             let firstTitle = heading(in: first.url)?.lowercased() ?? ""
             let frontMatterTerms = ["cover", "title page", "contents", "table of contents"]
-            let isLikelyFrontMatter = frontMatterTerms.contains(where: { firstName.contains($0) || firstTitle.contains($0) })
+            let isLikelyFrontMatter = frontMatterTerms.contains(where: {
+                firstName.contains($0) || firstTitle.contains($0)
+            })
             if isLikelyFrontMatter {
                 let next = package.spine[nextLinearIndex]
-                return TOCNode(title: "Start Reading", url: next.url, children: [], spineIndex: nextLinearIndex, isLandmark: false)
+                return TOCNode(
+                    title: "Start Reading", url: next.url, children: [], spineIndex: nextLinearIndex, isLandmark: false)
             }
         }
 
         guard let first = package.spine.first(where: \.isLinear) ?? package.spine.first else { return nil }
         let index = package.spineURLs.firstIndex(of: first.url)
-        let title = toc.first(where: { $0.absoluteURL.standardizedFileURL.path == first.url.standardizedFileURL.path })?.title ?? "Start Reading"
+        let title =
+            toc.first(where: { $0.absoluteURL.standardizedFileURL.path == first.url.standardizedFileURL.path })?.title
+            ?? "Start Reading"
         return TOCNode(title: title, url: first.url, children: [], spineIndex: index, isLandmark: false)
     }
 
@@ -103,9 +119,9 @@ final class TOCParser {
     /// document from a user's reading start.
     func firstSpineIndex(afterCoverIn package: EPUBPackage) -> Int? {
         guard let cover = package.landmarks.first(where: { $0.type == "cover" }),
-              let coverIndex = package.spineURLs.firstIndex(where: {
-                  $0.standardizedFileURL.path == cover.url.standardizedFileURL.path
-              })
+            let coverIndex = package.spineURLs.firstIndex(where: {
+                $0.standardizedFileURL.path == cover.url.standardizedFileURL.path
+            })
         else { return nil }
 
         return package.spine.indices.first(where: { $0 > coverIndex && package.spine[$0].isLinear })
@@ -113,10 +129,12 @@ final class TOCParser {
 
     private func heading(in url: URL) -> String? {
         guard let source = try? String(contentsOf: url, encoding: .utf8),
-              let regex = try? NSRegularExpression(pattern: #"(?is)<h[1-3][^>]*>(.*?)</h[1-3]>"#),
-              let match = regex.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)),
-              let range = Range(match.range(at: 1), in: source) else { return nil }
-        return String(source[range]).replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+            let regex = try? NSRegularExpression(pattern: #"(?is)<h[1-3][^>]*>(.*?)</h[1-3]>"#),
+            let match = regex.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)),
+            let range = Range(match.range(at: 1), in: source)
+        else { return nil }
+        return String(source[range]).replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - File Discovery
@@ -141,8 +159,9 @@ final class TOCParser {
         let fm = FileManager.default
         if let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: nil) {
             for case let url as URL in enumerator {
-                if url.lastPathComponent.lowercased().contains("nav") &&
-                   ["xhtml", "html", "htm"].contains(url.pathExtension.lowercased()) {
+                if url.lastPathComponent.lowercased().contains("nav")
+                    && ["xhtml", "html", "htm"].contains(url.pathExtension.lowercased())
+                {
                     return url
                 }
             }
@@ -154,28 +173,37 @@ final class TOCParser {
 
     private func parseNCX(at url: URL, rootFolder: URL) -> [TOCEntry]? {
         guard let data = try? Data(contentsOf: url),
-              let doc = try? XMLDocument(data: data) else { return nil }
+            let doc = try? XMLDocument(data: data)
+        else { return nil }
 
         // ✅ FIX: Only select direct children of navMap, not all navPoints in
         // the document. The old XPath `//*[local-name()='navPoint']` matched
         // every navPoint at every depth, causing children to appear both nested
         // (via recursion) and at the top level (via the initial flat list).
-        let navPoints = (try? doc.nodes(forXPath:
-            "//*[local-name()='navMap']/*[local-name()='navPoint']"
-        )) as? [XMLElement] ?? []
+        let navPoints =
+            (try? doc.nodes(
+                forXPath:
+                    "//*[local-name()='navMap']/*[local-name()='navPoint']"
+            )) as? [XMLElement] ?? []
         guard !navPoints.isEmpty else { return nil }
 
         var order = 0
-        return parseNCXPoints(navPoints, doc: doc, rootFolder: rootFolder, rootURL: url.deletingLastPathComponent(), depth: 0, order: &order)
+        return parseNCXPoints(
+            navPoints, doc: doc, rootFolder: rootFolder, rootURL: url.deletingLastPathComponent(), depth: 0,
+            order: &order)
     }
 
     // swiftlint:disable:next function_parameter_count
-    private func parseNCXPoints(_ nodes: [XMLElement], doc: XMLDocument, rootFolder: URL, rootURL: URL, depth: Int, order: inout Int) -> [TOCEntry] {
+    private func parseNCXPoints(
+        _ nodes: [XMLElement], doc: XMLDocument, rootFolder: URL, rootURL: URL, depth: Int, order: inout Int
+    ) -> [TOCEntry] {
         var entries: [TOCEntry] = []
         for node in nodes {
-            guard let titleNode = (try? node.nodes(forXPath: "*[local-name()='navLabel']/*[local-name()='text']"))?.first,
-                  let contentNode = (try? node.nodes(forXPath: "*[local-name()='content']"))?.first as? XMLElement,
-                  let src = contentNode.attribute(forName: "src")?.stringValue else { continue }
+            guard
+                let titleNode = (try? node.nodes(forXPath: "*[local-name()='navLabel']/*[local-name()='text']"))?.first,
+                let contentNode = (try? node.nodes(forXPath: "*[local-name()='content']"))?.first as? XMLElement,
+                let src = contentNode.attribute(forName: "src")?.stringValue
+            else { continue }
 
             let title = titleNode.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Untitled"
             let decoded = src.removingPercentEncoding ?? src
@@ -190,9 +218,12 @@ final class TOCParser {
 
             // Recurse into child navPoints
             let childNodes = (try? node.nodes(forXPath: "*[local-name()='navPoint']")) as? [XMLElement] ?? []
-            let children = parseNCXPoints(childNodes, doc: doc, rootFolder: rootFolder, rootURL: rootURL, depth: depth + 1, order: &order)
+            let children = parseNCXPoints(
+                childNodes, doc: doc, rootFolder: rootFolder, rootURL: rootURL, depth: depth + 1, order: &order)
 
-            let entry = TOCEntry(title: title, href: decoded, absoluteURL: absURL, playOrder: currentOrder, depth: depth, children: children)
+            let entry = TOCEntry(
+                title: title, href: decoded, absoluteURL: absURL, playOrder: currentOrder, depth: depth,
+                children: children)
             entries.append(entry)
         }
         return entries
@@ -203,18 +234,21 @@ final class TOCParser {
     private func parseNav(at url: URL, rootFolder: URL) -> [TOCEntry]? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         if let doc = try? XMLDocument(data: data),
-           let navs = try? doc.nodes(forXPath: "//*[local-name()='nav']") as? [XMLElement],
-           let nav = navs.first(where: { element in
-               let type = element.attributes?.first(where: { $0.localName == "type" })?.stringValue?.lowercased()
-               return type?.split(whereSeparator: \.isWhitespace).contains("toc") == true
-           }) ?? navs.first,
-           let lists = try? nav.nodes(forXPath: "./*[local-name()='ol']") as? [XMLElement],
-           let list = lists.first {
+            let navs = try? doc.nodes(forXPath: "//*[local-name()='nav']") as? [XMLElement],
+            let nav = navs.first(where: { element in
+                let type = element.attributes?.first(where: { $0.localName == "type" })?.stringValue?.lowercased()
+                return type?.split(whereSeparator: \.isWhitespace).contains("toc") == true
+            }) ?? navs.first,
+            let lists = try? nav.nodes(forXPath: "./*[local-name()='ol']") as? [XMLElement],
+            let list = lists.first
+        {
             var order = 0
             let entries = parseNavList(list, base: url.deletingLastPathComponent(), depth: 0, order: &order)
             if !entries.isEmpty { return entries }
         }
-        guard let src = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else { return nil }
+        guard let src = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+            return nil
+        }
 
         // Quick regex-based extraction since XMLDocument chokes on HTML5
         let pattern = #"<a[^>]*\shref="([^"]*)"[^>]*>([\s\S]*?)<\/a>"#
@@ -232,7 +266,7 @@ final class TOCParser {
             var title = ns.substring(with: match.range(at: 2))
             // Strip inner tags
             title = title.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                         .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
 
             guard !title.isEmpty, !href.hasPrefix("#") else { continue }
 
@@ -248,7 +282,8 @@ final class TOCParser {
         let items = (try? list.nodes(forXPath: "./*[local-name()='li']")) as? [XMLElement] ?? []
         return items.compactMap { item in
             guard let link = (try? item.nodes(forXPath: "./*[local-name()='a']"))?.first as? XMLElement,
-                  let href = link.attribute(forName: "href")?.stringValue else { return nil }
+                let href = link.attribute(forName: "href")?.stringValue
+            else { return nil }
             let title = link.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !title.isEmpty else { return nil }
             order += 1
@@ -267,13 +302,14 @@ final class TOCParser {
     private func synthesiseFromSpine(_ pkg: EPUBPackage) -> [TOCEntry] {
         return pkg.spineURLs.enumerated().map { i, url in
             let name = url.deletingPathExtension().lastPathComponent
-                          .replacingOccurrences(of: "_", with: " ")
-                          .capitalized
-            return TOCEntry(title: name.isEmpty ? "Chapter \(i + 1)" : name,
-                            href: url.lastPathComponent,
-                            absoluteURL: url,
-                            playOrder: i + 1,
-                            depth: 0)
+                .replacingOccurrences(of: "_", with: " ")
+                .capitalized
+            return TOCEntry(
+                title: name.isEmpty ? "Chapter \(i + 1)" : name,
+                href: url.lastPathComponent,
+                absoluteURL: url,
+                playOrder: i + 1,
+                depth: 0)
         }
     }
 

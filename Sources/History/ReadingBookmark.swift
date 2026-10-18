@@ -12,7 +12,10 @@ struct ReadingBookmark: Codable, Identifiable, Equatable {
     /// alters extraction; nothing reads it yet.
     var anchorLayout: Int
 
-    init(bookURL: URL, label: String, spineIndex: Int, characterOffset: Int, chapterTitle: String? = nil, id: UUID = UUID(), createdAt: Date = Date()) {
+    init(
+        bookURL: URL, label: String, spineIndex: Int, characterOffset: Int, chapterTitle: String? = nil,
+        id: UUID = UUID(), createdAt: Date = Date()
+    ) {
         self.id = id
         self.bookPath = Self.normalizedPath(for: bookURL)
         self.label = label
@@ -79,7 +82,8 @@ final class BookmarkManager {
             for (index, element) in envelope.elements.enumerated()
             where element.value == nil && rawElements.indices.contains(index) {
                 if let raw = try? JSONSerialization.data(
-                    withJSONObject: rawElements[index], options: [.fragmentsAllowed]) {
+                    withJSONObject: rawElements[index], options: [.fragmentsAllowed])
+                {
                     unreadableElements.append(raw)
                 }
             }
@@ -102,8 +106,12 @@ final class BookmarkManager {
     }
 
     @discardableResult
-    func add(bookURL: URL, label: String, spineIndex: Int, characterOffset: Int, chapterTitle: String?) -> ReadingBookmark {
-        let item = ReadingBookmark(bookURL: bookURL, label: label, spineIndex: spineIndex, characterOffset: characterOffset, chapterTitle: chapterTitle)
+    func add(bookURL: URL, label: String, spineIndex: Int, characterOffset: Int, chapterTitle: String?)
+        -> ReadingBookmark
+    {
+        let item = ReadingBookmark(
+            bookURL: bookURL, label: label, spineIndex: spineIndex, characterOffset: characterOffset,
+            chapterTitle: chapterTitle)
         bookmarks.append(item)
         save()
         return item

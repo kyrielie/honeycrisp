@@ -103,7 +103,7 @@ final class SearchBarViewController: NSViewController {
             closeButton.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
             closeButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
             closeButton.widthAnchor.constraint(equalToConstant: 24),
-            closeButton.heightAnchor.constraint(equalToConstant: 24)
+            closeButton.heightAnchor.constraint(equalToConstant: 24),
         ])
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("excerpt"))
@@ -127,7 +127,7 @@ final class SearchBarViewController: NSViewController {
             resultsScroll.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
             resultsScroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
             resultsScroll.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
-            resultsScroll.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8)
+            resultsScroll.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8),
         ]
         NSLayoutConstraint.deactivate(resultsPanelConstraints)
         rootHeightConstraint = root.heightAnchor.constraint(equalToConstant: 48)
@@ -164,7 +164,8 @@ final class SearchBarViewController: NSViewController {
         selectedResultIndex = -1
         self.chapterTitles = chapterTitles
         resultCount = results.count
-        resultLabel.stringValue = results.isEmpty ? "No results" : (results.count >= 250 ? "250+ found" : "\(results.count) found")
+        resultLabel.stringValue =
+            results.isEmpty ? "No results" : (results.count >= 250 ? "250+ found" : "\(results.count) found")
         resultsTable.reloadData()
         setExpanded(!searchField.stringValue.isEmpty)
     }
@@ -260,21 +261,23 @@ extension SearchBarViewController: NSTableViewDataSource, NSTableViewDelegate {
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard results.indices.contains(row) else { return nil }
         let id = NSUserInterfaceItemIdentifier("SearchExcerptCell")
-        let cell = (tableView.makeView(withIdentifier: id, owner: self) as? NSTableCellView) ?? {
-            let view = NSTableCellView()
-            view.identifier = id
-            let label = NSTextField(wrappingLabelWithString: "")
-            label.translatesAutoresizingMaskIntoConstraints = false
-            label.maximumNumberOfLines = 2
-            view.addSubview(label)
-            view.textField = label
-            NSLayoutConstraint.activate([
-                label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
-                label.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
-                label.centerYAnchor.constraint(equalTo: view.centerYAnchor)
-            ])
-            return view
-        }()
+        let cell =
+            (tableView.makeView(withIdentifier: id, owner: self) as? NSTableCellView)
+            ?? {
+                let view = NSTableCellView()
+                view.identifier = id
+                let label = NSTextField(wrappingLabelWithString: "")
+                label.translatesAutoresizingMaskIntoConstraints = false
+                label.maximumNumberOfLines = 2
+                view.addSubview(label)
+                view.textField = label
+                NSLayoutConstraint.activate([
+                    label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
+                    label.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+                    label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                ])
+                return view
+            }()
         let result = results[row]
         let title = chapterTitles[result.spineIndex] ?? "Chapter \(result.spineIndex + 1)"
         cell.textField?.stringValue = "\(title)  ·  \(result.excerpt)"

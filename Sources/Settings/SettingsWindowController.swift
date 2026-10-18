@@ -133,12 +133,13 @@ final class SettingsPanelWindow: NSWindow {
         )
 
         if animateIfPossible && !reduceMotionIfNeeded {
-            NSAnimationContext.runAnimationGroup({ ctx in
-                ctx.allowsImplicitAnimation = true
-                ctx.duration = animationResizeTime(newFrame)
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                setFrame(newFrame, display: true)
-            }, completionHandler: { completion?() })
+            NSAnimationContext.runAnimationGroup(
+                { ctx in
+                    ctx.allowsImplicitAnimation = true
+                    ctx.duration = animationResizeTime(newFrame)
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    setFrame(newFrame, display: true)
+                }, completionHandler: { completion?() })
         } else {
             setFrame(newFrame, display: true)
             completion?()
@@ -190,10 +191,12 @@ final class SettingsTabViewController: NSTabViewController {
         }
         let tabSpecs = [
             TabSpec(makeViewController: { GeneralSettingsViewController() }, label: "General", symbol: "gear"),
-            TabSpec(makeViewController: { ReaderSettingsViewController() }, label: "Reading", symbol: "text.book.closed"),
-            TabSpec(makeViewController: { AppearanceSettingsViewController() }, label: "Appearance", symbol: "paintbrush"),
+            TabSpec(
+                makeViewController: { ReaderSettingsViewController() }, label: "Reading", symbol: "text.book.closed"),
+            TabSpec(
+                makeViewController: { AppearanceSettingsViewController() }, label: "Appearance", symbol: "paintbrush"),
             TabSpec(makeViewController: { HistorySettingsViewController() }, label: "History", symbol: "clock"),
-            TabSpec(makeViewController: { ShortcutsSettingsViewController() }, label: "Shortcuts", symbol: "keyboard")
+            TabSpec(makeViewController: { ShortcutsSettingsViewController() }, label: "Shortcuts", symbol: "keyboard"),
         ]
 
         for spec in tabSpecs {
@@ -321,8 +324,9 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         self.formatCheckbox = formatCheckbox
 
         // Descriptive hint
-        let hint = NSTextField(wrappingLabelWithString:
-            "Removes all toc-heading elements and enlarges calibre2 elements globally across the book."
+        let hint = NSTextField(
+            wrappingLabelWithString:
+                "Removes all toc-heading elements and enlarges calibre2 elements globally across the book."
         )
         hint.font = NSFont.systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
@@ -337,8 +341,9 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         stack.addArrangedSubview(indentCheckbox)
         self.indentCheckbox = indentCheckbox
 
-        let indentHint = NSTextField(wrappingLabelWithString:
-            "Strips leading whitespace used to fake first-line indentation in some books."
+        let indentHint = NSTextField(
+            wrappingLabelWithString:
+                "Strips leading whitespace used to fake first-line indentation in some books."
         )
         indentHint.font = NSFont.systemFont(ofSize: 11)
         indentHint.textColor = .secondaryLabelColor
@@ -360,7 +365,8 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
             action: #selector(toggleSkipCover(_:))
         )
         skipCoverCheckbox.state = SettingsManager.shared.skipCoverWhenOpening ? .on : .off
-        skipCoverCheckbox.toolTip = "Only applies when the EPUB explicitly marks a cover page. Saved reading positions are preserved."
+        skipCoverCheckbox.toolTip =
+            "Only applies when the EPUB explicitly marks a cover page. Saved reading positions are preserved."
         stack.addArrangedSubview(skipCoverCheckbox)
         self.skipCoverCheckbox = skipCoverCheckbox
 
@@ -378,8 +384,9 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         self.readingModeCheckbox = readingModeCheckbox
         stack.addArrangedSubview(readingModeCheckbox)
 
-        let readingModeHint = NSTextField(wrappingLabelWithString:
-            "Show the book as fixed, swipeable columns instead of one continuous scroll. Applies to the frontmost reader window."
+        let readingModeHint = NSTextField(
+            wrappingLabelWithString:
+                "Show the book as fixed, swipeable columns instead of one continuous scroll. Applies to the frontmost reader window."
         )
         readingModeHint.font = NSFont.systemFont(ofSize: 11)
         readingModeHint.textColor = .secondaryLabelColor
@@ -396,8 +403,9 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         self.linkClicksCheckbox = linkClicksCheckbox
         stack.addArrangedSubview(linkClicksCheckbox)
 
-        let linkClicksHint = NSTextField(wrappingLabelWithString:
-            "Lets in-book links be clicked -- both internal cross-references (footnotes, table of contents) "
+        let linkClicksHint = NSTextField(
+            wrappingLabelWithString:
+                "Lets in-book links be clicked -- both internal cross-references (footnotes, table of contents) "
                 + "and external links, which open in your default browser. On by default."
         )
         linkClicksHint.font = NSFont.systemFont(ofSize: 11)
@@ -419,8 +427,9 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         stack.addArrangedSubview(newBookControl)
         self.newBookControl = newBookControl
 
-        let newBookHint = NSTextField(wrappingLabelWithString:
-            "Whether opening another book creates a separate window or a tab on the frontmost reader window."
+        let newBookHint = NSTextField(
+            wrappingLabelWithString:
+                "Whether opening another book creates a separate window or a tab on the frontmost reader window."
         )
         newBookHint.font = NSFont.systemFont(ofSize: 11)
         newBookHint.textColor = .secondaryLabelColor
@@ -441,8 +450,9 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         stack.addArrangedSubview(resetButton)
         stack.setCustomSpacing(16, after: divider)
 
-        let resetHint = NSTextField(wrappingLabelWithString:
-            "Resets every tab -- General, Reading, Appearance, History, and Shortcuts -- back to their original "
+        let resetHint = NSTextField(
+            wrappingLabelWithString:
+                "Resets every tab -- General, Reading, Appearance, History, and Shortcuts -- back to their original "
                 + "defaults. History entries themselves aren't affected."
         )
         resetHint.font = NSFont.systemFont(ofSize: 11)
@@ -453,7 +463,7 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20)
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
         ])
 
         self.view = root
@@ -546,7 +556,8 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
     @objc private func resetAllToDefaultsClicked(_ sender: NSButton) {
         let alert = NSAlert()
         alert.messageText = "Reset All Settings to Defaults?"
-        alert.informativeText = "This resets General, Appearance, History display, and Shortcuts back to their "
+        alert.informativeText =
+            "This resets General, Appearance, History display, and Shortcuts back to their "
             + "original defaults. History entries themselves aren't affected. This can't be undone."
         alert.addButton(withTitle: "Reset All")
         alert.addButton(withTitle: "Cancel")
@@ -612,9 +623,10 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         speedRow.addArrangedSubview(speedStepper)
         stack.addArrangedSubview(speedRow)
 
-        let speedHint = NSTextField(wrappingLabelWithString:
-            "Use the plus and minus controls to set a speed from 10 to 1,200 pixels per second. "
-            + "Auto-scroll is available in continuous scroll mode.")
+        let speedHint = NSTextField(
+            wrappingLabelWithString:
+                "Use the plus and minus controls to set a speed from 10 to 1,200 pixels per second. "
+                + "Auto-scroll is available in continuous scroll mode.")
         speedHint.font = NSFont.systemFont(ofSize: 11)
         speedHint.textColor = .secondaryLabelColor
         stack.addArrangedSubview(speedHint)
@@ -642,7 +654,9 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         voicePopup.action = #selector(speechVoiceChanged(_:))
         stack.addArrangedSubview(voicePopup)
 
-        let speechHint = NSTextField(wrappingLabelWithString: "Speech starts at the current reading position, then continues through the remaining chapters.")
+        let speechHint = NSTextField(
+            wrappingLabelWithString:
+                "Speech starts at the current reading position, then continues through the remaining chapters.")
         speechHint.font = NSFont.systemFont(ofSize: 11)
         speechHint.textColor = .secondaryLabelColor
         stack.addArrangedSubview(speechHint)
@@ -651,7 +665,7 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -20),
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 24)
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 24),
         ])
         self.speedValue = speedValue
         self.speedStepper = speedStepper
@@ -672,16 +686,20 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
 
     private func selectSpeechVoice(in popup: NSPopUpButton, identifier: String?) {
         let representedIdentifier = identifier ?? ""
-        guard let item = popup.itemArray.first(where: {
-            ($0.representedObject as? String) == representedIdentifier
-        }) else { return }
+        guard
+            let item = popup.itemArray.first(where: {
+                ($0.representedObject as? String) == representedIdentifier
+            })
+        else { return }
         popup.select(item)
     }
 
     @objc private func autoScrollSpeedChanged(_ sender: NSStepper) {
         SettingsManager.shared.autoScrollSpeed = Double(sender.integerValue)
         speedValue?.stringValue = "\(sender.integerValue) px/s"
-        if let reader = NSApp.orderedWindows.lazy.compactMap({ $0.contentViewController as? ReaderViewController }).first {
+        if let reader = NSApp.orderedWindows.lazy.compactMap({ $0.contentViewController as? ReaderViewController })
+            .first
+        {
             reader.setAutoScrollSpeed(Double(sender.integerValue))
         }
     }
@@ -742,8 +760,8 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     let isResizableView = false
 
     private var fontPopup: NSPopUpButton!
-    private var fontFamilyField: NSTextField!   // free-form CSS font-family stack entry
-    private var fontPickerButton: NSButton!     // opens NSFontPanel (replaces import button)
+    private var fontFamilyField: NSTextField!  // free-form CSS font-family stack entry
+    private var fontPickerButton: NSButton!  // opens NSFontPanel (replaces import button)
     private var themeGridContainer: NSStackView!  // vertical stack of full-width rows, wrapping
     private var themeButtons: [UUID: ThemeBigSwatchButton] = [:]
     /// Only one theme's inline editor is expanded at a time; selecting a
@@ -833,8 +851,9 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         previewBox.borderColor = .separatorColor
         previewBox.translatesAutoresizingMaskIntoConstraints = false
 
-        previewLabel = NSTextField(wrappingLabelWithString:
-            "The quick brown fox jumps over the lazy dog. Reading is the sole means by which we slip, involuntarily, often helplessly, into another's skin."
+        previewLabel = NSTextField(
+            wrappingLabelWithString:
+                "The quick brown fox jumps over the lazy dog. Reading is the sole means by which we slip, involuntarily, often helplessly, into another's skin."
         )
         previewLabel.isEditable = false
         previewLabel.isSelectable = false
@@ -846,7 +865,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             previewLabel.leadingAnchor.constraint(equalTo: previewBox.contentView!.leadingAnchor, constant: 16),
             previewLabel.trailingAnchor.constraint(equalTo: previewBox.contentView!.trailingAnchor, constant: -16),
             previewLabel.topAnchor.constraint(equalTo: previewBox.contentView!.topAnchor, constant: 16),
-            previewLabel.bottomAnchor.constraint(equalTo: previewBox.contentView!.bottomAnchor, constant: -16)
+            previewLabel.bottomAnchor.constraint(equalTo: previewBox.contentView!.bottomAnchor, constant: -16),
         ])
 
         // ── Scroll view (Appearance's content is taller than the window) ─────
@@ -864,7 +883,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             formStack.topAnchor.constraint(equalTo: clipContainer.topAnchor, constant: 20),
             formStack.leadingAnchor.constraint(equalTo: clipContainer.leadingAnchor, constant: 20),
             formStack.trailingAnchor.constraint(equalTo: clipContainer.trailingAnchor, constant: -20),
-            formStack.bottomAnchor.constraint(equalTo: clipContainer.bottomAnchor, constant: -20)
+            formStack.bottomAnchor.constraint(equalTo: clipContainer.bottomAnchor, constant: -20),
         ])
 
         let scrollView = NSScrollView()
@@ -896,7 +915,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             // vertical scrolling happens and the preview reflows to the window's
             // actual width -- that's what "responsive" means here, since there's
             // no independent width to give it other than the window's own.
-            clipContainer.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
+            clipContainer.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
         ])
 
         self.view = root
@@ -1020,7 +1039,9 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     // swiftlint:disable:next function_body_length
     private func rebuildThemeGrid() {
         guard let container = themeGridContainer else { return }
-        for arranged in container.arrangedSubviews { container.removeArrangedSubview(arranged); arranged.removeFromSuperview() }
+        for arranged in container.arrangedSubviews {
+            container.removeArrangedSubview(arranged); arranged.removeFromSuperview()
+        }
         themeButtons.removeAll()
 
         let themes = SettingsManager.shared.themes
@@ -1145,7 +1166,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             box.heightAnchor.constraint(equalToConstant: ThemeBigSwatchButton.swatchSize.height - 22),
 
             plus.centerXAnchor.constraint(equalTo: box.centerXAnchor),
-            plus.centerYAnchor.constraint(equalTo: box.centerYAnchor)
+            plus.centerYAnchor.constraint(equalTo: box.centerYAnchor),
         ])
 
         return button
@@ -1223,7 +1244,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
 
         let currentPx = Self.px(fromPercent: SettingsManager.shared.fontSizePercent)
         let stepper = NSStepper()
-        stepper.minValue = Double(Self.px(fromPercent: 50))    // matches fontSizePercent's stored clamp (50-300%)
+        stepper.minValue = Double(Self.px(fromPercent: 50))  // matches fontSizePercent's stored clamp (50-300%)
         stepper.maxValue = Double(Self.px(fromPercent: 300))
         stepper.increment = 1
         stepper.integerValue = currentPx
@@ -1305,10 +1326,12 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         previewLabel.textColor = SettingsManager.color(fromCSS: colors.text)
 
         let px = Self.px(fromPercent: SettingsManager.shared.fontSizePercent)
-        let firstFamily = SettingsManager.shared.fontFamily
+        let firstFamily =
+            SettingsManager.shared.fontFamily
             .split(separator: ",").first?
             .trimmingCharacters(in: CharacterSet(charactersIn: " '\"")) ?? ""
-        let previewFont = NSFont(name: firstFamily, size: CGFloat(px))
+        let previewFont =
+            NSFont(name: firstFamily, size: CGFloat(px))
             ?? NSFont.systemFont(ofSize: CGFloat(px))
 
         let paragraphStyle = NSMutableParagraphStyle()
@@ -1318,7 +1341,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             attributes: [
                 .font: previewFont,
                 .foregroundColor: previewLabel.textColor ?? .labelColor,
-                .paragraphStyle: paragraphStyle
+                .paragraphStyle: paragraphStyle,
             ]
         )
     }
@@ -1376,7 +1399,8 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         let panel = NSFontPanel.shared
         panel.worksWhenModal = true
         if !pickedFontName.isEmpty,
-           let nsFont = NSFont(name: pickedFontName, size: NSFont.systemFontSize) {
+            let nsFont = NSFont(name: pickedFontName, size: NSFont.systemFontSize)
+        {
             panel.setPanelFont(nsFont, isMultiple: false)
         }
         panel.makeKeyAndOrderFront(sender)
@@ -1385,7 +1409,8 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     /// Responder-chain callback from NSFontPanel when user clicks a font.
     @objc func changeFont(_ sender: Any?) {
         guard let fontManager = sender as? NSFontManager else { return }
-        let currentFont = NSFont(name: pickedFontName, size: NSFont.systemFontSize)
+        let currentFont =
+            NSFont(name: pickedFontName, size: NSFont.systemFontSize)
             ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
         let newFont = fontManager.convert(currentFont)
         let psName = newFont.fontName
@@ -1572,11 +1597,13 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let duplicateButton = ThemeIdentifiedButton(title: "Duplicate", target: self, action: #selector(duplicateThemeInlineClicked(_:)))
+        let duplicateButton = ThemeIdentifiedButton(
+            title: "Duplicate", target: self, action: #selector(duplicateThemeInlineClicked(_:)))
         duplicateButton.themeID = theme.id
         duplicateButton.bezelStyle = .rounded
 
-        let deleteButton = ThemeIdentifiedButton(title: "Delete", target: self, action: #selector(deleteThemeInlineClicked(_:)))
+        let deleteButton = ThemeIdentifiedButton(
+            title: "Delete", target: self, action: #selector(deleteThemeInlineClicked(_:)))
         deleteButton.themeID = theme.id
         deleteButton.bezelStyle = .rounded
         deleteButton.contentTintColor = .systemRed
@@ -1630,7 +1657,8 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
                 return r
             }
 
-            column.addArrangedSubview(row("Background", field: isDark ? .darkBackground : .lightBackground, value: colors.background))
+            column.addArrangedSubview(
+                row("Background", field: isDark ? .darkBackground : .lightBackground, value: colors.background))
             column.addArrangedSubview(row("Text", field: isDark ? .darkText : .lightText, value: colors.text))
             column.addArrangedSubview(row("Link", field: isDark ? .darkLink : .lightLink, value: colors.link))
             return column
@@ -1646,7 +1674,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             content.topAnchor.constraint(equalTo: outer.contentView!.topAnchor, constant: 14),
             content.leadingAnchor.constraint(equalTo: outer.contentView!.leadingAnchor, constant: 14),
             content.trailingAnchor.constraint(equalTo: outer.contentView!.trailingAnchor, constant: -14),
-            content.bottomAnchor.constraint(equalTo: outer.contentView!.bottomAnchor, constant: -14)
+            content.bottomAnchor.constraint(equalTo: outer.contentView!.bottomAnchor, constant: -14),
         ])
 
         return outer
@@ -1664,7 +1692,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
 
     @objc private func themeColorWellChanged(_ sender: ThemeColorWell) {
         guard let id = sender.themeID, let field = sender.field,
-              var theme = SettingsManager.shared.themes.first(where: { $0.id == id })
+            var theme = SettingsManager.shared.themes.first(where: { $0.id == id })
         else { return }
         let hex = SettingsManager.cssHex(from: sender.color)
         switch field {
@@ -1769,7 +1797,8 @@ final class ThemeBigSwatchButton: NSButton {
     /// name in the theme's own font stack and falls back to the system font
     /// if AppKit doesn't have a font by that name.
     private static func previewFont(for theme: Theme, ofSize size: CGFloat) -> NSFont {
-        let firstFamily = theme.fontFamily
+        let firstFamily =
+            theme.fontFamily
             .split(separator: ",").first?
             .trimmingCharacters(in: CharacterSet(charactersIn: " '\"")) ?? ""
         return NSFont(name: firstFamily, size: size) ?? NSFont.systemFont(ofSize: size, weight: .medium)
@@ -1791,17 +1820,21 @@ final class ThemeBigSwatchButton: NSButton {
         path.lineWidth = selected ? 2.5 : 1
         path.stroke()
 
-        let aa = NSAttributedString(string: "Aa", attributes: [
-            .font: Self.previewFont(for: theme, ofSize: 26),
-            .foregroundColor: text
-        ])
+        let aa = NSAttributedString(
+            string: "Aa",
+            attributes: [
+                .font: Self.previewFont(for: theme, ofSize: 26),
+                .foregroundColor: text,
+            ])
         let aaSize = aa.size()
         aa.draw(at: NSPoint(x: swatchRect.midX - aaSize.width / 2, y: swatchRect.midY - aaSize.height / 2))
 
-        let name = NSAttributedString(string: theme.name, attributes: [
-            .font: NSFont.systemFont(ofSize: 11),
-            .foregroundColor: NSColor.labelColor
-        ])
+        let name = NSAttributedString(
+            string: theme.name,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.labelColor,
+            ])
         let nameSize = name.size()
         name.draw(at: NSPoint(x: size.width / 2 - nameSize.width / 2, y: 2))
 
@@ -1857,7 +1890,7 @@ final class HistorySettingsViewController: NSViewController, SettingsPaneSizing 
             scrollView.bottomAnchor.constraint(equalTo: clearBtn.topAnchor, constant: -12),
 
             clearBtn.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            clearBtn.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20)
+            clearBtn.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
         ])
 
         self.view = root
@@ -1915,18 +1948,21 @@ extension HistorySettingsViewController: NSTableViewDataSource, NSTableViewDeleg
         let row = tableView.selectedRow
         guard historyEntries.indices.contains(row) else { return }
         let entry = historyEntries[row]
-        HistoryEntryOpener.open(entry, onOpen: { url in
-            let wc = ReaderWindowController()
-            wc.showWindow(nil)
-            wc.loadEPUB(at: url)
-        }, onRemoved: { [weak self] in
-            self?.reload()
-        })
+        HistoryEntryOpener.open(
+            entry,
+            onOpen: { url in
+                let wc = ReaderWindowController()
+                wc.showWindow(nil)
+                wc.loadEPUB(at: url)
+            },
+            onRemoved: { [weak self] in
+                self?.reload()
+            })
     }
 }
 
 final class HistorySettingsCellView: NSTableCellView {
-    private let titleLabel  = NSTextField(labelWithString: "")
+    private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
 
     override init(frame: NSRect) { super.init(frame: frame); setup() }
@@ -1948,19 +1984,20 @@ final class HistorySettingsCellView: NSTableCellView {
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            stack.centerYAnchor.constraint(equalTo: centerYAnchor)
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
     func configure(with entry: HistoryEntry) {
-        titleLabel.stringValue = entry.title.isEmpty
+        titleLabel.stringValue =
+            entry.title.isEmpty
             ? entry.url.deletingPathExtension().lastPathComponent
             : entry.title
 
         let fmt = RelativeDateTimeFormatter()
         fmt.unitsStyle = .abbreviated
         let dateStr = fmt.localizedString(for: entry.openedAt, relativeTo: Date())
-        let pctStr  = entry.readingProgressPercent > 0 ? "\(entry.readingProgressPercent)% read" : "Not started"
+        let pctStr = entry.readingProgressPercent > 0 ? "\(entry.readingProgressPercent)% read" : "Not started"
         detailLabel.stringValue = "\(dateStr) • \(pctStr)"
     }
 }
@@ -1971,7 +2008,7 @@ final class HistorySettingsCellView: NSTableCellView {
 
 struct CustomFont: Codable {
     let id: UUID
-    let name: String        // PostScript name
+    let name: String  // PostScript name
     let filename: String
 }
 
@@ -2004,7 +2041,8 @@ final class CustomFontStore {
 
     private func load() {
         guard let data = UserDefaults.standard.data(forKey: "customFontsList"),
-              let decoded = try? JSONDecoder().decode([CustomFont].self, from: data) else { return }
+            let decoded = try? JSONDecoder().decode([CustomFont].self, from: data)
+        else { return }
         fonts = decoded
         // Re-register any previously imported font files with Core Text
         for font in fonts {

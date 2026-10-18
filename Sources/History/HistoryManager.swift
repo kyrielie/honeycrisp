@@ -189,12 +189,13 @@ final class HistoryManager {
                 bookmarkDataIsStale: &stale
             ) {
                 if stale,
-                   let refreshed = try? resolved.bookmarkData(
-                    options: .withSecurityScope,
-                    includingResourceValuesForKeys: nil,
-                    relativeTo: nil
-                   ),
-                   let index = entries.firstIndex(where: { $0.id == entry.id }) {
+                    let refreshed = try? resolved.bookmarkData(
+                        options: .withSecurityScope,
+                        includingResourceValuesForKeys: nil,
+                        relativeTo: nil
+                    ),
+                    let index = entries.firstIndex(where: { $0.id == entry.id })
+                {
                     entries[index].bookmarkData = refreshed
                     save()
                 }
@@ -249,7 +250,8 @@ final class HistoryManager {
         for (index, element) in decoded.enumerated()
         where element.value == nil && rawElements.indices.contains(index) {
             if let raw = try? JSONSerialization.data(
-                withJSONObject: rawElements[index], options: [.fragmentsAllowed]) {
+                withJSONObject: rawElements[index], options: [.fragmentsAllowed])
+            {
                 unreadableElements.append(raw)
             }
         }
