@@ -111,10 +111,10 @@ These are intentional scope boundaries, not missing features:
 Run the macOS unit-test suite with:
 
 ```bash
-xcodebuild test -project Honeycrisp.xcodeproj -scheme Honeycrisp -destination 'platform=macOS'
+./test.sh
 ```
 
-The GitHub Actions test workflow generates the Xcode project from `project.yml` and runs this suite on pushes and pull requests.
+The script generates the Xcode project from `project.yml` and runs the suite. The GitHub Actions test workflow does the same on pushes and pull requests. Override the destination with `HONEYCRISP_TEST_DESTINATION` or the Derived Data folder with `HONEYCRISP_DERIVED_DATA` when needed.
 
 ### Requirements
 
