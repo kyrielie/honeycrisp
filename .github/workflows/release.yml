@@ -16,6 +16,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate release tag
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+(\.[0-9]+)?([.-][0-9A-Za-z.-]+)?)$ ]] || {
+            echo "Release tag must be vMAJOR.MINOR[.PATCH][-PRERELEASE]" >&2
+            exit 1
+          }
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
 
@@ -34,6 +46,7 @@ jobs:
             -configuration Release \
             -destination "platform=macOS,arch=arm64" \
             -derivedDataPath "$RUNNER_TEMP/build" \
+            MARKETING_VERSION="${{ steps.release.outputs.version }}" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -63,12 +76,6 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag }}
           files: Honeycrisp.dmg
-
-      - name: Normalize release version
-        id: release
-        env:
-          RELEASE_TAG: ${{ github.event.inputs.tag }}
-        run: echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Request tap cask update
         uses: peter-evans/repository-dispatch@v3
