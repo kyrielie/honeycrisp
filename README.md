@@ -77,10 +77,11 @@ These are intentional scope boundaries, not missing features:
 
 ### Xcode (recommended)
 
-1. Open `Honeycrisp.xcodeproj` in Xcode 15+
-2. Xcode will automatically resolve the ZIPFoundation Swift Package dependency
-3. Select the **Honeycrisp** scheme → **My Mac** destination
-4. Press ⌘R to build and run
+1. Install XcodeGen: `brew install xcodegen`
+2. Generate the project: `xcodegen generate`
+3. Open `Honeycrisp.xcodeproj` in Xcode 15+
+4. Select the **Honeycrisp** scheme → **My Mac** destination
+5. Press ⌘R to build and run
 
 > **Note:** Set your own Team in Signing & Capabilities if you see code signing errors.
 
@@ -101,6 +102,8 @@ These are intentional scope boundaries, not missing features:
 | `EPUBParser.swift` | ZIP extraction, OPF/spine parsing, HTML generation |
 | `HistoryManager.swift` | Persists recently opened files with security-scoped bookmarks |
 | `HistoryViewController.swift` | Popover showing recent books with open/remove actions |
+
+`project.yml` is the source of truth for the generated Xcode project and shared scheme. Run `xcodegen generate` after changing the project configuration; do not hand-edit `Honeycrisp.xcodeproj`. The root `Package.swift` remains a secondary SwiftPM build entry point.
 
 The QuickLook plugin (`EPUBQuickLook`) provided the `EPUBParser` core and the basic WebKit rendering approach. (I think, I just told claude to use it.)
 

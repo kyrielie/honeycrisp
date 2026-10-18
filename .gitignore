@@ -5,6 +5,10 @@
 *.zip
 *.xml
 
+## Generated Xcode project
+# Regenerate from project.yml with xcodegen generate.
+Honeycrisp.xcodeproj/
+
 ## Build generated
 build/
 DerivedData/
