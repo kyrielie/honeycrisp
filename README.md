@@ -106,6 +106,16 @@ These are intentional scope boundaries, not missing features:
 
 > **Note:** Set your own Team in Signing & Capabilities if you see code signing errors.
 
+### Tests
+
+Run the macOS unit-test suite with:
+
+```bash
+xcodebuild test -project Honeycrisp.xcodeproj -scheme Honeycrisp -destination 'platform=macOS'
+```
+
+The GitHub Actions test workflow generates the Xcode project from `project.yml` and runs this suite on pushes and pull requests.
+
 ### Requirements
 
 - macOS 13.0+ (Ventura or later)

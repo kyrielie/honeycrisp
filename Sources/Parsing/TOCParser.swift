@@ -104,7 +104,7 @@ final class TOCParser {
 
             let title = titleNode.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Untitled"
             let decoded = src.removingPercentEncoding ?? src
-            let absURL = URL(fileURLWithPath: decoded, relativeTo: rootURL).standardizedFileURL
+            let absURL = resolveLocalURL(src, relativeTo: rootURL)
 
             // ✅ FIX: Stamp the parent's playOrder before recursing into children
             // so ordering reflects document reading order (parent < children).
@@ -150,7 +150,7 @@ final class TOCParser {
             guard !title.isEmpty, !href.hasPrefix("#") else { continue }
 
             let decoded = href.removingPercentEncoding ?? href
-            let absURL = URL(fileURLWithPath: decoded, relativeTo: base).standardizedFileURL
+            let absURL = resolveLocalURL(href, relativeTo: base)
             order += 1
             entries.append(TOCEntry(title: title, href: decoded, absoluteURL: absURL, playOrder: order, depth: 0))
         }
@@ -170,5 +170,25 @@ final class TOCParser {
                             playOrder: i + 1,
                             depth: 0)
         }
+    }
+
+    /// Resolve an EPUB-internal link while keeping query/fragment components
+    /// out of the filesystem path. URL(fileURLWithPath:) treats `#fragment`
+    /// as literal path text, which makes TOC jumps to anchors point at a
+    /// nonexistent XHTML filename.
+    private func resolveLocalURL(_ href: String, relativeTo base: URL) -> URL {
+        guard let source = URLComponents(string: href) else {
+            let path = href.components(separatedBy: "#").first ?? href
+            return URL(fileURLWithPath: path.removingPercentEncoding ?? path, relativeTo: base).standardizedFileURL
+        }
+
+        let path = source.percentEncodedPath.removingPercentEncoding ?? source.path
+        let fileURL = URL(fileURLWithPath: path, relativeTo: base).standardizedFileURL
+        guard var resolved = URLComponents(url: fileURL, resolvingAgainstBaseURL: false) else {
+            return fileURL
+        }
+        resolved.query = source.query
+        resolved.fragment = source.fragment
+        return resolved.url ?? fileURL
     }
 }

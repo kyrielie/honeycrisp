@@ -56,11 +56,33 @@ targets:
       properties:
         com.apple.security.files.bookmarks.app-scope: true
 
+  HoneycrispTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/HoneycrispTests
+    dependencies:
+      - target: Honeycrisp
+    settings:
+      base:
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.noliaphyta.HoneycrispTests
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        SWIFT_VERSION: "5.9"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Honeycrisp.app/Contents/MacOS/Honeycrisp"
+
 schemes:
   Honeycrisp:
     build:
       targets:
         Honeycrisp: all
+        HoneycrispTests: [test]
+    test:
+      config: Debug
+      targets:
+        - HoneycrispTests
     run:
       config: Debug
     archive:
