@@ -17,27 +17,32 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_26.3.app
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
 
       - name: Build Release
-        # See build-dmg.yml for why CONFIGURATION_BUILD_DIR is used instead of
-        # -derivedDataPath: the latter requires -scheme, and no shared scheme is
-        # committed to this project.
+        # The shared Honeycrisp scheme is generated from project.yml.
         run: |
           xcodebuild \
             -project Honeycrisp.xcodeproj \
-            -target Honeycrisp \
+            -scheme Honeycrisp \
             -configuration Release \
-            CONFIGURATION_BUILD_DIR="$PWD/build/Release" \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
+            -destination "platform=macOS,arch=arm64" \
+            -derivedDataPath "$RUNNER_TEMP/build" \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
             clean build
 
       - name: Locate .app
         id: locate
         run: |
-          APP_PATH=$(find build/Release -maxdepth 1 -name "*.app" | head -n 1)
+          APP_PATH=$(find "$RUNNER_TEMP/build/Build/Products/Release" -maxdepth 1 -name "*.app" | head -n 1)
           echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Ad-hoc codesign
@@ -58,3 +63,17 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag }}
           files: Honeycrisp.dmg
+
+      - name: Normalize release version
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag }}
+        run: echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Request tap cask update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.TAP_UPDATE_TOKEN }}
+          repository: kyrielie/homebrew-yggdrasil
+          event-type: app-release
+          client-payload: '{"app":"honeycrisp","version":"${{ steps.release.outputs.version }}","asset_name":"Honeycrisp.dmg","asset_url":"https://github.com/kyrielie/honeycrisp/releases/download/v${{ steps.release.outputs.version }}/Honeycrisp.dmg"}'
