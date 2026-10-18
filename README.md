@@ -8,6 +8,11 @@ A native macOS EPUB standalone reader, inspired by this [EPUBQuickLook plugin](h
 
 Built using claude and gemini and codex because I hate swift. 
 
+Quick install: 
+```bash
+brew install --cask kyrielie/yggdrasil/honeycrisp
+```
+
 Check out https://github.com/kyrielie/ambrosia, a macos library and reader for massive fanfiction libraries. 
 Also https://github.com/kyrielie/nectar its ios app companion reader.
 
@@ -35,8 +40,7 @@ Also https://github.com/kyrielie/nectar its ios app companion reader.
 This personal tap installs Honeycrisp's published macOS release:
 
 ```bash
-brew tap kyrielie/yggdrasil
-brew install --cask honeycrisp
+brew install --cask kyrielie/yggdrasil/honeycrisp
 ```
 
 To update it after a tap update has been merged:
