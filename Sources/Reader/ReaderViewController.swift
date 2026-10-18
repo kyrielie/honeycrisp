@@ -343,6 +343,7 @@ final class ReaderViewController: NSViewController {
         beginSecurityAccess(for: url)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var workDir: URL?
             do {
                 let applicationSupport = try FileManager.default.url(
                     for: .applicationSupportDirectory,
@@ -350,10 +351,11 @@ final class ReaderViewController: NSViewController {
                     appropriateFor: nil,
                     create: true
                 )
-                let workDir = applicationSupport
+                let createdWorkDir = applicationSupport
                     .appendingPathComponent("Honeycrisp/EPUBReader_\(UUID().uuidString)", isDirectory: true)
+                workDir = createdWorkDir
                 let parser = EPUBParser()
-                let extracted = try parser.unpackEPUB(at: url, to: workDir)
+                let extracted = try parser.unpackEPUB(at: url, to: createdWorkDir)
                 let pkg = try parser.parsePackage(at: extracted)
 
                 let tocParser = TOCParser()
@@ -362,7 +364,7 @@ final class ReaderViewController: NSViewController {
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     self.currentPackage = pkg
-                    self.extractionWorkDirectories.append(workDir)
+                    self.extractionWorkDirectories.append(createdWorkDir)
                     // Always show title centered in toolbar; never in window chrome
                     let title = pkg.title.isEmpty
                         ? url.deletingPathExtension().lastPathComponent
@@ -388,7 +390,9 @@ final class ReaderViewController: NSViewController {
                     self.startPositionSaveTimer()
                 }
             } catch {
-                try? FileManager.default.removeItem(at: workDir)
+                if let workDir {
+                    try? FileManager.default.removeItem(at: workDir)
+                }
                 DispatchQueue.main.async { [weak self] in
                     self?.showLoading(false)
                     self?.showError(error)

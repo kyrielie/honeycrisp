@@ -54,15 +54,25 @@ struct HistoryEntry: Codable, Identifiable {
 final class HistoryManager {
     static let shared = HistoryManager()
 
-    private let key = "EPUBReaderHistory"
+    private let defaults: UserDefaults
+    private let key: String
     /// Ceiling for persisted history. The toolbar popover shows only the 5 most
     /// recent (HistoryViewController.reload); Settings' history pane shows all
     /// stored entries up to this cap.
-    private let maxEntries = 100
+    private let maxEntries: Int
 
     private(set) var entries: [HistoryEntry] = []
 
-    private init() { load() }
+    init(
+        defaults: UserDefaults = .standard,
+        key: String = "EPUBReaderHistory",
+        maxEntries: Int = 100
+    ) {
+        self.defaults = defaults
+        self.key = key
+        self.maxEntries = maxEntries
+        load()
+    }
 
     func record(url: URL, title: String) {
         let bookmarkData = try? url.bookmarkData(
@@ -151,12 +161,12 @@ final class HistoryManager {
 
     private func save() {
         if let data = try? JSONEncoder().encode(entries) {
-            UserDefaults.standard.set(data, forKey: key)
+            defaults.set(data, forKey: key)
         }
     }
 
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: key),
+        guard let data = defaults.data(forKey: key),
               let decoded = try? JSONDecoder().decode([HistoryEntry].self, from: data)
         else { return }
         entries = decoded
