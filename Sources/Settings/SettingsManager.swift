@@ -2,16 +2,12 @@
 //
 // CHANGES vs original:
 //  • showTitleInMenuBar property REMOVED — title is always shown in the toolbar
-//  • formatFirstChapter key retained; semantics renamed to "Format for AO3"
-//    (the key name is unchanged so existing UserDefaults values are preserved)
+//  • the legacy formatFirstChapter preference migrates once to fanficPreface
 
 // swiftlint:disable file_length
 import AppKit
 
-/// Overrides the window chrome / system-level light-or-dark appearance,
-/// independent of each theme's own light/dark ThemeColorSet (which still
-/// follows whichever of these is effectively in use). "System" is the
-/// default and existing behavior -- just track the OS.
+/// Overrides the window chrome/system-level light-or-dark appearance.
 enum AppearanceMode: String, CaseIterable {
     case system, light, dark
 
@@ -193,15 +189,22 @@ final class SettingsManager {
     static let settingsChangedNotification = Notification.Name("ReaderSettingsChanged")
 
     private let defaults = UserDefaults.standard
+    private var isMigratingReaderOverrides = false
+
+    private init() {
+        let migratedKey = "readerFanficPrefaceMigrated"
+        if !defaults.bool(forKey: migratedKey) {
+            defaults.set(false, forKey: "readerFanficPreface")
+            defaults.set(true, forKey: migratedKey)
+        }
+    }
 
     // MARK: Font
 
-    /// Per-theme now -- see Theme.fontFamily's doc comment. Kept as the same
-    /// accessor every other call site (EPUBParser, ReaderViewController, the
-    /// Appearance tab) already uses; only the storage underneath moved.
+    /// Compatibility accessor for existing reader CSS call sites.
     var fontFamily: String {
-        get { currentTheme.fontFamily }
-        set { mutateCurrentTheme { $0.fontFamily = newValue }; notifyCosmeticChange() }
+        get { effectiveReaderFontFamily }
+        set { readerFontOverride = newValue }
     }
 
     /// PostScript name of the font most recently chosen via NSFontPanel — kept
@@ -273,6 +276,7 @@ final class SettingsManager {
     /// existing users don't lose their current look.
     var themes: [Theme] {
         get {
+            if defaults.bool(forKey: "readerOverridesMigrated") { return Self.seedThemes }
             if let data = defaults.data(forKey: "readerThemes"),
                 let decoded = try? JSONDecoder().decode([Theme].self, from: data),
                 !decoded.isEmpty
@@ -330,6 +334,7 @@ final class SettingsManager {
             return migrated
         }
         set {
+            if defaults.bool(forKey: "readerOverridesMigrated") { return }
             if let data = try? JSONEncoder().encode(newValue) {
                 defaults.set(data, forKey: "readerThemes")
             }
@@ -374,22 +379,48 @@ final class SettingsManager {
         return result
     }
 
-    /// Which theme is active, by id. Falls back to the first theme (and repairs
-    /// the stored id) if the previously-selected theme was deleted.
-    var currentThemeID: UUID {
-        get {
-            let list = themes
-            let stored = defaults.string(forKey: "readerCurrentThemeID").flatMap(UUID.init(uuidString:))
-            if let stored, list.contains(where: { $0.id == stored }) { return stored }
-            return list.first?.id ?? UUID()
+    private func migrateStoredThemesToReaderOverridesIfNeeded() {
+        guard !isMigratingReaderOverrides,
+              !defaults.bool(forKey: "readerOverridesMigrated"),
+              defaults.data(forKey: "readerThemes") != nil
+        else { return }
+        isMigratingReaderOverrides = true
+        defer { isMigratingReaderOverrides = false }
+        // Go through the legacy getter so schemas predating per-theme typography
+        // first receive their old global values before we convert them.
+        let decoded = themes
+        guard !decoded.isEmpty else { return }
+        let id = defaults.string(forKey: "readerCurrentThemeID").flatMap(UUID.init(uuidString:))
+        let active = decoded.first(where: { $0.id == id }) ?? decoded[0]
+        let font = active.fontFamily == Self.seedThemes.first(where: { $0.name == active.name })?.fontFamily ? "" : active.fontFamily
+        defaults.set(font.isEmpty ? "" : ReaderCSSSanitizer.fontFamily(font, fallback: ""), forKey: "readerFontOverride")
+        defaults.set(min(300, max(50, active.fontSizePercent)), forKey: "readerFontSizePercent")
+        defaults.set(ReaderCSSSanitizer.lineHeight(active.lineHeight), forKey: "readerLineHeight")
+        defaults.set(min(1200, max(320, active.maxWidth)), forKey: "readerMaxWidth")
+        defaults.set(min(100, max(0, active.paddingH)), forKey: "readerPaddingH")
+        defaults.set(min(100, max(0, active.paddingV)), forKey: "readerPaddingV")
+        let isDefaultColors = Self.seedThemes.first(where: { $0.name == active.name }).map { active.light == $0.light && active.dark == $0.dark } ?? false
+        if !isDefaultColors {
+            let colors = systemIsDark ? active.dark : active.light
+            defaults.set(ReaderCSSSanitizer.hexColor(colors.background, fallback: ""), forKey: "readerBackgroundOverride")
+            defaults.set(ReaderCSSSanitizer.hexColor(colors.text, fallback: ""), forKey: "readerInkOverride")
+            defaults.set(ReaderCSSSanitizer.hexColor(colors.link, fallback: ""), forKey: "readerLinkOverride")
         }
-        set { defaults.set(newValue.uuidString, forKey: "readerCurrentThemeID"); notifyCosmeticChange() }
+        defaults.set(true, forKey: "readerOverridesMigrated")
+        defaults.removeObject(forKey: "readerThemes")
+        defaults.removeObject(forKey: "readerCurrentThemeID")
+        defaults.removeObject(forKey: "readerTheme")
+        defaults.removeObject(forKey: "readerCustomBg")
+        defaults.removeObject(forKey: "readerCustomText")
+        NotificationCenter.default.post(name: .readerCosmeticSettingsChanged, object: nil)
+        notifyChange()
     }
 
-    var currentTheme: Theme {
-        let list = themes
-        return list.first(where: { $0.id == currentThemeID }) ?? list[0]
-    }
+    /// Which theme is active, by id. Falls back to the first theme (and repairs
+    /// the stored id) if the previously-selected theme was deleted.
+    var currentThemeID: UUID { Self.seedThemes[0].id }
+
+    var currentTheme: Theme { Self.seedThemes[0] }
 
     /// True when NSApp's effective appearance is dark — used to pick which of a
     /// theme's two ThemeColorSets is currently in effect. Read fresh each time
@@ -398,9 +429,12 @@ final class SettingsManager {
         NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 
-    /// The active theme's color set for the current system appearance.
+    /// The selected skin's token colors for the current system appearance.
     var effectiveColorSet: ThemeColorSet {
-        systemIsDark ? currentTheme.dark : currentTheme.light
+        migrateStoredThemesToReaderOverridesIfNeeded()
+        let skin = SkinStore.shared.skin(id: defaults.string(forKey: "readerSkinID") ?? "com.honeycrisp.original")
+        let tokens = systemIsDark ? (skin?.dark ?? skin?.light) : skin?.light
+        return ThemeColorSet(background: tokens?.background ?? "#ffffff", text: tokens?.ink ?? "#000000", link: tokens?.link ?? "#0068da")
     }
 
     var effectiveBackgroundCSS: String { effectiveColorSet.background }
@@ -415,52 +449,163 @@ final class SettingsManager {
         themes = list
     }
 
-    /// Appends a new theme (e.g. from the "+" tile) and makes it the active one.
-    func addTheme(_ theme: Theme) {
-        themes.append(theme)
-        currentThemeID = theme.id
-    }
-
-    /// Removes a theme. No-ops if it's the last remaining one, or if it's one
-    /// of the three default themes (Original/Quiet/Paper) -- those can be
-    /// edited and reset, but never deleted. If the deleted theme was active,
-    /// falls back to the first remaining theme.
-    func deleteTheme(_ id: UUID) {
-        var list = themes
-        guard list.count > 1,
-            let idx = list.firstIndex(where: { $0.id == id }),
-            !list[idx].isDefault
-        else { return }
-        list.remove(at: idx)
-        themes = list
-        if currentThemeID == id { currentThemeID = list[0].id }
-    }
-
     // MARK: Line height
 
-    /// Per-theme now -- see Theme.lineHeight's doc comment.
+    /// Global reading line-height override.
     var lineHeight: Double {
-        get { currentTheme.lineHeight }
-        set { mutateCurrentTheme { $0.lineHeight = min(2.4, max(1.2, newValue)) }; notifyCosmeticChange() }
+        get {
+            migrateStoredThemesToReaderOverridesIfNeeded()
+            return defaults.object(forKey: "readerLineHeight").map { ($0 as? Double) ?? 1.6 } ?? 1.6
+        }
+        set { defaults.set(ReaderCSSSanitizer.lineHeight(newValue), forKey: "readerLineHeight"); notifyCosmeticChange() }
     }
 
     // MARK: Font size
 
-    /// Per-theme now -- see Theme.fontSizePercent's doc comment.
+    /// Global reading font-size override.
     var fontSizePercent: Int {
-        get { currentTheme.fontSizePercent }
-        set { mutateCurrentTheme { $0.fontSizePercent = min(300, max(50, newValue)) }; notifyCosmeticChange() }
+        get {
+            migrateStoredThemesToReaderOverridesIfNeeded()
+            if let value = defaults.object(forKey: "readerFontSizePercent") as? Int { return value }
+            let legacy = defaults.integer(forKey: "readerFontSize")
+            return legacy == 0 ? 100 : legacy
+        }
+        set { defaults.set(min(300, max(50, newValue)), forKey: "readerFontSizePercent"); notifyCosmeticChange() }
     }
 
     // MARK: Behaviour flags
 
-    /// "Format for AO3" — removes toc-heading elements and enlarges calibre2 elements
-    /// across ALL chapters (previously named "Format first chapter", now global).
-    /// UserDefaults key unchanged to preserve existing user preference. Structural:
-    /// changes the HTML that gets built.
-    var formatFirstChapter: Bool {
-        get { defaults.bool(forKey: "readerFormatFirstChapter") }
-        set { defaults.set(newValue, forKey: "readerFormatFirstChapter"); notifyStructuralChange() }
+    /// Reader-only font override. Empty means use the selected skin's font.
+    var readerFontOverride: String {
+        get {
+            migrateStoredThemesToReaderOverridesIfNeeded()
+            return defaults.string(forKey: "readerFontOverride") ?? ""
+        }
+        set {
+            let value = newValue.isEmpty ? "" : ReaderCSSSanitizer.fontFamily(newValue, fallback: "")
+            defaults.set(value, forKey: "readerFontOverride")
+            notifyCosmeticChange()
+        }
+    }
+
+    var effectiveReaderFontFamily: String {
+        if !readerFontOverride.isEmpty { return readerFontOverride }
+        return SkinStore.shared.skin(id: defaults.string(forKey: "readerSkinID") ?? "com.honeycrisp.original")?.family
+            ?? FontPresets.defaultStack
+    }
+
+    private var hasMigratedReaderOverrides: Bool {
+        get { defaults.bool(forKey: "readerOverridesMigrated") }
+        set { defaults.set(newValue, forKey: "readerOverridesMigrated") }
+    }
+
+    func migrateReaderOverridesIfNeeded() {
+        migrateStoredThemesToReaderOverridesIfNeeded()
+    }
+
+    var readerBackgroundOverride: String {
+        get {
+            migrateStoredThemesToReaderOverridesIfNeeded()
+            return defaults.string(forKey: "readerBackgroundOverride") ?? ""
+        }
+        set {
+            let value = newValue.isEmpty ? "" : ReaderCSSSanitizer.hexColor(newValue, fallback: "")
+            defaults.set(value, forKey: "readerBackgroundOverride")
+            notifyCosmeticChange()
+        }
+    }
+
+    var readerInkOverride: String {
+        get {
+            migrateStoredThemesToReaderOverridesIfNeeded()
+            return defaults.string(forKey: "readerInkOverride") ?? ""
+        }
+        set {
+            let value = newValue.isEmpty ? "" : ReaderCSSSanitizer.hexColor(newValue, fallback: "")
+            defaults.set(value, forKey: "readerInkOverride")
+            notifyCosmeticChange()
+        }
+    }
+
+    var readerLinkOverride: String {
+        get {
+            migrateStoredThemesToReaderOverridesIfNeeded()
+            return defaults.string(forKey: "readerLinkOverride") ?? ""
+        }
+        set {
+            let value = newValue.isEmpty ? "" : ReaderCSSSanitizer.hexColor(newValue, fallback: "")
+            defaults.set(value, forKey: "readerLinkOverride")
+            notifyCosmeticChange()
+        }
+    }
+
+    var hasReaderColorOverrides: Bool {
+        !readerBackgroundOverride.isEmpty || !readerInkOverride.isEmpty || !readerLinkOverride.isEmpty
+    }
+
+    var hasReaderOverrides: Bool {
+        hasReaderColorOverrides || !readerFontOverride.isEmpty || fontSizePercent != 100 || lineHeight != 1.6
+            || maxWidth != 700 || paddingH != 24 || paddingV != 24 || paragraphIndent != 0.3 || paragraphSpacing != 0.5
+            || justifyReaderText || hyphenateReaderText
+    }
+
+    func clearReaderOverrides() {
+        migrateStoredThemesToReaderOverridesIfNeeded()
+        ["readerFontOverride", "readerBackgroundOverride", "readerInkOverride", "readerLinkOverride"].forEach(defaults.removeObject(forKey:))
+        fontSizePercent = 100
+        lineHeight = 1.6
+        maxWidth = 700
+        paddingH = 24
+        paddingV = 24
+        paragraphIndent = 0.3
+        paragraphSpacing = 0.5
+        justifyReaderText = false
+        hyphenateReaderText = false
+        defaults.set(true, forKey: "readerOverridesMigrated")
+        notifyCosmeticChange()
+    }
+
+    /// Replaces recognized fanfiction front matter with the generated preface. Structural because
+    /// rendered spine content and offsets change.
+    var fanficPreface: Bool {
+        get { defaults.bool(forKey: "readerFanficPreface") }
+        set { defaults.set(newValue, forKey: "readerFanficPreface"); notifyStructuralChange() }
+    }
+
+    var readerSkinID: String {
+        get {
+            if let existing = defaults.string(forKey: "readerSkinID") { return existing }
+            let id = migrateLegacyReaderSkin()
+            migrateReaderOverridesIfNeeded()
+            defaults.set(id, forKey: "readerSkinID")
+            return id
+        }
+        set { defaults.set(newValue, forKey: "readerSkinID"); notifyStructuralChange() }
+    }
+
+    func validateReaderSkinSelection() {
+        if SkinStore.shared.skin(id: readerSkinID) == nil {
+            defaults.set("com.honeycrisp.original", forKey: "readerSkinID")
+        }
+    }
+
+    private func migrateLegacyReaderSkin() -> String {
+        guard defaults.data(forKey: "readerThemes") != nil else { return "com.honeycrisp.original" }
+        let legacy: Theme
+        if let data = defaults.data(forKey: "readerThemes"),
+           let decoded = try? JSONDecoder().decode([Theme].self, from: data), !decoded.isEmpty {
+            let id = defaults.string(forKey: "readerCurrentThemeID").flatMap(UUID.init(uuidString:))
+            legacy = decoded.first(where: { $0.id == id }) ?? decoded[0]
+        } else { return "com.honeycrisp.original" }
+        let name = legacy.name.lowercased()
+        switch name {
+        case "quiet": return "com.honeycrisp.quiet"
+        case "paper": return "com.honeycrisp.paper"
+        default:
+            if legacy.light.background.lowercased() == "#f4ecd8" { return "com.honeycrisp.paper" }
+            if legacy.light.background.lowercased() == "#2c2c2c" { return "com.honeycrisp.quiet" }
+            return "com.honeycrisp.original"
+        }
     }
 
     /// Strips leading space/tab runs immediately inside paragraph-like elements, for
@@ -468,7 +613,31 @@ final class SettingsManager {
     /// changes what HTML gets built), not cosmetic.
     var removeParagraphIndents: Bool {
         get { defaults.bool(forKey: "readerRemoveParagraphIndents") }
-        set { defaults.set(newValue, forKey: "readerRemoveParagraphIndents"); notifyStructuralChange() }
+        set {
+            defaults.set(newValue, forKey: "readerRemoveParagraphIndents")
+            if newValue { paragraphIndent = 0 } else { paragraphIndent = 0.3 }
+            notifyStructuralChange()
+        }
+    }
+
+    var paragraphIndent: Double {
+        get { defaults.object(forKey: "readerParagraphIndent").map { ($0 as? Double) ?? 0.3 } ?? 0.3 }
+        set { defaults.set(min(3, max(0, newValue)), forKey: "readerParagraphIndent"); notifyCosmeticChange() }
+    }
+
+    var paragraphSpacing: Double {
+        get { defaults.object(forKey: "readerParagraphSpacing").map { ($0 as? Double) ?? 0.5 } ?? 0.5 }
+        set { defaults.set(min(3, max(0, newValue)), forKey: "readerParagraphSpacing"); notifyCosmeticChange() }
+    }
+
+    var justifyReaderText: Bool {
+        get { defaults.bool(forKey: "readerJustifyText") }
+        set { defaults.set(newValue, forKey: "readerJustifyText"); notifyCosmeticChange() }
+    }
+
+    var hyphenateReaderText: Bool {
+        get { defaults.bool(forKey: "readerHyphenateText") }
+        set { defaults.set(newValue, forKey: "readerHyphenateText"); notifyCosmeticChange() }
     }
 
     /// Hides embedded images in EPUB reading content while keeping their source
@@ -547,38 +716,38 @@ final class SettingsManager {
     // the debounced reload rather than an instant patch, but never see stale
     // geometry.
 
-    /// Per-theme now -- see Theme.maxWidth's doc comment. Reading-column max
+    /// Global reading-column max
     /// width in points. Default (700) matches the constant
     /// EPUBParser.paginatedColumnCSS previously hardcoded.
     var maxWidth: Int {
-        get { currentTheme.maxWidth }
-        set { mutateCurrentTheme { $0.maxWidth = max(320, min(1400, newValue)) }; notifyStructuralChange() }
+        get {
+            migrateStoredThemesToReaderOverridesIfNeeded()
+            return defaults.object(forKey: "readerMaxWidth").map { ($0 as? Int) ?? 700 } ?? 700
+        }
+        set { defaults.set(ReaderCSSSanitizer.maxWidth(newValue), forKey: "readerMaxWidth"); notifyStructuralChange() }
     }
 
-    /// Per-theme now -- see Theme.paddingH's doc comment. Horizontal reading
+    /// Global horizontal reading
     /// margin in points. Default (24) matches the constant previously
     /// hardcoded in EPUBParser.paginatedColumnCSS.
     var paddingH: Int {
-        get { currentTheme.paddingH }
-        set { mutateCurrentTheme { $0.paddingH = max(0, min(120, newValue)) }; notifyStructuralChange() }
+        get {
+            migrateStoredThemesToReaderOverridesIfNeeded()
+            return defaults.object(forKey: "readerPaddingH").map { ($0 as? Int) ?? 24 } ?? 24
+        }
+        set { defaults.set(ReaderCSSSanitizer.paddingH(newValue), forKey: "readerPaddingH"); notifyStructuralChange() }
     }
 
-    /// Per-theme now -- see Theme.paddingV's doc comment. Vertical reading
+    /// Global vertical reading
     /// margin in points (paginated mode only — scroll mode's vertical spacing
     /// comes from #content's own fixed top/bottom padding). Default (24)
     /// matches the constant previously hardcoded in EPUBParser.paginatedColumnCSS.
     var paddingV: Int {
-        get { currentTheme.paddingV }
-        set { mutateCurrentTheme { $0.paddingV = max(0, min(120, newValue)) }; notifyStructuralChange() }
-    }
-
-    /// Applies a mutation to the currently active theme and persists it.
-    /// Shared by every per-theme typography accessor above.
-    private func mutateCurrentTheme(_ mutate: (inout Theme) -> Void) {
-        var list = themes
-        guard let idx = list.firstIndex(where: { $0.id == currentThemeID }) else { return }
-        mutate(&list[idx])
-        themes = list
+        get {
+            migrateStoredThemesToReaderOverridesIfNeeded()
+            return defaults.object(forKey: "readerPaddingV").map { ($0 as? Int) ?? 24 } ?? 24
+        }
+        set { defaults.set(ReaderCSSSanitizer.paddingV(newValue), forKey: "readerPaddingV"); notifyStructuralChange() }
     }
 
     /// Whether in-book links are clickable -- both internal cross-references
@@ -631,13 +800,6 @@ final class SettingsManager {
     /// base theme to copy from) -- also what Reset to Defaults restores every
     /// non-default theme to, since there's no per-custom-theme "default" to
     /// go back to otherwise.
-    private static let customThemeDefaultFontFamily = FontPresets.defaultStack
-    private static let customThemeDefaultFontSizePercent = 100
-    private static let customThemeDefaultLineHeight = 1.6
-    private static let customThemeDefaultMaxWidth = 700
-    private static let customThemeDefaultPaddingH = 24
-    private static let customThemeDefaultPaddingV = 24
-
     /// True only when at least one theme differs from its default (seed
     /// values for the three default themes, the shared custom-theme baseline
     /// for every other theme), one of the three default themes is missing
@@ -646,36 +808,7 @@ final class SettingsManager {
     /// the "Reset to Defaults" button is inert rather than an always-live
     /// destructive action.
     var isReaderCustomized: Bool {
-        let list = themes
-        if allowReaderLinkClicks != true { return true }
-        let existingDefaultNames = Set(list.filter(\.isDefault).map(\.name))
-        if Self.seedThemes.contains(where: { !existingDefaultNames.contains($0.name) }) { return true }
-        for theme in list {
-            if theme.isDefault {
-                guard let seed = Self.seedThemes.first(where: { $0.name == theme.name }) else { return true }
-                if theme.light != seed.light || theme.dark != seed.dark
-                    || theme.fontFamily != seed.fontFamily
-                    || theme.fontSizePercent != 100
-                    || theme.lineHeight != 1.6
-                    || theme.maxWidth != 700
-                    || theme.paddingH != 24
-                    || theme.paddingV != 24
-                {
-                    return true
-                }
-            } else {
-                if theme.fontFamily != Self.customThemeDefaultFontFamily
-                    || theme.fontSizePercent != Self.customThemeDefaultFontSizePercent
-                    || theme.lineHeight != Self.customThemeDefaultLineHeight
-                    || theme.maxWidth != Self.customThemeDefaultMaxWidth
-                    || theme.paddingH != Self.customThemeDefaultPaddingH
-                    || theme.paddingV != Self.customThemeDefaultPaddingV
-                {
-                    return true
-                }
-            }
-        }
-        return false
+        hasReaderOverrides || readerSkinID != "com.honeycrisp.original" || !allowReaderLinkClicks
     }
 
     /// Resets every theme to its default, not just the currently selected
@@ -690,42 +823,26 @@ final class SettingsManager {
     /// e.g. it was one of the just-restored defaults, in which case it's
     /// simply added back rather than reselected).
     func resetReaderToDefaults() {
-        var list = themes
-
-        // Restore any of the three default themes (Original/Quiet/Paper) that
-        // got deleted before deleteTheme() protected them -- re-added as fresh
-        // copies, in seed order, ahead of whatever's already there. Existing
-        // custom themes are left alone, whether or not they're also missing
-        // one of their own.
-        let existingDefaultNames = Set(list.filter(\.isDefault).map(\.name))
-        let missingSeeds = Self.seedThemes.filter { !existingDefaultNames.contains($0.name) }
-        if !missingSeeds.isEmpty {
-            list.insert(contentsOf: missingSeeds, at: 0)
-        }
-
-        let resetList: [Theme] = list.map { theme in
-            var updatedTheme = theme
-            if theme.isDefault {
-                // Matched by name, not position: defaultThemesInOrder[i] <->
-                // seedThemes[i] silently mismatched colors whenever one
-                // default had been deleted, since the remaining defaults
-                // would shift positions relative to seedThemes.
-                if let seed = Self.seedThemes.first(where: { $0.name == theme.name }) {
-                    updatedTheme.light = seed.light
-                    updatedTheme.dark = seed.dark
-                    updatedTheme.fontFamily = seed.fontFamily
-                }
-            } else {
-                updatedTheme.fontFamily = Self.customThemeDefaultFontFamily
-            }
-            updatedTheme.fontSizePercent = theme.isDefault ? 100 : Self.customThemeDefaultFontSizePercent
-            updatedTheme.lineHeight = theme.isDefault ? 1.6 : Self.customThemeDefaultLineHeight
-            updatedTheme.maxWidth = theme.isDefault ? 700 : Self.customThemeDefaultMaxWidth
-            updatedTheme.paddingH = theme.isDefault ? 24 : Self.customThemeDefaultPaddingH
-            updatedTheme.paddingV = theme.isDefault ? 24 : Self.customThemeDefaultPaddingV
-            return updatedTheme
-        }
-        themes = resetList
+        readerSkinID = "com.honeycrisp.original"
+        clearReaderOverrides()
+        readerFontOverride = ""
+        fontSizePercent = 100
+        lineHeight = 1.6
+        maxWidth = 700
+        paddingH = 24
+        paddingV = 24
+        removeParagraphIndents = false
+        paragraphIndent = 0.3
+        paragraphSpacing = 0.5
+        justifyReaderText = false
+        hyphenateReaderText = false
+        defaults.set(true, forKey: "readerOverridesMigrated")
+        defaults.removeObject(forKey: "readerThemes")
+        defaults.removeObject(forKey: "readerCurrentThemeID")
+        defaults.removeObject(forKey: "readerTheme")
+        defaults.removeObject(forKey: "readerCustomBackground")
+        defaults.removeObject(forKey: "readerCustomText")
+        themes = Self.seedThemes
         allowReaderLinkClicks = true
     }
 
@@ -735,7 +852,7 @@ final class SettingsManager {
     /// RebindableAction.defaultBinding. Backs the "Reset All to Defaults"
     /// button on the General tab.
     func resetAllToDefaults() {
-        formatFirstChapter = false
+        fanficPreface = false
         removeParagraphIndents = false
         hideImages = false
         skipCoverWhenOpening = false

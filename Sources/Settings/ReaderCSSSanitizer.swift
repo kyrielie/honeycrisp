@@ -104,6 +104,7 @@ enum ReaderCSSSanitizer {
     static func maxWidth(_ value: Int) -> Int { min(1400, max(320, value)) }
 
     static func paddingH(_ value: Int) -> Int { min(120, max(0, value)) }
+    static func paddingV(_ value: Int) -> Int { min(120, max(0, value)) }
 
     /// Non-finite input returns the default line height (1.6).
     static func lineHeight(_ value: Double) -> Double {

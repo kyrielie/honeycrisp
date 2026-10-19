@@ -8,7 +8,7 @@
 //  • Font family is now a free-form CSS stack (SettingsManager.fontFamily);
 //    the font popup offers named presets plus "Custom…", and NSFontPanel
 //    writes its picked font into fontFamily directly
-//  • "Format first chapter" checkbox renamed to "Format for AO3"
+//  • the General pane offers the optional generated fanfiction preface
 //  • CustomFontStore and its disk-copy logic are retained so existing persisted
 //    custom font names continue to work, but are no longer populated by file import
 //
@@ -313,20 +313,20 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         // already AppKit's standard control spacing.
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        // "Format for AO3" (renamed from "Format first chapter")
+        // Replaces recognized fanfiction export front matter with one metadata preface.
         let formatCheckbox = NSButton(
-            checkboxWithTitle: "Format for AO3",
+            checkboxWithTitle: "Replace fanfiction preface",
             target: self,
-            action: #selector(toggleFormatForAO3(_:))
+            action: #selector(toggleFanficPreface(_:))
         )
-        formatCheckbox.state = SettingsManager.shared.formatFirstChapter ? .on : .off
+        formatCheckbox.state = SettingsManager.shared.fanficPreface ? .on : .off
         stack.addArrangedSubview(formatCheckbox)
         self.formatCheckbox = formatCheckbox
 
         // Descriptive hint
         let hint = NSTextField(
             wrappingLabelWithString:
-                "Removes all toc-heading elements and enlarges calibre2 elements globally across the book."
+                "Shows a standard preface built from the book's metadata for AO3, FicHub and FicLab files. Books that cannot be read this way are unchanged."
         )
         hint.font = NSFont.systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
@@ -526,10 +526,8 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         vc.toggleReadingMode(nil)
     }
 
-    @objc private func toggleFormatForAO3(_ sender: NSButton) {
-        // SettingsManager still stores this as "formatFirstChapter" internally;
-        // EPUBParser's behaviour is now global (not first-chapter-only) — see EPUBParser.
-        SettingsManager.shared.formatFirstChapter = sender.state == .on
+    @objc private func toggleFanficPreface(_ sender: NSButton) {
+        SettingsManager.shared.fanficPreface = sender.state == .on
     }
 
     @objc private func toggleRemoveParagraphIndents(_ sender: NSButton) {
@@ -576,10 +574,12 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         // keep showing stale values until the user picks a different theme and
         // back; a real fix belongs in AppearanceSettingsViewController's own
         // refresh gating, not here.
-        formatCheckbox?.state = SettingsManager.shared.formatFirstChapter ? .on : .off
+        formatCheckbox?.state = SettingsManager.shared.fanficPreface ? .on : .off
         indentCheckbox?.state = SettingsManager.shared.removeParagraphIndents ? .on : .off
         hideImagesCheckbox?.state = SettingsManager.shared.hideImages ? .on : .off
         skipCoverCheckbox?.state = SettingsManager.shared.skipCoverWhenOpening ? .on : .off
+        NotificationCenter.default.post(name: .readerCosmeticSettingsChanged, object: nil)
+        NotificationCenter.default.post(name: .readerStructuralSettingsChanged, object: nil)
         linkClicksCheckbox?.state = SettingsManager.shared.allowReaderLinkClicks ? .on : .off
         newBookControl?.selectedSegment = SettingsManager.shared.newBookOpensIn.rawValue
         refreshReadingModeCheckbox()
@@ -741,17 +741,7 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
 //    real line of text at larger sizes. Moved below the form (still inside
 //    the scroll view) and made responsive: no fixed height, sized by its own
 //    wrapped text content at whatever width the window currently is.
-//  • Selecting "Custom…" in the font popup revealed the free-text field but
-//    never opened NSFontPanel, even though that's the more discoverable path
-//    for most people. Now opens the panel immediately on selection, in
-//    addition to the manual "Choose Font…" button for reopening it later.
-//  • Theme selection was a plain NSPopUpButton plus a separate row of tiny
-//    circular preset swatches, then later a fixed 2x3 grid of System/Light/
-//    Dark/Sepia/Custom with only .custom actually editable. Now every theme
-//    is a fully user-editable object (name + light/dark color pairs): the
-//    grid wraps to fill the panel's full width, a "+" tile adds new themes,
-//    and each swatch's own context menu handles rename/recolor/duplicate/
-//    delete -- see Theme/ThemeColorSet in SettingsManager.swift.
+// Appearance chooses an installed reader skin and edits global overrides.
 
 // swiftlint:disable:next type_body_length
 final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizing {
@@ -759,17 +749,6 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     var preferredPaneSize: NSSize?
     let isResizableView = false
 
-    private var fontPopup: NSPopUpButton!
-    private var fontFamilyField: NSTextField!  // free-form CSS font-family stack entry
-    private var fontPickerButton: NSButton!  // opens NSFontPanel (replaces import button)
-    private var themeGridContainer: NSStackView!  // vertical stack of full-width rows, wrapping
-    private var themeButtons: [UUID: ThemeBigSwatchButton] = [:]
-    /// Only one theme's inline editor is expanded at a time; selecting a
-    /// different swatch collapses whichever one was previously expanded.
-    /// Starts on the currently active theme so its editor is already open
-    /// when the tab first appears, matching the swatch that's already shown
-    /// selected.
-    private var expandedThemeID: UUID? = SettingsManager.shared.currentThemeID
     private var lineHeightStepper: NSStepper!
     private var lineHeightLabel: NSTextField!
     private var fontSizeStepper: NSStepper!
@@ -786,14 +765,13 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     private weak var scrollView: NSScrollView!
 
     private var grid: NSGridView!
-    private var fontFamilyFieldRow: NSGridRow!
-    private var fontPickerButtonRow: NSGridRow!
 
-    /// The currently previewed font name when the NSFontPanel is used
-    private var pickedFontName: String = SettingsManager.shared.customFontName
-
-    /// Index of the synthetic "Custom…" item, appended after all presets.
-    private var customFontPopupIndex: Int { FontPresets.all.count }
+    private var skinPopup: NSPopUpButton!
+    private var skinDescription: NSTextField!
+    private var overrideFontField: NSTextField!
+    private var overrideBackgroundField: NSTextField!
+    private var overrideInkField: NSTextField!
+    private var overrideLinkField: NSTextField!
 
     /// 16px is the reader WKWebView's unstyled base root font size; --reader-font-size
     /// is applied to <html> as a CSS percentage of that. See EPUBParser.readerVarsCSS.
@@ -811,32 +789,29 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         grid.column(at: 0).xPlacement = .leading
         grid.column(at: 1).xPlacement = .leading
 
-        // Appearance mode -- overrides the system's light/dark setting for
-        // the whole app (window chrome plus whichever of each theme's two
-        // ThemeColorSets is in effect). "System" just tracks the OS, same as
-        // before this control existed.
-        grid.addRow(with: [label("Appearance:"), makeAppearanceModeControl()])
-
-        // Themes first, no header — the grid is the section, stretched to fill
-        // the panel's full width (see makeThemeGrid). Every swatch is directly
-        // editable now (right-click, or double-click, for rename/recolor/
-        // duplicate/delete), so there's no separate "Custom" case or presets
-        // list living below it the way there used to be.
-        let themeGridRow = grid.addRow(with: [makeThemeGrid(), NSGridCell.emptyContentView])
-        themeGridRow.mergeCells(in: NSRange(location: 0, length: 2))
-        themeGridRow.cell(at: 0).xPlacement = .fill
-
-        // Typography, no header.
-        grid.addRow(with: [label("Font:"), makeFontPopup()])
-        fontFamilyFieldRow = grid.addRow(with: [NSGridCell.emptyContentView, makeFontFamilyField()])
-        fontPickerButtonRow = grid.addRow(with: [NSGridCell.emptyContentView, makeFontPickerButton()])
+        grid.addRow(with: [label("Reader Skin:"), makeSkinPicker()])
+        grid.addRow(with: [NSGridCell.emptyContentView, makeSkinDescription()])
+        grid.addRow(with: [label("Font Override:"), makeLegacyFontOverrideField()])
+        grid.addRow(with: [label("Background:"), makeOverrideField(key: .background)])
+        grid.addRow(with: [label("Text Color:"), makeOverrideField(key: .ink)])
+        grid.addRow(with: [label("Link Color:"), makeOverrideField(key: .link)])
         grid.addRow(with: [label("Font Size:"), makeFontSizeRow()])
         grid.addRow(with: [label("Line Height:"), makeLineHeightRow()])
-
-        // Layout, no header.
         grid.addRow(with: [label("Max Width:"), makeMaxWidthRow()])
         grid.addRow(with: [label("Horizontal Margin:"), makePaddingHRow()])
         grid.addRow(with: [label("Vertical Margin:"), makePaddingVRow()])
+        grid.addRow(with: [label("Paragraph Indent:"), makeDecimalOverrideRow(value: SettingsManager.shared.paragraphIndent, action: #selector(paragraphIndentChanged(_:)))])
+        grid.addRow(with: [label("Paragraph Spacing:"), makeDecimalOverrideRow(value: SettingsManager.shared.paragraphSpacing, action: #selector(paragraphSpacingChanged(_:)))])
+        let justify = NSButton(checkboxWithTitle: "Justify text", target: self, action: #selector(justifyChanged(_:)))
+        justify.state = SettingsManager.shared.justifyReaderText ? .on : .off
+        grid.addRow(with: [NSGridCell.emptyContentView, justify])
+        let hyphenate = NSButton(checkboxWithTitle: "Hyphenate text", target: self, action: #selector(hyphenateChanged(_:)))
+        hyphenate.state = SettingsManager.shared.hyphenateReaderText ? .on : .off
+        grid.addRow(with: [NSGridCell.emptyContentView, hyphenate])
+        let skinActions = NSStackView(views: [makeImportSkinButton()])
+        skinActions.orientation = .horizontal
+        skinActions.spacing = 8
+        grid.addRow(with: [NSGridCell.emptyContentView, skinActions])
 
         let resetButton = NSButton(title: "Reset to Defaults", target: self, action: #selector(resetToDefaults(_:)))
         resetButton.bezelStyle = .rounded
@@ -919,262 +894,191 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         ])
 
         self.view = root
-        // Appearance's real content (theme grid + typography + preview) is taller
-        // than the shared pane height (SettingsPaneMetrics.size, same for every
-        // tab now), especially with many themes -- the internal NSScrollView
-        // handles
-        // whatever doesn't fit.
+        // Skin options and the preview can exceed the shared pane height;
+        // the internal scroll view handles the remaining content.
         resolvePreferredPaneSize()
 
-        updateCustomModeVisibility()
-        refreshThemeGridSelection()
+        refreshSkinDescription()
         refreshPreview()
+    }
+
+    private enum OverrideField: String { case font, background, ink, link }
+
+    // MARK: - Control Factories
+
+    private func makeDecimalOverrideRow(value: Double, action: Selector) -> NSView {
+        let field = NSTextField(string: String(value))
+        field.widthAnchor.constraint(equalToConstant: 70).isActive = true
+        field.target = self
+        field.action = action
+        let units = NSTextField(labelWithString: "em")
+        let row = NSStackView(views: [field, units])
+        row.orientation = .horizontal
+        row.spacing = 6
+        return row
+    }
+
+    @objc private func paragraphIndentChanged(_ sender: NSTextField) {
+        SettingsManager.shared.paragraphIndent = Double(sender.stringValue) ?? 0.3
+    }
+
+    @objc private func paragraphSpacingChanged(_ sender: NSTextField) {
+        SettingsManager.shared.paragraphSpacing = Double(sender.stringValue) ?? 0.5
+    }
+
+    @objc private func justifyChanged(_ sender: NSButton) { SettingsManager.shared.justifyReaderText = sender.state == .on }
+    @objc private func hyphenateChanged(_ sender: NSButton) { SettingsManager.shared.hyphenateReaderText = sender.state == .on }
+
+    private func makeSkinPicker() -> NSPopUpButton {
+        skinPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        reloadSkinPicker()
+        skinPopup.target = self
+        skinPopup.action = #selector(skinChanged(_:))
+        return skinPopup
+    }
+
+    private func reloadSkinPicker() {
+        SkinStore.shared.reload()
+        skinPopup?.removeAllItems()
+        for skin in SkinStore.shared.skins {
+            skinPopup?.addItem(withTitle: skin.name)
+            skinPopup?.lastItem?.representedObject = skin.id
+        }
+        if let index = SkinStore.shared.skins.firstIndex(where: { $0.id == SettingsManager.shared.readerSkinID }) {
+            skinPopup?.selectItem(at: index)
+        }
+    }
+
+    private func makeSkinDescription() -> NSTextField {
+        skinDescription = NSTextField(wrappingLabelWithString: "")
+        skinDescription.textColor = .secondaryLabelColor
+        skinDescription.maximumNumberOfLines = 2
+        return skinDescription
+    }
+
+    private func makeLegacyFontOverrideField() -> NSTextField {
+        let field = NSTextField(string: SettingsManager.shared.readerFontOverride)
+        field.placeholderString = "Use skin default"
+        field.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        field.target = self
+        field.action = #selector(readerOverrideChanged(_:))
+        overrideFontField = field
+        return field
+    }
+
+    private func refreshSkinDescription() {
+        let skin = SkinStore.shared.skin(id: SettingsManager.shared.readerSkinID)
+        skinDescription?.stringValue = [skin?.creator, skin?.version.map { "Version \($0)" }, skin?.license.map { _ in "License included" },
+                                        skin?.lowContrast == true ? "Low contrast" : nil,
+                                        skin?.fontImports.isEmpty == false ? "Uses web fonts (not downloaded)" : nil]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private func makeOverrideField(key: OverrideField) -> NSTextField {
+        let value: String
+        switch key {
+        case .font: value = SettingsManager.shared.readerFontOverride
+        case .background: value = SettingsManager.shared.readerBackgroundOverride
+        case .ink: value = SettingsManager.shared.readerInkOverride
+        case .link: value = SettingsManager.shared.readerLinkOverride
+        }
+        let field = NSTextField(string: value)
+        field.placeholderString = "Use skin color"
+        field.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        field.target = self
+        field.action = #selector(readerOverrideChanged(_:))
+        field.identifier = NSUserInterfaceItemIdentifier("reader-override-\(key.rawValue)")
+        switch key {
+        case .font: overrideFontField = field
+        case .background: overrideBackgroundField = field
+        case .ink: overrideInkField = field
+        case .link: overrideLinkField = field
+        }
+        return field
+    }
+
+    private func makeImportSkinButton() -> NSButton {
+        let button = NSButton(title: "Install Skin…", target: self, action: #selector(importSkin(_:)))
+        button.bezelStyle = .rounded
+        return button
+    }
+
+    private func makeClearOverridesButton() -> NSButton {
+        let button = NSButton(title: "Clear Overrides", target: self, action: #selector(clearReaderOverrides(_:)))
+        button.bezelStyle = .rounded
+        return button
+    }
+
+    @objc private func skinChanged(_ sender: NSPopUpButton) {
+        guard let id = sender.selectedItem?.representedObject as? String else { return }
+        SettingsManager.shared.readerSkinID = id
+        refreshSkinDescription()
+        refreshPreview()
+    }
+
+    @objc private func readerOverrideChanged(_ sender: NSTextField) {
+        let value = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch sender.identifier?.rawValue {
+        case "reader-override-font": SettingsManager.shared.readerFontOverride = value
+        case "reader-override-background": SettingsManager.shared.readerBackgroundOverride = value
+        case "reader-override-ink": SettingsManager.shared.readerInkOverride = value
+        case "reader-override-link": SettingsManager.shared.readerLinkOverride = value
+        default: break
+        }
+        refreshPreview()
+    }
+
+    @objc private func clearReaderOverrides(_ sender: Any?) {
+        SettingsManager.shared.clearReaderOverrides()
+        [overrideFontField, overrideBackgroundField, overrideInkField, overrideLinkField].forEach { $0?.stringValue = "" }
+        refreshPreview()
+    }
+
+    @objc private func importSkin(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.zip, .directory]
+        panel.message = "Choose a .nnwtheme skin folder or ZIP archive."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let values = try? url.resourceValues(forKeys: [.isDirectoryKey])
+        let isZip = url.pathExtension.lowercased() == "zip" || values?.isDirectory != true
+        do {
+            let skin = try isZip
+                ? SkinStore.shared.importSkin(zipURL: url)
+                : SkinStore.shared.importSkin(from: url)
+            reloadSkinPicker()
+            if let index = SkinStore.shared.skins.firstIndex(where: { $0.id == skin.id }) {
+                skinPopup.selectItem(at: index)
+                SettingsManager.shared.readerSkinID = skin.id
+            }
+            refreshSkinDescription()
+        } catch {
+            let alert = NSAlert(error: error)
+            alert.runModal()
+        }
     }
 
     /// Belt-and-suspenders on top of `clipContainer` being flipped: also
     /// explicitly scroll to top every time this tab appears, so re-opening
     /// Settings after switching tabs or resizing the window doesn't leave a
     /// stale scroll position either.
-    override func viewWillAppear() {
-        super.viewWillAppear()
-        scrollView?.contentView.scroll(to: .zero)
-        scrollView?.reflectScrolledClipView(scrollView.contentView)
-
-        // The active theme can change elsewhere (the toolbar's theme popover)
-        // while this tab isn't visible; re-sync so the expanded editor and
-        // typography controls always match whatever's actually selected
-        // rather than whatever was selected the last time this tab appeared.
-        if expandedThemeID != SettingsManager.shared.currentThemeID {
-            expandedThemeID = SettingsManager.shared.currentThemeID
-            refreshAllTypographyControls()
-            rebuildThemeGrid()
-            refreshPreview()
-        }
-    }
-
-    // MARK: - Control Factories
-
     private func label(_ text: String) -> NSTextField {
         NSTextField(labelWithString: text)
     }
 
-    private func makeAppearanceModeControl() -> NSSegmentedControl {
-        let modes = AppearanceMode.allCases
-        let control = NSSegmentedControl(
-            labels: modes.map(\.displayName),
-            trackingMode: .selectOne,
-            target: self,
-            action: #selector(appearanceModeChanged(_:))
-        )
-        control.selectedSegment = modes.firstIndex(of: SettingsManager.shared.appearanceMode) ?? 0
-        control.setAccessibilityLabel("Appearance")
-        return control
-    }
-
-    @objc private func appearanceModeChanged(_ sender: NSSegmentedControl) {
-        let modes = AppearanceMode.allCases
-        guard sender.selectedSegment >= 0, sender.selectedSegment < modes.count else { return }
-        SettingsManager.shared.appearanceMode = modes[sender.selectedSegment]
-        // The bottom preview box is keyed off effective light/dark, which
-        // just changed. The theme grid swatches above always render each
-        // theme's own *light* colors regardless of appearance mode (see
-        // ThemeBigSwatchButton.swatchImage), so they don't need a rebuild.
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        scrollView?.contentView.scroll(to: .zero)
+        scrollView?.reflectScrolledClipView(scrollView.contentView)
+        reloadSkinPicker()
+        refreshSkinDescription()
         refreshPreview()
     }
 
-    private func makeFontPopup() -> NSPopUpButton {
-        fontPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 200, height: 26), pullsDown: false)
-        fontPopup.addItems(withTitles: FontPresets.all.map { $0.label } + ["Custom…"])
-        selectFontPopupItem(forCurrentFontFamily: SettingsManager.shared.fontFamily)
-        fontPopup.target = self
-        fontPopup.action = #selector(fontChanged(_:))
-        return fontPopup
-    }
-
-    private func makeFontFamilyField() -> NSTextField {
-        let field = NSTextField(string: SettingsManager.shared.fontFamily)
-        field.target = self
-        field.action = #selector(fontFamilyFieldChanged(_:))
-        field.placeholderString = "e.g. Georgia, serif"
-        field.widthAnchor.constraint(equalToConstant: 240).isActive = true
-        fontFamilyField = field
-        return field
-    }
-
-    private func makeFontPickerButton() -> NSButton {
-        let button = NSButton(
-            title: pickedFontName.isEmpty ? "Choose Font…" : pickedFontName,
-            target: self,
-            action: #selector(openFontPanel(_:))
-        )
-        button.bezelStyle = .rounded
-        fontPickerButton = button
-        return button
-    }
-
-    private func selectFontPopupItem(forCurrentFontFamily family: String) {
-        if let idx = FontPresets.all.firstIndex(where: { $0.cssStack == family }) {
-            fontPopup.selectItem(at: idx)
-        } else {
-            fontPopup.selectItem(at: customFontPopupIndex)
-        }
-    }
-
-    /// Every theme is directly editable now, so there's one grid, not a fixed
-    /// 5-case grid plus a separate presets row underneath. Rows wrap at 4 items
-    /// (themes + the trailing "+" tile) and each row uses .fillEqually so the
-    /// whole thing stretches to the panel's full width, per the Apple Books
-    /// reference. Rebuilt from scratch on any add/rename/duplicate/delete since
-    /// the item count itself can change, not just individual swatch contents.
-    private func makeThemeGrid() -> NSStackView {
-        let container = NSStackView()
-        container.orientation = .vertical
-        container.spacing = 10
-        container.translatesAutoresizingMaskIntoConstraints = false
-        themeGridContainer = container
-        rebuildThemeGrid()
-        return container
-    }
-
-    // swiftlint:disable:next function_body_length
-    private func rebuildThemeGrid() {
-        guard let container = themeGridContainer else { return }
-        for arranged in container.arrangedSubviews {
-            container.removeArrangedSubview(arranged); arranged.removeFromSuperview()
-        }
-        themeButtons.removeAll()
-
-        let themes = SettingsManager.shared.themes
-        // Clicking a swatch now expands its editor inline (see
-        // themeSwatchClicked), so the context menu no longer needs a separate
-        // rename entry -- Duplicate/Delete are the only actions that don't
-        // already have a home in the expanded panel.
-        let swatchCells: [NSView] = themes.map { theme in
-            let button = ThemeBigSwatchButton(theme: theme)
-            button.target = self
-            button.action = #selector(themeSwatchClicked(_:))
-            let menu = NSMenu()
-            menu.addItem(withTitle: "Duplicate", action: #selector(duplicateThemeMenuAction(_:)), keyEquivalent: "")
-            if !theme.isDefault && themes.count > 1 {
-                menu.addItem(withTitle: "Delete", action: #selector(deleteThemeMenuAction(_:)), keyEquivalent: "")
-            }
-            for item in menu.items { item.target = self; item.representedObject = theme.id }
-            button.menu = menu
-            themeButtons[theme.id] = button
-            return button
-        }
-
-        let perRow = 4
-        // Row layout for the swatches: the "+" tile always joins the last
-        // swatch row if there's room, so it visually sits right after the
-        // themes. Only when the theme count exactly fills a row (4, 8, ...)
-        // does it need a row of its own -- and even then that row must be
-        // rendered immediately after the swatch row, before that row's
-        // expanded color editor (if any), not after it. Previously the add
-        // tile and the swatches were chunked together into one `cells` array,
-        // which pushed the tile's own row below the editor in that case.
-        func makeRow(_ views: [NSView]) {
-            var rowCells = views
-            // Pad a short row with invisible spacers so .fillEqually can't
-            // stretch its real cells (including the add tile) wider than the
-            // swatches in the full rows above -- otherwise the add tile ends
-            // up a different size whenever it doesn't land in a full row.
-            while rowCells.count < perRow {
-                let spacer = NSView()
-                spacer.heightAnchor.constraint(equalToConstant: ThemeBigSwatchButton.swatchSize.height).isActive = true
-                rowCells.append(spacer)
-            }
-            let row = NSStackView(views: rowCells)
-            row.orientation = .horizontal
-            row.spacing = 10
-            row.distribution = .fillEqually
-            container.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
-        }
-
-        for start in stride(from: 0, to: swatchCells.count, by: perRow) {
-            let end = min(start + perRow, swatchCells.count)
-            var rowCells = Array(swatchCells[start..<end])
-            let isLastSwatchRow = end == swatchCells.count
-            let addTileJoinsThisRow = isLastSwatchRow && rowCells.count < perRow
-            if addTileJoinsThisRow {
-                rowCells.append(makeAddThemeTile())
-            }
-            makeRow(rowCells)
-
-            if isLastSwatchRow && !addTileJoinsThisRow {
-                // Row filled exactly -- give the add tile its own row here,
-                // still ahead of any expanded editor below.
-                makeRow([makeAddThemeTile()])
-            }
-
-            // Which (if any) expanded theme belongs in this row, so its editor
-            // panel can be inserted directly beneath it -- after the add tile
-            // if the add tile belongs to this same row.
-            let rowThemes = themes[start..<end]
-            if let theme = rowThemes.first(where: { $0.id == expandedThemeID }) {
-                let editor = makeInlineThemeEditor(for: theme)
-                container.addArrangedSubview(editor)
-                editor.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
-            }
-        }
-        if swatchCells.isEmpty {
-            makeRow([makeAddThemeTile()])
-        }
-        refreshThemeGridSelection()
-    }
-
-    /// Grey-outlined tile matching the swatches' height, with a small centered
-    /// plus icon -- not scaled up to fill the button, just its natural size.
-    ///
-    /// The outer button frame is pinned to the same height as
-    /// ThemeBigSwatchButton, but the *visible* border can't just cover that
-    /// whole frame: ThemeBigSwatchButton.swatchImage draws its rounded-rect
-    /// only `size.height - 22` tall, inset from the top/bottom of the image,
-    /// to leave room below for the theme name label. This tile has no label,
-    /// so its border box mirrors that same inset (`box` below) rather than
-    /// the full button bounds -- otherwise it reads as visibly taller than
-    /// the swatches sitting next to it in the grid.
-    private func makeAddThemeTile() -> NSView {
-        let button = NSButton(title: "", target: self, action: #selector(addThemeClicked(_:)))
-        button.bezelStyle = .regularSquare
-        button.isBordered = false
-        button.setAccessibilityLabel("Add a new theme")
-        button.heightAnchor.constraint(equalToConstant: ThemeBigSwatchButton.swatchSize.height).isActive = true
-
-        let box = NSView()
-        box.wantsLayer = true
-        box.layer?.cornerRadius = 8
-        box.layer?.borderWidth = 1
-        box.layer?.borderColor = NSColor.separatorColor.cgColor
-        box.translatesAutoresizingMaskIntoConstraints = false
-        button.addSubview(box)
-
-        let plus = NSImageView(image: NSImage(systemSymbolName: "plus", accessibilityDescription: nil) ?? NSImage())
-        plus.contentTintColor = .secondaryLabelColor
-        plus.translatesAutoresizingMaskIntoConstraints = false
-        // Decorative: the enclosing button already carries the accessibility
-        // label "Add a new theme" (see below), so exposing this glyph too would
-        // have VoiceOver read the same thing twice.
-        plus.setAccessibilityElement(false)
-        box.addSubview(plus)
-
-        NSLayoutConstraint.activate([
-            box.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 1),
-            box.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -1),
-            box.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -20),
-            box.heightAnchor.constraint(equalToConstant: ThemeBigSwatchButton.swatchSize.height - 22),
-
-            plus.centerXAnchor.constraint(equalTo: box.centerXAnchor),
-            plus.centerYAnchor.constraint(equalTo: box.centerYAnchor),
-        ])
-
-        return button
-    }
-
-    /// Line height is a unitless CSS multiplier (e.g. 1.6), not a pixel value --
-    /// shown as a stepper with a one-decimal label, same visual language as the
-    /// px steppers below, replacing the old bare slider with no visible value.
     private func makeLineHeightRow() -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
@@ -1300,34 +1204,19 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
 
     // MARK: - Visibility
 
-    private func updateCustomModeVisibility() {
-        let isCustomFont = !FontPresets.all.contains { $0.cssStack == SettingsManager.shared.fontFamily }
-        fontFamilyFieldRow.isHidden = !isCustomFont
-        fontPickerButtonRow.isHidden = !isCustomFont
-    }
-
-    private func refreshThemeGridSelection() {
-        let current = SettingsManager.shared.currentThemeID
-        for (id, button) in themeButtons {
-            button.setSelected(id == current)
-        }
-    }
-
-    /// Renders the current theme/font-size/line-height combination against
-    /// real sample text so the effect of a change is visible without leaving
-    /// Settings. Best-effort on the font: fontFamily is a CSS stack (e.g.
-    /// "Georgia, serif"), not directly usable as an NSFont name, so this takes
-    /// the first family name in the stack and falls back to the system font if
-    /// AppKit doesn't have a font by that name -- exact CSS font resolution is
-    /// WebKit's job when actually rendering the book.
     private func refreshPreview() {
-        let colors = SettingsManager.shared.effectiveColorSet
-        previewBox.fillColor = SettingsManager.color(fromCSS: colors.background)
-        previewLabel.textColor = SettingsManager.color(fromCSS: colors.text)
+        let settings = SettingsManager.shared
+        let skin = SkinStore.shared.skin(id: settings.readerSkinID)
+        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let tokens = isDark ? (skin?.dark ?? skin?.light) : skin?.light
+        let colors = settings.effectiveColorSet
+        let background = settings.readerBackgroundOverride.isEmpty ? (tokens?.background ?? colors.background) : settings.readerBackgroundOverride
+        let text = settings.readerInkOverride.isEmpty ? (tokens?.ink ?? colors.text) : settings.readerInkOverride
+        previewBox.fillColor = SettingsManager.color(fromCSS: background)
+        previewLabel.textColor = SettingsManager.color(fromCSS: text)
 
-        let px = Self.px(fromPercent: SettingsManager.shared.fontSizePercent)
-        let firstFamily =
-            SettingsManager.shared.fontFamily
+        let px = Self.px(fromPercent: settings.fontSizePercent)
+        let firstFamily = (settings.readerFontOverride.isEmpty ? (skin?.family ?? settings.fontFamily) : settings.readerFontOverride)
             .split(separator: ",").first?
             .trimmingCharacters(in: CharacterSet(charactersIn: " '\"")) ?? ""
         let previewFont =
@@ -1347,91 +1236,6 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     }
 
     // MARK: - Actions
-
-    /// Re-renders the current theme's own swatch thumbnail in place. Font
-    /// changes (popup, free-form field, NSFontPanel) mutate currentTheme via
-    /// SettingsManager but, unlike the color wells and name field, weren't
-    /// nudging the swatch grid at all -- the "Aa" thumbnail kept showing the
-    /// old font until something else (e.g. clicking a theme swatch) rebuilt
-    /// the grid from fresh data.
-    private func refreshCurrentThemeSwatch() {
-        let theme = SettingsManager.shared.currentTheme
-        themeButtons[theme.id]?.refresh(with: theme)
-    }
-
-    @objc private func fontChanged(_ sender: NSPopUpButton) {
-        let idx = sender.indexOfSelectedItem
-        if idx < FontPresets.all.count {
-            SettingsManager.shared.fontFamily = FontPresets.all[idx].cssStack
-            updateCustomModeVisibility()
-            refreshPreview()
-            refreshCurrentThemeSwatch()
-        } else {
-            // "Custom…" selected -- reveal the free-form field and open the
-            // font panel immediately, since that's the more discoverable path
-            // for most people; the "Choose Font…" button remains for
-            // reopening the panel later without re-selecting the popup item.
-            fontFamilyField.stringValue = SettingsManager.shared.fontFamily
-            updateCustomModeVisibility()
-            refreshPreview()
-            openFontPanel(sender)
-        }
-    }
-
-    @objc private func fontFamilyFieldChanged(_ sender: NSTextField) {
-        let value = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
-        SettingsManager.shared.fontFamily = value
-        refreshPreview()
-        refreshCurrentThemeSwatch()
-    }
-
-    @objc private func openFontPanel(_ sender: Any?) {
-        // Without this, changeFont(_:) depends on this view controller being
-        // reachable via the responder chain at the moment a font is picked --
-        // which it usually isn't here, since nothing in this tab holds first
-        // responder and the panel itself takes key-window status from
-        // Settings the moment it opens. Setting the target directly makes
-        // delivery unconditional.
-        NSFontManager.shared.target = self
-        NSFontManager.shared.action = #selector(changeFont(_:))
-
-        let panel = NSFontPanel.shared
-        panel.worksWhenModal = true
-        if !pickedFontName.isEmpty,
-            let nsFont = NSFont(name: pickedFontName, size: NSFont.systemFontSize)
-        {
-            panel.setPanelFont(nsFont, isMultiple: false)
-        }
-        panel.makeKeyAndOrderFront(sender)
-    }
-
-    /// Responder-chain callback from NSFontPanel when user clicks a font.
-    @objc func changeFont(_ sender: Any?) {
-        guard let fontManager = sender as? NSFontManager else { return }
-        let currentFont =
-            NSFont(name: pickedFontName, size: NSFont.systemFontSize)
-            ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
-        let newFont = fontManager.convert(currentFont)
-        let psName = newFont.fontName
-        pickedFontName = psName
-        SettingsManager.shared.customFontName = psName
-        SettingsManager.shared.fontFamily = "'\(psName)', sans-serif"
-        fontPickerButton.title = newFont.displayName ?? psName
-        fontFamilyField.stringValue = SettingsManager.shared.fontFamily
-        selectFontPopupItem(forCurrentFontFamily: SettingsManager.shared.fontFamily)
-        updateCustomModeVisibility()
-        refreshPreview()
-        refreshCurrentThemeSwatch()
-    }
-
-    @objc private func themeSwatchClicked(_ sender: ThemeBigSwatchButton) {
-        SettingsManager.shared.currentThemeID = sender.theme.id
-        expandedThemeID = sender.theme.id
-        refreshAllTypographyControls()
-        rebuildThemeGrid()
-        refreshPreview()
-    }
 
     @objc private func lineHeightStepperChanged(_ sender: NSStepper) {
         SettingsManager.shared.lineHeight = sender.doubleValue
@@ -1468,379 +1272,24 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
 
     @objc private func resetToDefaults(_ sender: NSButton) {
         SettingsManager.shared.resetReaderToDefaults()
-        expandedThemeID = SettingsManager.shared.currentThemeID
-        refreshAllTypographyControls()
-        rebuildThemeGrid()
-        refreshPreview()
-    }
-
-    /// Re-reads every typography control (font popup/field, line height,
-    /// font size, margins) from SettingsManager -- needed both after Reset to
-    /// Defaults and after switching the active theme, since typography is now
-    /// per-theme (see Theme.fontFamily's doc comment) rather than one global
-    /// setting shared across every theme.
-    private func refreshAllTypographyControls() {
-        selectFontPopupItem(forCurrentFontFamily: SettingsManager.shared.fontFamily)
-        fontFamilyField.stringValue = SettingsManager.shared.fontFamily
-        refreshThemeGridSelection()
+        overrideFontField.stringValue = ""
+        overrideBackgroundField.stringValue = ""
+        overrideInkField.stringValue = ""
+        overrideLinkField.stringValue = ""
         lineHeightStepper.doubleValue = SettingsManager.shared.lineHeight
         lineHeightLabel.stringValue = String(format: "%.1f", SettingsManager.shared.lineHeight)
-        let px = Self.px(fromPercent: SettingsManager.shared.fontSizePercent)
-        fontSizeStepper.integerValue = px
-        fontSizeLabel.stringValue = "\(px)px"
+        fontSizeStepper.integerValue = 16
+        fontSizeLabel.stringValue = "16px"
         maxWidthStepper.integerValue = SettingsManager.shared.maxWidth
         maxWidthLabel.stringValue = "\(SettingsManager.shared.maxWidth)px"
         paddingHStepper.integerValue = SettingsManager.shared.paddingH
         paddingHLabel.stringValue = "\(SettingsManager.shared.paddingH)px"
         paddingVStepper.integerValue = SettingsManager.shared.paddingV
         paddingVLabel.stringValue = "\(SettingsManager.shared.paddingV)px"
-        updateCustomModeVisibility()
-    }
-
-    // MARK: - Theme add / edit / duplicate / delete
-
-    @objc private func addThemeClicked(_ sender: Any?) {
-        let base = SettingsManager.shared.themes.first
-        let light = base?.light ?? ThemeColorSet(background: "#ffffff", text: "#000000", link: "#0068da")
-        let dark = base?.dark ?? ThemeColorSet(background: "#1c1c1e", text: "#e8e0d4", link: "#5aa9ff")
-        let existingNames = Set(SettingsManager.shared.themes.map(\.name))
-        var name = "New Theme"
-        var suffix = 2
-        while existingNames.contains(name) {
-            name = "New Theme \(suffix)"
-            suffix += 1
-        }
-        var newTheme = Theme(name: name, light: light, dark: dark)
-        if let base {
-            newTheme.fontFamily = base.fontFamily
-            newTheme.fontSizePercent = base.fontSizePercent
-            newTheme.lineHeight = base.lineHeight
-            newTheme.maxWidth = base.maxWidth
-            newTheme.paddingH = base.paddingH
-            newTheme.paddingV = base.paddingV
-        }
-        SettingsManager.shared.addTheme(newTheme)
-        expandedThemeID = newTheme.id
-        refreshAllTypographyControls()
-        rebuildThemeGrid()
+        refreshSkinDescription()
         refreshPreview()
     }
 
-    @objc private func duplicateThemeMenuAction(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID else { return }
-        duplicateTheme(id: id)
-    }
-
-    @objc private func deleteThemeMenuAction(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID else { return }
-        deleteTheme(id: id)
-    }
-
-    private func duplicateTheme(id: UUID) {
-        guard let original = SettingsManager.shared.themes.first(where: { $0.id == id }) else { return }
-        var copy = Theme(name: original.name + " Copy", light: original.light, dark: original.dark)
-        copy.fontFamily = original.fontFamily
-        copy.fontSizePercent = original.fontSizePercent
-        copy.lineHeight = original.lineHeight
-        copy.maxWidth = original.maxWidth
-        copy.paddingH = original.paddingH
-        copy.paddingV = original.paddingV
-        SettingsManager.shared.addTheme(copy)
-        expandedThemeID = copy.id
-        refreshAllTypographyControls()
-        rebuildThemeGrid()
-        refreshPreview()
-    }
-
-    private func deleteTheme(id: UUID) {
-        SettingsManager.shared.deleteTheme(id)
-        if expandedThemeID == id { expandedThemeID = SettingsManager.shared.currentThemeID }
-        refreshAllTypographyControls()
-        rebuildThemeGrid()
-        refreshPreview()
-    }
-
-    /// Inline expanding editor shown directly beneath the selected swatch's
-    /// row: a name field with Duplicate/Delete off to the side, then
-    /// light/dark colors side by side so both are visible at once instead of
-    /// switching between them in separate wells inside a sheet. All fields
-    /// live-update the theme (name on every keystroke, colors on every pick)
-    /// and re-render the swatch immediately.
-    // swiftlint:disable:next function_body_length
-    private func makeInlineThemeEditor(for theme: Theme) -> NSView {
-        let outer = NSBox()
-        outer.boxType = .custom
-        outer.cornerRadius = 8
-        outer.borderWidth = 1
-        outer.borderColor = .separatorColor
-        outer.fillColor = .controlBackgroundColor
-        outer.translatesAutoresizingMaskIntoConstraints = false
-
-        let content = NSStackView()
-        content.orientation = .vertical
-        content.alignment = .leading
-        content.spacing = 16
-        content.translatesAutoresizingMaskIntoConstraints = false
-
-        // ── Name + Duplicate/Delete ─────────────────────────────────────────
-        let topRow = NSStackView()
-        topRow.orientation = .horizontal
-        topRow.alignment = .centerY
-        topRow.spacing = 10
-
-        let nameLabel = NSTextField(labelWithString: "Name")
-        let nameField = ThemeIdentifiedTextField(string: theme.name)
-        nameField.themeID = theme.id
-        nameField.widthAnchor.constraint(equalToConstant: 220).isActive = true
-        nameField.delegate = self
-
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        let duplicateButton = ThemeIdentifiedButton(
-            title: "Duplicate", target: self, action: #selector(duplicateThemeInlineClicked(_:)))
-        duplicateButton.themeID = theme.id
-        duplicateButton.bezelStyle = .rounded
-
-        let deleteButton = ThemeIdentifiedButton(
-            title: "Delete", target: self, action: #selector(deleteThemeInlineClicked(_:)))
-        deleteButton.themeID = theme.id
-        deleteButton.bezelStyle = .rounded
-        deleteButton.contentTintColor = .systemRed
-        deleteButton.isEnabled = !theme.isDefault && SettingsManager.shared.themes.count > 1
-
-        topRow.addArrangedSubview(nameLabel)
-        topRow.addArrangedSubview(nameField)
-        topRow.addArrangedSubview(spacer)
-        topRow.addArrangedSubview(duplicateButton)
-        topRow.addArrangedSubview(deleteButton)
-        content.addArrangedSubview(topRow)
-        topRow.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-
-        let divider = NSBox()
-        divider.boxType = .separator
-        content.addArrangedSubview(divider)
-        divider.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-
-        // ── Light / Dark colors, side by side ───────────────────────────────
-        let colorsRow = NSStackView()
-        colorsRow.orientation = .horizontal
-        colorsRow.alignment = .top
-        colorsRow.spacing = 32
-        colorsRow.distribution = .fillEqually
-
-        func colorColumn(title: String, colors: ThemeColorSet, isDark: Bool) -> NSView {
-            let column = NSStackView()
-            column.orientation = .vertical
-            column.alignment = .leading
-            column.spacing = 8
-
-            let header = NSTextField(labelWithString: title)
-            header.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-            header.textColor = .secondaryLabelColor
-            column.addArrangedSubview(header)
-
-            func row(_ label: String, field: ThemeColorField, value: String) -> NSView {
-                let r = NSStackView()
-                r.orientation = .horizontal
-                r.spacing = 8
-                let rowLabel = NSTextField(labelWithString: label)
-                rowLabel.widthAnchor.constraint(equalToConstant: 80).isActive = true
-                let well = ThemeColorWell()
-                well.themeID = theme.id
-                well.field = field
-                well.color = SettingsManager.color(fromCSS: value)
-                well.target = self
-                well.action = #selector(themeColorWellChanged(_:))
-                r.addArrangedSubview(rowLabel)
-                r.addArrangedSubview(well)
-                return r
-            }
-
-            column.addArrangedSubview(
-                row("Background", field: isDark ? .darkBackground : .lightBackground, value: colors.background))
-            column.addArrangedSubview(row("Text", field: isDark ? .darkText : .lightText, value: colors.text))
-            column.addArrangedSubview(row("Link", field: isDark ? .darkLink : .lightLink, value: colors.link))
-            return column
-        }
-
-        colorsRow.addArrangedSubview(colorColumn(title: "Light", colors: theme.light, isDark: false))
-        colorsRow.addArrangedSubview(colorColumn(title: "Dark", colors: theme.dark, isDark: true))
-        content.addArrangedSubview(colorsRow)
-        colorsRow.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-
-        outer.contentView?.addSubview(content)
-        NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: outer.contentView!.topAnchor, constant: 14),
-            content.leadingAnchor.constraint(equalTo: outer.contentView!.leadingAnchor, constant: 14),
-            content.trailingAnchor.constraint(equalTo: outer.contentView!.trailingAnchor, constant: -14),
-            content.bottomAnchor.constraint(equalTo: outer.contentView!.bottomAnchor, constant: -14),
-        ])
-
-        return outer
-    }
-
-    @objc private func duplicateThemeInlineClicked(_ sender: ThemeIdentifiedButton) {
-        guard let id = sender.themeID else { return }
-        duplicateTheme(id: id)
-    }
-
-    @objc private func deleteThemeInlineClicked(_ sender: ThemeIdentifiedButton) {
-        guard let id = sender.themeID else { return }
-        deleteTheme(id: id)
-    }
-
-    @objc private func themeColorWellChanged(_ sender: ThemeColorWell) {
-        guard let id = sender.themeID, let field = sender.field,
-            var theme = SettingsManager.shared.themes.first(where: { $0.id == id })
-        else { return }
-        let hex = SettingsManager.cssHex(from: sender.color)
-        switch field {
-        case .lightBackground: theme.light.background = hex
-        case .lightText: theme.light.text = hex
-        case .lightLink: theme.light.link = hex
-        case .darkBackground: theme.dark.background = hex
-        case .darkText: theme.dark.text = hex
-        case .darkLink: theme.dark.link = hex
-        }
-        SettingsManager.shared.updateTheme(theme)
-        themeButtons[id]?.refresh(with: theme)
-        refreshPreview()
-    }
-}
-
-extension AppearanceSettingsViewController: NSTextFieldDelegate {
-    /// Live-updates the theme name on every keystroke, same pattern as the
-    /// color wells below -- not gated on Enter/commit.
-    func controlTextDidChange(_ obj: Notification) {
-        guard let field = obj.object as? ThemeIdentifiedTextField, let id = field.themeID else { return }
-        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, var theme = SettingsManager.shared.themes.first(where: { $0.id == id }) else { return }
-        theme.name = name
-        SettingsManager.shared.updateTheme(theme)
-        themeButtons[id]?.refresh(with: theme)
-    }
-}
-
-// MARK: - Inline theme editor field/control identity helpers
-//
-// NSButton/NSTextField/NSColorWell have no built-in representedObject the way
-// NSMenuItem does, so these tiny subclasses carry the theme id (and, for
-// color wells, which of the six color fields) that each control edits.
-
-private enum ThemeColorField {
-    case lightBackground, lightText, lightLink, darkBackground, darkText, darkLink
-}
-
-private final class ThemeColorWell: NSColorWell {
-    var themeID: UUID?
-    var field: ThemeColorField?
-}
-
-private final class ThemeIdentifiedButton: NSButton {
-    var themeID: UUID?
-}
-
-private final class ThemeIdentifiedTextField: NSTextField {
-    var themeID: UUID?
-}
-
-// MARK: - ThemeBigSwatchButton
-
-/// A large Apple-Books-style theme swatch: "Aa" rendered in the theme's own
-/// background/text colors, with the theme's name below. Used in the 2x3 theme
-/// grid; selection is shown as an accent-colored ring.
-final class ThemeBigSwatchButton: NSButton {
-    private(set) var theme: Theme
-    static let swatchSize = NSSize(width: 110, height: 84)
-
-    private var isThemeSelected = false
-
-    init(theme: Theme) {
-        self.theme = theme
-        super.init(frame: .zero)
-        title = ""
-        isBordered = false
-        bezelStyle = .regularSquare
-        image = Self.swatchImage(for: theme, selected: false)
-        imageScaling = .scaleProportionallyUpOrDown
-        setAccessibilityLabel(theme.name)
-        // No fixed-width constraint: the grid's .fillEqually rows stretch each
-        // swatch to fill the panel's full width, so only height is pinned.
-        heightAnchor.constraint(equalToConstant: Self.swatchSize.height).isActive = true
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func setSelected(_ selected: Bool) {
-        guard selected != isThemeSelected else { return }
-        isThemeSelected = selected
-        image = Self.swatchImage(for: theme, selected: selected)
-        setAccessibilityValueDescription(selected ? "Selected" : nil)
-    }
-
-    /// Re-renders this swatch in place for a live name/color edit -- called
-    /// from the inline theme editor on every change, same as the rename flow
-    /// already did before the editor was inline.
-    func refresh(with theme: Theme) {
-        self.theme = theme
-        image = Self.swatchImage(for: theme, selected: isThemeSelected)
-        setAccessibilityLabel(theme.name)
-    }
-
-    /// Rendered against the swatch's own light colors and its own font — the
-    /// grid's meant to show what each theme looks like on its own terms, not
-    /// shift with the window's momentary system appearance while browsing the
-    /// list, and not all show whichever theme happens to be currently active.
-    /// Same best-effort CSS-stack-to-NSFont resolution as
-    /// AppearanceSettingsViewController.refreshPreview: takes the first family
-    /// name in the theme's own font stack and falls back to the system font
-    /// if AppKit doesn't have a font by that name.
-    private static func previewFont(for theme: Theme, ofSize size: CGFloat) -> NSFont {
-        let firstFamily =
-            theme.fontFamily
-            .split(separator: ",").first?
-            .trimmingCharacters(in: CharacterSet(charactersIn: " '\"")) ?? ""
-        return NSFont(name: firstFamily, size: size) ?? NSFont.systemFont(ofSize: size, weight: .medium)
-    }
-
-    private static func swatchImage(for theme: Theme, selected: Bool) -> NSImage {
-        let size = swatchSize
-        let image = NSImage(size: size)
-        image.lockFocus()
-
-        let bg = SettingsManager.color(fromCSS: theme.light.background)
-        let text = SettingsManager.color(fromCSS: theme.light.text)
-
-        let swatchRect = NSRect(x: 1, y: 20, width: size.width - 2, height: size.height - 22)
-        let path = NSBezierPath(roundedRect: swatchRect, xRadius: 8, yRadius: 8)
-        bg.setFill()
-        path.fill()
-        (selected ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
-        path.lineWidth = selected ? 2.5 : 1
-        path.stroke()
-
-        let aa = NSAttributedString(
-            string: "Aa",
-            attributes: [
-                .font: Self.previewFont(for: theme, ofSize: 26),
-                .foregroundColor: text,
-            ])
-        let aaSize = aa.size()
-        aa.draw(at: NSPoint(x: swatchRect.midX - aaSize.width / 2, y: swatchRect.midY - aaSize.height / 2))
-
-        let name = NSAttributedString(
-            string: theme.name,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 11),
-                .foregroundColor: NSColor.labelColor,
-            ])
-        let nameSize = name.size()
-        name.draw(at: NSPoint(x: size.width / 2 - nameSize.width / 2, y: 2))
-
-        image.unlockFocus()
-        return image
-    }
 }
 
 // MARK: - History Settings

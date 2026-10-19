@@ -1,0 +1,6 @@
+:root { --nnw-bg: #eee9e2; --nnw-ink: #272b31; --nnw-link: #386891; --fx-box: #ffffff; }
+@media (prefers-color-scheme: dark) { :root { --nnw-bg: #1d232d; --nnw-ink: #e4e7ec; --nnw-link: #91b7d8; --fx-box: #29313f; } }
+html { background: var(--nnw-bg); }
+#bodyContainer.articleBody { max-width: 46em; margin: 2em auto; padding: 1.5em; background: var(--fx-box); }
+#ao3Preface { font-family: sans-serif; }
+

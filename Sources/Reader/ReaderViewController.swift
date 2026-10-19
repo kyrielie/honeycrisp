@@ -35,6 +35,10 @@ final class ReaderViewController: NSViewController {
     private var didScheduleEmptyStateHintFade = false
 
     private var currentPackage: EPUBPackage?
+    private var currentReaderSkin: ReaderSkin? {
+        SettingsManager.shared.validateReaderSkinSelection()
+        return SkinStore.shared.skin(id: SettingsManager.shared.readerSkinID)
+    }
     private var currentEPUBURL: URL?
     private var extractionWorkDirectories: [URL] = []
 
@@ -348,22 +352,25 @@ final class ReaderViewController: NSViewController {
             selector: #selector(scheduleStructuralReload),
             name: .readerStructuralSettingsChanged, object: nil)
         applyDynamicSettings()
-        // Every theme now carries both a light and dark ThemeColorSet (see
-        // SettingsManager.effectiveColorSet), so a system appearance flip changes
-        // the active theme's actual colors, not just the .system special case.
-        appearanceObservation = NSApp.observe(\.effectiveAppearance, options: []) { [weak self] _, _ in
-            self?.applyCosmeticCSSUpdate()
-        }
     }
 
     override func viewDidAppear() {
         super.viewDidAppear()
+        observeWindowAppearanceChanges()
         view.window?.makeFirstResponder(webView)
         if currentMode == .paginated {
             installScrollWheelMonitorIfNeeded()
             installKeyDownMonitor()
         }
         fadeOutEmptyStateHintOnce()
+    }
+
+    private func observeWindowAppearanceChanges() {
+        appearanceObservation?.invalidate()
+        guard let window = view.window else { return }
+        appearanceObservation = window.observe(\.effectiveAppearance, options: [.initial, .new]) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.applyCosmeticCSSUpdate() }
+        }
     }
 
     /// Shows the supported-format reminder for a few seconds the first time an empty window
@@ -453,8 +460,9 @@ final class ReaderViewController: NSViewController {
                         : pkg.title
                     self.setToolbarTitle(title, author: pkg.author)
                     HistoryManager.shared.record(url: url, title: title)
-                    self.tocEntries = tocEntries
-                    self.tocSidebar.load(entries: tocEntries)
+                    let frontPlan = FrontMatterPlan.detect(in: pkg)
+                    self.tocEntries = SettingsManager.shared.fanficPreface ? self.filterTOC(tocEntries, hidden: frontPlan) : tocEntries
+                    self.tocSidebar.load(entries: self.tocEntries)
 
                     self.currentMode = SettingsManager.shared.defaultReadingMode
                     self.applyScrollbarVisibility()
@@ -467,11 +475,15 @@ final class ReaderViewController: NSViewController {
                         ? tocParser.firstSpineIndex(afterCoverIn: pkg)
                         : nil
                     let shouldSkipCover = !hasMeaningfulSavedPosition && coverStartIndex != nil
-                    let initialSpineIndex =
+                    let requestedInitialIndex =
                         shouldSkipCover
                         ? (coverStartIndex ?? 0)
                         : min(savedPosition?.spineIndex ?? 0, max(0, pkg.spineURLs.count - 1))
+                    let initialSpineIndex = SettingsManager.shared.fanficPreface
+                        ? (frontPlan?.isHidden(requestedInitialIndex) == true ? (frontPlan?.roles.firstIndex(of: .primaryPreface) ?? 0) : requestedInitialIndex)
+                        : requestedInitialIndex
                     self.currentSpineIndex = initialSpineIndex
+                    self.activeScrollSpineIndex = initialSpineIndex
                     if self.currentMode == .scroll && shouldSkipCover {
                         self.pendingInitialScrollSpineIndex = initialSpineIndex
                     }
@@ -479,9 +491,12 @@ final class ReaderViewController: NSViewController {
                         self.installScrollWheelMonitorIfNeeded()
                         self.installKeyDownMonitor()
                         if let savedPosition {
-                            self.pendingPaginatedRestorePosition =
-                                savedPosition.characterOffset > 0
-                                ? .characterOffset(savedPosition.characterOffset) : .start
+                            if savedPosition.spineIndex == initialSpineIndex {
+                                self.pendingPaginatedRestorePosition = savedPosition.characterOffset > 0
+                                    ? .characterOffset(savedPosition.characterOffset) : .start
+                            } else {
+                                self.pendingPaginatedRestorePosition = .start
+                            }
                         }
                     }
                     if let savedPosition, self.currentMode == .scroll, savedPosition.characterOffset > 0 {
@@ -517,16 +532,15 @@ final class ReaderViewController: NSViewController {
     private func renderScrollContent(pkg: EPUBPackage) {
         do {
             let parser = EPUBParser()
-            // "Format for AO3" maps to the same formatFirstChapter flag in SettingsManager
-            let format = SettingsManager.shared.formatFirstChapter
-            let removeIndents = SettingsManager.shared.removeParagraphIndents
-            let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared)
+            let skin = currentReaderSkin
+            let options = ChapterRenderOptions.current(from: SettingsManager.shared, package: pkg, skin: skin)
+            let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, skin: skin)
             lastBuiltCosmetics = cosmetics
             let html = try parser.buildScrollHTML(
                 from: pkg, cosmetics: cosmetics,
                 scrollRestoreJS: scrollRestoreBootstrapJS(),
-                formatFirstChapter: format, removeParagraphIndents: removeIndents,
-                hideImages: SettingsManager.shared.hideImages
+                options: options,
+                hideImages: SettingsManager.shared.hideImages, skin: skin
             )
             let indexURL = pkg.rootFolder.appendingPathComponent(Self.readerHTMLFilename)
             try html.write(to: indexURL, atomically: true, encoding: .utf8)
@@ -552,11 +566,30 @@ final class ReaderViewController: NSViewController {
             pendingScrollRestore = nil
             return "window.honeycrispNavigateToChapterFraction(\(restore.spineIndex), \(restore.fraction));"
         }
-        if let url = currentEPUBURL,
-            let saved = HistoryManager.shared.savedPosition(for: url),
-            saved.characterOffset > 0
+        let saved = currentEPUBURL.flatMap { HistoryManager.shared.savedPosition(for: $0) }
+        if SettingsManager.shared.fanficPreface, let saved, saved.anchorLayout == EPUBAnchor.legacyLayout,
+           saved.spineIndex == 0, let url = currentEPUBURL
         {
-            return "window.honeycrispNavigateToOffset(\(saved.characterOffset));"
+            let progress = HistoryManager.shared.readingProgress(for: url)
+            if progress >= 0 {
+                let fraction = Double(progress) / 100
+                return "window.scrollTo(0, Math.max(0, document.documentElement.scrollHeight - window.innerHeight) * \(fraction));"
+            }
+        }
+        if SettingsManager.shared.fanficPreface, let saved, let pkg = currentPackage,
+           let plan = FrontMatterPlan.detect(in: pkg), plan.roles.indices.contains(saved.spineIndex),
+           (plan.isHidden(saved.spineIndex) || plan.roles[saved.spineIndex] == .primaryPreface)
+        {
+            let primary = plan.roles.firstIndex(of: .primaryPreface) ?? 0
+            return "window.navigateToChapter(\(primary));"
+        }
+        switch ScrollRestorePlan.choose(saved: saved) {
+        case .none:
+            break
+        case .wholeDocument(let offset):
+            return "window.honeycrispNavigateToOffset(\(offset));"
+        case .chapter(let index, let offset):
+            return "window.honeycrispNavigateToChapterOffset(\(index), \(offset));"
         }
         if let initialSpineIndex = pendingInitialScrollSpineIndex {
             pendingInitialScrollSpineIndex = nil
@@ -574,6 +607,7 @@ final class ReaderViewController: NSViewController {
     /// `webView(_:didFinish:)`) just reads back the result.
     private func loadSpineItem(index: Int, restorePosition: RestorePosition, pkg: EPUBPackage) {
         guard index >= 0 && index < pkg.spineURLs.count else { return }
+        let index = resolveVisibleSpine(index)
         // Column CSS is computed from webView.bounds; before the window's first
         // real layout pass that bounds is whatever loadView's fixed placeholder
         // frame was, not the real viewport. Defer until viewDidLayout() has fired
@@ -587,9 +621,9 @@ final class ReaderViewController: NSViewController {
         pendingPaginatedRestorePosition = restorePosition
         do {
             let parser = EPUBParser()
-            let format = SettingsManager.shared.formatFirstChapter
-            let removeIndents = SettingsManager.shared.removeParagraphIndents
-            let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared)
+            let skin = currentReaderSkin
+            let options = ChapterRenderOptions.current(from: SettingsManager.shared, package: pkg, skin: skin)
+            let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, skin: skin)
             lastBuiltCosmetics = cosmetics
             let bounds = webView.bounds.isEmpty ? NSRect(x: 0, y: 0, width: 780, height: 920) : webView.bounds
             let html = try parser.buildPageHTML(
@@ -601,8 +635,8 @@ final class ReaderViewController: NSViewController {
                 maxWidth: CGFloat(SettingsManager.shared.maxWidth),
                 paddingH: CGFloat(SettingsManager.shared.paddingH),
                 paddingV: CGFloat(SettingsManager.shared.paddingV),
-                formatFirstChapter: format, removeParagraphIndents: removeIndents,
-                hideImages: SettingsManager.shared.hideImages
+                options: options,
+                hideImages: SettingsManager.shared.hideImages, skin: skin
             )
             let indexURL = pkg.rootFolder.appendingPathComponent(Self.readerHTMLFilename)
             try html.write(to: indexURL, atomically: true, encoding: .utf8)
@@ -622,9 +656,29 @@ final class ReaderViewController: NSViewController {
 
     private func flattenTOC(_ entry: TOCEntry) -> [TOCEntry] { [entry] + entry.children.flatMap(flattenTOC) }
 
+    private func filterTOC(_ entries: [TOCEntry], hidden plan: FrontMatterPlan?) -> [TOCEntry] {
+        guard let plan else { return entries }
+        return entries.compactMap { entry in
+            let path = entry.absoluteURL.standardizedFileURL.path
+            if let index = currentPackage?.spineURLs.firstIndex(where: { $0.standardizedFileURL.path == path }), plan.isHidden(index) {
+                return nil
+            }
+            return TOCEntry(title: entry.title, href: entry.href, absoluteURL: entry.absoluteURL,
+                            playOrder: entry.playOrder, depth: entry.depth,
+                            children: filterTOC(entry.children, hidden: plan))
+        }
+    }
+
+    private func resolveVisibleSpine(_ index: Int, forward: Bool = true) -> Int {
+        guard SettingsManager.shared.fanficPreface, let pkg = currentPackage,
+              let plan = FrontMatterPlan.detect(in: pkg) else { return index }
+        return plan.resolveVisible(from: index, forward: forward)
+    }
+
     private func navigate(to spineIndex: Int, offset: Int = 0, chapterLocalOffset: Bool = false) {
         guard let pkg = currentPackage, !pkg.spineURLs.isEmpty else { return }
-        let spineIndex = min(max(0, spineIndex), pkg.spineURLs.count - 1)
+        let boundedIndex = min(max(0, spineIndex), pkg.spineURLs.count - 1)
+        let spineIndex = resolveVisibleSpine(boundedIndex)
         let offset = max(0, offset)
         stopAutoScroll()
         stopSpeech()
@@ -767,7 +821,15 @@ final class ReaderViewController: NSViewController {
     }
 
     func navigate(to bookmark: ReadingBookmark) {
-        navigate(to: bookmark.spineIndex, offset: bookmark.characterOffset, chapterLocalOffset: currentMode == .scroll)
+        let target: Int
+        var offset = bookmark.characterOffset
+        if SettingsManager.shared.fanficPreface, let pkg = currentPackage, let plan = FrontMatterPlan.detect(in: pkg),
+           bookmark.spineIndex < plan.frontCount
+        {
+            target = plan.roles.firstIndex(of: .primaryPreface) ?? 0
+            offset = 0
+        } else { target = bookmark.spineIndex }
+        navigate(to: target, offset: offset, chapterLocalOffset: currentMode == .scroll)
     }
 
     func startReading() {
@@ -792,8 +854,9 @@ final class ReaderViewController: NSViewController {
     func navigateChapter(forward: Bool) {
         guard let pkg = currentPackage else { return }
         let index = currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex
-        let next = index + (forward ? 1 : -1)
-        guard pkg.spineURLs.indices.contains(next) else { return }
+        let requested = index + (forward ? 1 : -1)
+        guard pkg.spineURLs.indices.contains(requested) else { return }
+        let next = resolveVisibleSpine(requested, forward: forward)
         navigate(to: next)
     }
 
@@ -925,8 +988,9 @@ final class ReaderViewController: NSViewController {
     /// past the current spine item's last/first column.
     private func navigateSpine(forward: Bool) {
         guard let pkg = currentPackage else { return }
-        let next = currentSpineIndex + (forward ? 1 : -1)
-        guard next >= 0 && next < pkg.spineURLs.count else { return }
+        let requested = currentSpineIndex + (forward ? 1 : -1)
+        guard pkg.spineURLs.indices.contains(requested) else { return }
+        let next = resolveVisibleSpine(requested, forward: forward)
         loadSpineItem(index: next, restorePosition: forward ? .start : .end, pkg: pkg)
     }
 
@@ -1138,8 +1202,8 @@ final class ReaderViewController: NSViewController {
     /// Subsequent changes go through `applyCosmeticCSSUpdate` or
     /// `scheduleStructuralReload` instead, not this.
     @objc func applyDynamicSettings() {
-        applyCosmeticCSSUpdate()
         applyWindowAppearance()
+        applyCosmeticCSSUpdate()
     }
 
     /// JS-only live patch of the `#honeycrisp-vars` `<style>` element's textContent —
@@ -1148,7 +1212,7 @@ final class ReaderViewController: NSViewController {
     /// `EPUBParser.readerVarsCSS` function buildScrollHTML/buildPageHTML use for the
     /// initial paint, so this can't drift from what a fresh load would produce.
     @objc private func applyCosmeticCSSUpdate() {
-        let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared)
+        let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, skin: currentReaderSkin)
         let cssLiteral = Self.jsStringLiteral(EPUBParser.readerVarsCSS(cosmetics))
         let js = """
             (function() {
@@ -1163,13 +1227,8 @@ final class ReaderViewController: NSViewController {
             // scroll listener won't fire on its own here, so recompute explicitly.
             webView.evaluateJavaScript("window.reportPageInfo && window.reportPageInfo();", completionHandler: nil)
         }
-        // applyWindowAppearance() is NOT called here. It sets NSApp.appearance,
-        // which is itself observed via KVO on effectiveAppearance (see viewDidLoad)
-        // and routes back into this method -- calling it from this hot path is an
-        // infinite recursion (NSApp.appearance = nil -> KVO fires even though the
-        // value didn't change -> observeValue -> applyCosmeticCSSUpdate -> ...).
-        // Every theme now supplies both light and dark colors, so the window's
-        // appearance only ever needs to be set once, from applyDynamicSettings.
+        // Do not reapply app appearance from this observer path. Changing it
+        // emits the same KVO notification that calls this method.
     }
 
     /// Encodes a Swift string as a safe JS string literal (JSON string syntax is
@@ -1185,11 +1244,7 @@ final class ReaderViewController: NSViewController {
     }
 
     private func applyWindowAppearance() {
-        // Every theme now supplies both a light and a dark ThemeColorSet (see
-        // SettingsManager.effectiveColorSet), so the window always follows the
-        // system appearance rather than forcing aqua/darkAqua per theme the way
-        // the old fixed-case System/Light/Dark/Sepia/Custom model needed to.
-        NSApp.appearance = nil
+        SettingsManager.applyAppearanceOverride(SettingsManager.shared.appearanceMode)
     }
 
     /// Debounced (~0.15s) full reload for structural settings changes (formatting
@@ -1203,11 +1258,9 @@ final class ReaderViewController: NSViewController {
             // (scrollRestoreBootstrapJS in scroll mode, pendingPaginatedRestorePosition
             // in paginated mode -- both read from HistoryEntry) lands back where the
             // reader actually was, not wherever they were the last time the book was opened.
-            self.webView.evaluateJavaScript(
-                "window.honeycrispCurrentCharacterOffset ? window.honeycrispCurrentCharacterOffset() : 0"
-            ) { result, _ in
-                if let offset = result as? Int {
-                    let spineIndex = self.currentMode == .scroll ? 0 : self.currentSpineIndex
+            self.webView.evaluateJavaScript(self.currentPositionOffsetJavaScript) { result, _ in
+                if let offset = result as? Int, offset >= 0 {
+                    let spineIndex = self.currentMode == .scroll ? self.activeScrollSpineIndex : self.currentSpineIndex
                     HistoryManager.shared.updatePosition(url: url, spineIndex: spineIndex, characterOffset: offset)
                 }
                 self.renderCurrentContent()
@@ -1238,16 +1291,19 @@ final class ReaderViewController: NSViewController {
 
     // MARK: - Position save/restore
 
-    /// spineIndex is 0 in scroll mode (the whole book is one merged document) and
-    /// currentSpineIndex in paginated mode. honeycrispCurrentCharacterOffset (Patch
-    /// 0005) is embedded in both buildScrollHTML's and buildPageHTML's readerJS, and
-    /// caretRangeFromPoint works the same regardless of which axis is scrolling, so
-    /// one save path serves both modes without a separate paginated-only offset
-    /// scheme.
+    /// Scroll mode stores the active spine item and its local offset. Paginated mode
+    /// continues to store the single rendered item's offset.
     func didReceivePosition(_ offset: Int) {
-        guard let url = currentEPUBURL else { return }
+        guard offset >= 0, let url = currentEPUBURL else { return }
         HistoryManager.shared.updatePosition(
-            url: url, spineIndex: currentMode == .scroll ? 0 : currentSpineIndex, characterOffset: offset)
+            url: url, spineIndex: currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex,
+            characterOffset: offset)
+    }
+
+    private var currentPositionOffsetJavaScript: String {
+        currentMode == .scroll
+            ? "window.honeycrispCurrentChapterCharacterOffset ? window.honeycrispCurrentChapterCharacterOffset() : -1"
+            : "window.honeycrispCurrentCharacterOffset ? window.honeycrispCurrentCharacterOffset() : -1"
     }
 
     private func startPositionSaveTimer() {
@@ -1266,11 +1322,9 @@ final class ReaderViewController: NSViewController {
     /// drive readerJS's debounced-scroll save path the way scroll mode's do.
     func flushPositionSave() {
         guard let url = currentEPUBURL else { return }
-        let spineIndex = currentMode == .scroll ? 0 : currentSpineIndex
-        webView.evaluateJavaScript(
-            "window.honeycrispCurrentCharacterOffset ? window.honeycrispCurrentCharacterOffset() : 0"
-        ) { result, _ in
-            guard let offset = result as? Int else { return }
+        let spineIndex = currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex
+        webView.evaluateJavaScript(currentPositionOffsetJavaScript) { result, _ in
+            guard let offset = result as? Int, offset >= 0 else { return }
             HistoryManager.shared.updatePosition(url: url, spineIndex: spineIndex, characterOffset: offset)
         }
     }
@@ -1315,36 +1369,25 @@ final class ReaderViewController: NSViewController {
     /// treats each spine item as an equal-sized slice of the book -- matching
     /// the existing tolerance for imprecision when switching reading modes.
     ///
-    /// Gated on "Format for AO3" (SettingsManager.formatFirstChapter): AO3's
-    /// EPUB export brackets the actual story with a short title-page spine
-    /// item and a short end-notes/afterword spine item. Weighing those as
-    /// full "1 of N" slices like any real chapter skews percent noticeably on
-    /// short works -- leaving the title page for the first real chapter
-    /// already counts as finishing a whole spine-slice, and progress is
-    /// pinned to 100% for however long the reader is on the end-notes page.
-    /// With that setting on, the first and last spine items are excluded
-    /// from the slice count entirely: the title page reads as 0% and the
-    /// end-notes page reads as 100%, and every real chapter in between is
-    /// weighed against the remaining spineCount - 2 items instead of the
-    /// full spineCount. Not applied when there are 2 or fewer spine items
-    /// (nothing would be left to weigh), and not applied at all with the
-    /// setting off, since this bracketing convention is specific to AO3-style
-    /// exports and would misread an ordinary EPUB's real first/last chapters.
+    /// Detected front and back matter are excluded from the visible progress span whether or not
+    /// generated replacement content is enabled. Unknown books keep their full spine span.
     private func reportPaginatedProgress(column: Int?, totalColumns: Int?) {
         guard let column, let totalColumns, totalColumns > 0, let pkg = currentPackage else { return }
         let spineCount = max(1, pkg.spineURLs.count)
         let withinSpineFraction = min(1.0, Double(column + 1) / Double(totalColumns))
-        let excludeBookends = SettingsManager.shared.formatFirstChapter && spineCount > 2
+        let plan = FrontMatterPlan.detect(in: pkg)
+        let front = plan?.frontCount ?? 0
+        let back = plan?.backCount ?? 0
+        let effective = max(1, spineCount - front - back)
 
         let percent: Int
-        if excludeBookends && currentSpineIndex == 0 {
+        if plan != nil && currentSpineIndex < front {
             percent = 0
-        } else if excludeBookends && currentSpineIndex == spineCount - 1 {
+        } else if plan != nil && currentSpineIndex >= spineCount - back {
             percent = 100
         } else {
-            let effectiveSpineCount = excludeBookends ? spineCount - 2 : spineCount
-            let effectiveSpineIndex = excludeBookends ? currentSpineIndex - 1 : currentSpineIndex
-            percent = Int(((Double(effectiveSpineIndex) + withinSpineFraction) / Double(effectiveSpineCount)) * 100)
+            let effectiveSpineIndex = plan == nil ? currentSpineIndex : currentSpineIndex - front
+            percent = Int(((Double(effectiveSpineIndex) + withinSpineFraction) / Double(effective)) * 100)
         }
         didReceiveProgress(percent)
     }
@@ -1372,7 +1415,11 @@ final class ReaderViewController: NSViewController {
         guard currentMode == .paginated else { return }
         let spineCount = currentPackage?.spineURLs.count ?? 1
         let page = paginatedCurrentColumn + 1
-        setPageCountText("\(page)/\(paginatedTotalColumns) \(currentSpineIndex + 1)/\(spineCount)")
+        let ordinal: (position: Int, total: Int)?
+        if SettingsManager.shared.fanficPreface, let package = currentPackage, let plan = FrontMatterPlan.detect(in: package) {
+            ordinal = plan.visibleOrdinal(of: currentSpineIndex)
+        } else { ordinal = nil }
+        setPageCountText("\(page)/\(paginatedTotalColumns) \(ordinal?.position ?? currentSpineIndex + 1)/\(ordinal?.total ?? spineCount)")
     }
 
     private func setPageCountText(_ text: String) {
@@ -1670,9 +1717,11 @@ extension ReaderViewController: TOCSidebarDelegate {
     func tocSidebar(_ sidebar: TOCSidebarViewController, didSelectEntry entry: TOCEntry) {
         guard let pkg = currentPackage else { return }
         let target = entry.absoluteURL.standardizedFileURL
-        guard let idx = pkg.spineURLs.firstIndex(where: { $0.standardizedFileURL.path == target.path }) else { return }
-        updateCurrentChapter(for: target)
-        if let fragment = URLComponents(url: target, resolvingAgainstBaseURL: false)?.fragment, !fragment.isEmpty,
+        guard let rawIndex = pkg.spineURLs.firstIndex(where: { $0.standardizedFileURL.path == target.path }) else { return }
+        let idx = resolveVisibleSpine(rawIndex)
+        let resolvedURL = pkg.spineURLs[idx]
+        updateCurrentChapter(for: resolvedURL)
+        if idx == rawIndex, let fragment = URLComponents(url: target, resolvingAgainstBaseURL: false)?.fragment, !fragment.isEmpty,
             let encoded = EPUBParser.javaScriptStringLiteral(fragment)
         {
             if currentMode == .paginated && currentSpineIndex != idx {
@@ -1711,8 +1760,9 @@ extension ReaderViewController: SearchBarDelegate {
                         ?? "Chapter \(index + 1)"
                     return (index, chapter)
                 })
+            let options = ChapterRenderOptions.current(from: SettingsManager.shared, package: package, skin: self.currentReaderSkin)
             DispatchQueue.global(qos: .userInitiated).async {
-                let results = EPUBParser().searchResults(for: term, in: package)
+                let results = EPUBParser().searchResults(for: term, in: package, options: options)
                 DispatchQueue.main.async { [weak self, weak bar] in
                     guard let self, let bar, self.pendingSearchTerm == term else { return }
                     bar.showResults(results, chapterTitles: titleMap)
@@ -1785,12 +1835,13 @@ extension ReaderViewController: AVSpeechSynthesizerDelegate {
             return
         }
         let generation = speechQueueGeneration
+        let options = ChapterRenderOptions.current(from: SettingsManager.shared, package: package, skin: currentReaderSkin)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let parser = EPUBParser()
             var candidate = nextIndex
             var text: String?
             while package.spineURLs.indices.contains(candidate), text == nil {
-                text = parser.speechText(in: package, at: candidate)
+                text = parser.speechText(in: package, at: candidate, options: options)
                 if text == nil { candidate += 1 }
             }
             let followingIndex = candidate + 1
@@ -1840,7 +1891,7 @@ extension ReaderViewController: WKNavigationDelegate {
         // async load) window it produced a color flip after the correct colors had
         // already painted. Only re-sync if lastBuiltCosmetics actually disagrees with
         // the current settings snapshot.
-        let currentCosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared)
+        let currentCosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, skin: currentReaderSkin)
         if lastBuiltCosmetics != currentCosmetics {
             applyCosmeticCSSUpdate()
         }

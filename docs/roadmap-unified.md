@@ -13,14 +13,14 @@ Decisions recorded in round 1 (owner replies): D1 yes, D2 later, D3 accept sugge
 D6 no Developer ID. D5 has a recommendation awaiting confirmation. Items not touched by those decisions
 remain unapproved. Round 2: PDF and other formats stay in scope (reader storage format unknown). Round 3:
 D4 stays closed; series live in the same directory as the book, plus folders the user adds; the
-optional styling feature is a Honeycrisp-added, source-style preface (W14), not restored publisher CSS.
+optional styling features are installed reader skins and reader overrides, plus a Honeycrisp-added preface (W14); publisher CSS from the book is not loaded.
 Sister-app reference: `reader-theming-implementation-plan.md` (Ambrosia), mapped in section 8. Section 9
 has the full table.
 
 ## 1. Product boundaries (unchanged)
 
 Native macOS reader for local files. AppKit and WebKit. One window, view controller, and `WKWebView`
-per book. `UserDefaults` persistence only. Non-goals: library view, cross-book search, publisher CSS,
+per book. `UserDefaults` persistence only. Non-goals: library view, cross-book search, publisher CSS from the book,
 quote sharing, per-window or per-book reading mode, translation, cloud or AI voices, sync, device
 delivery, export, statistics and goals. No generic `Document` abstraction until a second format
 exists (Phase W6 is the trigger).
@@ -122,17 +122,16 @@ Order is deliberate: smallest and most testable first.
 - W2.4 (optional, M) `WKURLSchemeHandler` for resources in place of the regex in `rewriteResourceURLs`.
   Only if W2.3 or rewrite gaps (single-quoted and unquoted attributes) prove painful.
 
-- W2.5 (S, proposed, D14) CSS value sanitizer, from the Ambrosia plan Phase 1. A pure type that
+- W2.5 (S, implemented) CSS value sanitizer, from the Ambrosia plan Phase 1. A pure type that
   validates hex colors, font-family text, and numeric ranges before `readerVarsCSS` interpolates them
-  (font names from the custom font store and persisted theme colors are the reachable inputs). Invalid
+  (font names from settings and reader colors are the reachable inputs). Invalid
   values fall back to defaults, never partially cleaned. Pure, so testable even though `SettingsManager`
   has no tests. Independent of D2. Read how `effective*CSS` values are produced first.
-- W2.6 (S, proposed, D14) Chapter-body active content, from Ambrosia plan Phase 2: remove body `<script>`,
+- W2.6 (S, implemented) Chapter-body active content, from Ambrosia plan Phase 2: remove body `<script>`,
   `on*=` attributes (quoted and unquoted), and turn `javascript:` hrefs into `#`, in the shared
   `extractedChapterBody` path so both modes get it. Reader scripts live outside the extracted body, so
   they are unaffected. This is a partial mitigation only (regex, not a parser) and does not replace W2.3.
-  No visible change for normal books. Inline `style=` and body `<style>` removal is a separate styling
-  policy question (D15) because it changes how existing books look.
+  Inline styling is narrowly filtered, with the property policy documented in the fanfic-preface plan.
 - Note on porting Ambrosia Phase 3 (content JS off): not directly portable. Ambrosia delivers its scripts
   through `evaluateJavaScript`; Honeycrisp's `readerJS` and `PaginationJS` are inline `<script>` tags, so
   disabling content JS would stop them. This is why W2.3 stays expensive and deferred.
@@ -148,7 +147,7 @@ Order is deliberate: smallest and most testable first.
   boundaries. Tests: `<p>a.</p><p>b</p>`, headings, and a regression that
   `testSearchResultsRetainChapterAndUTF16TextOffsets` still passes.
 
-- W3.3 (S, proposed, pending samples) Fake `&nbsp;` indents. `stripLeadingIndentWhitespace` skips
+- W3.3 (S, implemented) Fake `&nbsp;` indents. `stripLeadingIndentWhitespace` skips
   `&nbsp;` by design. Extend to `&nbsp;`, `&#160;`, `&#xA0;`, U+00A0 only if samples show plain-text
   conversions use them. Stays behind the existing remove-indents setting. Offset effect: removing leading
   characters shifts offsets in affected chapters, so it needs the W1.3 layout-version rule and a test.
@@ -304,35 +303,25 @@ same directory as the book.
 ### W13. Polish and deferred (Phase 7, Phase 6, requests 5, 14, 20, 25)
 
 Icon exploration and small-size review (artwork independent of reader code); Settings follow-ups
-(Appearance refresh after Reset All, swatch accessibility, system spacing); Nectar theme review without
-porting its theme system. Deferred: HTML and TXT (Phase 6), highlights and notes, reading reminders
+(Appearance refresh after Reset All, system spacing); additional gallery skin review without
+bundling the full gallery. Deferred: HTML and TXT (Phase 6), highlights and notes, reading reminders
 and statistics, localization.
 
-### W14. Source-style preface (new, optional, D12 and D13)
+### W14. Source-style preface (implemented, optional)
 
 Goal: an optional setting that makes the start of a book look like the source site's work header
 (AO3 first, other sites later). Off by default, where a book looks like a normal EPUB in Honeycrisp's
 reader styling. Global setting, not per book. This is Honeycrisp-authored styling, not the book's CSS.
 
-Reference: Ambrosia's theming plan. Reuse its rules, not its bundle system: colors stay owned by the user's
-theme; the preface style may set typography and decoration only; accents are derived from the theme (for
-example its link color) and checked for contrast; no network, no web fonts, system fonts only; any CSS
-text must pass the sanitizer (W2.5). Not ported: theme bundles, `tokens.json`, importable themes
-(Honeycrisp already has in-app editable themes).
+Implementation: parse recognized AO3, FicHub, FicLab and WebToEpub front matter into a common model and
+render escaped Honeycrisp HTML. The global toggle is off by default and replaces the retired
+"Format for AO3" option. Spine entries remain as hidden placeholders. Skins are `.nnwtheme` bundles;
+global overrides apply after skin CSS. See `docs/skins.md`.
 
-Approach options (D12):
-- A (recommended first). Restyle the EPUB's own preface in place when a template is recognized, using
-  scoped CSS keyed on markup observed in samples. Adds no text, so character offsets, search, and saved
-  positions are unaffected. Hook point: the existing first-spine-item handling (`stripPrefaceHeading`).
-- B (later). Synthesize a preface from parsed metadata when the book has none. Adds text nodes, so it
-  must be excluded from offset counting or tied to the layout-version rule (W1.3), with an offset test
-  before shipping. All metadata text must be HTML-escaped; summaries are untrusted.
-- Both go through the shared `extractedChapterBody` so scroll and paginated modes cannot drift.
+The implementation uses parse-then-render through the shared `extractedChapterBody`, which is also used
+by search and speech. Incomplete or unrecognized metadata leaves the original content intact.
 
-Prerequisites: samples inspected (W5) for real markers; W2.5; non-goal wording agreed (D13).
-Tests: template detection on synthetic fixtures modeled on structure, generic fallback leaves output
-unchanged, offsets identical with the setting on and off (approach A), contrast check for derived accents
-in every built-in theme.
+Prerequisites satisfied by the approved fanfic-preface and skins plan; synthetic fixtures cover parser paths.
 
 Parked, not requested: keeping a safe allowlist of author inline formatting (Ambrosia plan Phase 6). Revisit
 only if samples show centered dividers or alignment are being lost.
@@ -431,9 +420,9 @@ voices, Tomo code reuse (AGPL).
 | D9 | Static LGPL linking via `libmobi-swift` | Open (needed at W7) |
 | D10 | Navigation history (Back and Forward) as a new feature, with placement | Open (needed before W4) |
 | D11 | Word-level speech highlighting, off by default | Open (needed at W10.3) |
-| D12 | Preface approach: A restyle in place, B synthesize from metadata, or both (A first recommended) | Open (W14) |
-| D13 | Edit non-goal wording in `CLAUDE.md`, README, roadmap: "no publisher CSS from the book; an optional Honeycrisp-authored source-style preface is allowed" | Open (W14) |
-| D14 | Approve W2.5 (CSS value sanitizer) and W2.6 (strip body scripts and handlers) as security work | Open |
+| D12 | Preface approach: parse and render metadata, fail closed | Decided and implemented |
+| D13 | Edit non-goal wording in `CLAUDE.md`, README, roadmap | Decided and implemented |
+| D14 | Approve W2.5 (CSS value sanitizer) and W2.6 (strip body scripts and handlers) as security work | Implemented |
 | D15 | Policy for inline `style=` and body `<style>` in chapters: leave, or strip to match "we strip styling" | Open, needs samples |
 | D16 | Approve "Series folders" as a new Settings feature (security-scoped folder bookmarks, in-memory scan) and its placement | Open (W12) |
 | D17 | DRM rule: real markers plus any encrypted resource using a non-font-obfuscation algorithm (superset of Readium's LCP and ADEPT markers) | Open (PR4) |

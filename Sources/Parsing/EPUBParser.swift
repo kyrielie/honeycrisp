@@ -17,11 +17,12 @@ struct EPUBPackage {
     let version: String?
     let navigationURL: URL?
     let landmarks: [EPUBLandmark]
+    let metadata: [String: [String]]
 
     init(
         rootFolder: URL, spineURLs: [URL], title: String, author: String, coverURL: URL?,
         manifest: [String: EPUBManifestItem] = [:], spine: [EPUBSpineItem]? = nil, version: String? = nil,
-        navigationURL: URL? = nil, landmarks: [EPUBLandmark] = []
+        navigationURL: URL? = nil, landmarks: [EPUBLandmark] = [], metadata: [String: [String]] = [:]
     ) {
         self.rootFolder = rootFolder
         self.spineURLs = spineURLs
@@ -33,6 +34,7 @@ struct EPUBPackage {
         self.version = version
         self.navigationURL = navigationURL
         self.landmarks = landmarks
+        self.metadata = metadata
     }
 }
 
@@ -83,18 +85,28 @@ struct ReaderCosmeticSettings: Equatable {
     var lineHeight: Double
     var maxWidth: Int
     var paddingH: Int
+    var paddingV: Int
+    var paragraphIndent: Double
+    var paragraphSpacing: Double
+    var justify: Bool
+    var hyphenate: Bool
     var allowLinkClicks: Bool
 
     /// Every value passes through `ReaderCSSSanitizer`, so the initial render and the live patch both
     /// get valid CSS no matter what is persisted. Hit colors derive from the sanitized page colors.
-    static func current(from settings: SettingsManager) -> ReaderCosmeticSettings {
-        let background = ReaderCSSSanitizer.hexColor(settings.effectiveBackgroundCSS, fallback: ReaderCSSSanitizer.fallbackBackground)
-        let text = ReaderCSSSanitizer.hexColor(settings.effectiveTextCSS, fallback: ReaderCSSSanitizer.fallbackText)
-        let link = ReaderCSSSanitizer.hexColor(settings.effectiveLinkCSS, fallback: ReaderCSSSanitizer.fallbackLink)
+    static func current(from settings: SettingsManager, skin: ReaderSkin? = nil) -> ReaderCosmeticSettings {
+        settings.migrateReaderOverridesIfNeeded()
+        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let tokens = isDark ? (skin?.dark ?? skin?.light) : skin?.light
+        let currentColors = settings.effectiveColorSet
+        let background = ReaderCSSSanitizer.hexColor(settings.readerBackgroundOverride.isEmpty ? (tokens?.background ?? currentColors.background) : settings.readerBackgroundOverride, fallback: ReaderCSSSanitizer.fallbackBackground)
+        let text = ReaderCSSSanitizer.hexColor(settings.readerInkOverride.isEmpty ? (tokens?.ink ?? currentColors.text) : settings.readerInkOverride, fallback: ReaderCSSSanitizer.fallbackText)
+        let link = ReaderCSSSanitizer.hexColor(settings.readerLinkOverride.isEmpty ? (tokens?.link ?? currentColors.link) : settings.readerLinkOverride, fallback: ReaderCSSSanitizer.fallbackLink)
+        let skinFont = skin?.family.map { ReaderCSSSanitizer.fontFamily($0) } ?? settings.effectiveReaderFontFamily
         let hit = ReaderContrast.hitColors(background: background, text: text)
         return ReaderCosmeticSettings(
             fontSizePercent: ReaderCSSSanitizer.fontSizePercent(settings.fontSizePercent),
-            fontFamily: ReaderCSSSanitizer.fontFamily(settings.fontFamily),
+            fontFamily: ReaderCSSSanitizer.fontFamily(settings.readerFontOverride.isEmpty ? skinFont : settings.readerFontOverride),
             backgroundCSS: background,
             textCSS: text,
             linkCSS: link,
@@ -105,6 +117,11 @@ struct ReaderCosmeticSettings: Equatable {
             lineHeight: ReaderCSSSanitizer.lineHeight(settings.lineHeight),
             maxWidth: ReaderCSSSanitizer.maxWidth(settings.maxWidth),
             paddingH: ReaderCSSSanitizer.paddingH(settings.paddingH),
+            paddingV: ReaderCSSSanitizer.paddingV(settings.paddingV),
+            paragraphIndent: min(3, max(0, settings.paragraphIndent)),
+            paragraphSpacing: min(3, max(0, settings.paragraphSpacing)),
+            justify: settings.justifyReaderText,
+            hyphenate: settings.hyphenateReaderText,
             allowLinkClicks: settings.allowReaderLinkClicks
         )
     }
@@ -227,14 +244,18 @@ final class EPUBParser: NSObject {
         throw EPUBParseError.opfNotFound
     }
 
-    func searchResults(for term: String, in package: EPUBPackage, limit: Int = 250) -> [BookSearchResult] {
+    /// `options` must be the same value the renderer uses (`ChapterRenderOptions.current(from:)`), so the
+    /// offsets returned here line up with the DOM text. Capture it on the main thread before dispatching.
+    func searchResults(
+        for term: String, in package: EPUBPackage, limit: Int = 250,
+        options: ChapterRenderOptions = .plain
+    ) -> [BookSearchResult] {
         let query = term.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return [] }
         var results: [BookSearchResult] = []
         for index in package.spineURLs.indices {
             guard let html = try? Self.extractedChapterBody(
-                from: package, index: index, base: package.rootFolder,
-                formatFirstChapter: false, removeParagraphIndents: false
+                from: package, index: index, base: package.rootFolder, options: options
             ) else { continue }
             let text = Self.searchableText(fromHTML: html)
             let nsText = text as NSString
@@ -258,38 +279,65 @@ final class EPUBParser: NSObject {
         return results
     }
 
-    func speechText(in package: EPUBPackage, at index: Int) -> String? {
+    func speechText(in package: EPUBPackage, at index: Int, options: ChapterRenderOptions = .plain) -> String? {
         guard package.spineURLs.indices.contains(index),
               let html = try? Self.extractedChapterBody(
                 from: package,
                 index: index,
                 base: package.rootFolder,
-                formatFirstChapter: false,
-                removeParagraphIndents: false
+                options: options
               ) else { return nil }
         let text = Self.searchableText(fromHTML: html)
         return text.isEmpty ? nil : text
     }
 
-    private static func searchableText(fromHTML html: String) -> String {
+    /// Plain text of an HTML fragment as the offset-bearing features (search, speech) see it. Drops
+    /// `<style>`/`<script>` content, removes tags, then decodes only the entities listed in
+    /// `decodeHTMLEntities`. Emitted HTML must stay inside that set so DOM text and this text agree.
+    static func searchableText(fromHTML html: String) -> String {
         var text = html.replacingOccurrences(of: #"(?is)<(script|style)[^>]*>.*?</\1>"#, with: "", options: .regularExpression)
         text = text.replacingOccurrences(of: #"(?s)<[^>]+>"#, with: "", options: .regularExpression)
-        let entities: [(String, String)] = [
-            ("&nbsp;", "\u{00a0}"), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
-            ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
-        ]
-        for (entity, value) in entities { text = text.replacingOccurrences(of: entity, with: value, options: .caseInsensitive) }
-        text = text.replacingOccurrences(of: #"&#(\d+);"#, with: { _, matched in
-            let digits = matched.dropFirst(2).dropLast()
-            guard let value = UInt32(digits), let scalar = UnicodeScalar(value) else { return "" }
-            return String(scalar)
-        })
-        text = text.replacingOccurrences(of: #"&#x([0-9a-f]+);"#, with: { _, matched in
-            let digits = matched.dropFirst(3).dropLast()
-            guard let value = UInt32(digits, radix: 16), let scalar = UnicodeScalar(value) else { return "" }
-            return String(scalar)
-        })
-        return text
+        return decodeHTMLEntities(text)
+    }
+
+    // swiftlint:disable:next force_try
+    private static let entityRegex = try! NSRegularExpression(
+        pattern: #"&(?:#([0-9]+)|#x([0-9a-f]+)|(nbsp|amp|lt|gt|quot|apos));"#,
+        options: [.caseInsensitive]
+    )
+
+    /// Decodes numeric references and `&nbsp; &amp; &lt; &gt; &quot; &apos;` in a single left-to-right
+    /// pass, so `&amp;lt;` becomes the four characters `&lt;` (a sequential replace would decode it twice).
+    /// Numeric references that are not valid Unicode scalars are dropped.
+    static func decodeHTMLEntities(_ text: String) -> String {
+        let ns = text as NSString
+        let matches = entityRegex.matches(in: text, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return text }
+        var out = ""
+        var cursor = 0
+        for match in matches {
+            out += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            cursor = match.range.location + match.range.length
+            let decimal = match.range(at: 1)
+            let hex = match.range(at: 2)
+            let named = match.range(at: 3)
+            if decimal.location != NSNotFound {
+                if let value = UInt32(ns.substring(with: decimal)), let scalar = UnicodeScalar(value) { out.unicodeScalars.append(scalar) }
+            } else if hex.location != NSNotFound {
+                if let value = UInt32(ns.substring(with: hex), radix: 16), let scalar = UnicodeScalar(value) { out.unicodeScalars.append(scalar) }
+            } else if named.location != NSNotFound {
+                switch ns.substring(with: named).lowercased() {
+                case "nbsp": out += "\u{00a0}"
+                case "amp": out += "&"
+                case "lt": out += "<"
+                case "gt": out += ">"
+                case "quot": out += "\""
+                default: out += "'"
+                }
+            }
+        }
+        out += ns.substring(from: cursor)
+        return out
     }
 
     // swiftlint:disable:next cyclomatic_complexity function_body_length
@@ -302,6 +350,19 @@ final class EPUBParser: NSObject {
         let authorNode = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='creator']")).first as? XMLElement
         let bookTitle = titleNode?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let bookAuthor = authorNode?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let metadataNodes = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*")) as? [XMLElement] ?? []
+        var metadata: [String: [String]] = [:]
+        for node in metadataNodes {
+            let key = (node.localName ?? node.name ?? "").lowercased()
+            if key == "meta", let metaName = node.attribute(forName: "name")?.stringValue?.lowercased(),
+                let content = node.attribute(forName: "content")?.stringValue, !content.isEmpty
+            {
+                metadata[metaName, default: []].append(content)
+            }
+            let value = node.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !key.isEmpty, !value.isEmpty else { continue }
+            metadata[key, default: []].append(value)
+        }
 
         var hrefByID: [String: String] = [:]
         var mediaTypeByID: [String: String] = [:]
@@ -360,7 +421,7 @@ final class EPUBParser: NSObject {
         return EPUBPackage(
             rootFolder: rootFolder, spineURLs: spineURLs, title: bookTitle, author: bookAuthor,
             coverURL: coverURL, manifest: manifest, spine: spineItems, version: version,
-            navigationURL: navigationURL, landmarks: landmarks)
+            navigationURL: navigationURL, landmarks: landmarks, metadata: metadata)
     }
 
     private static func resolve(_ href: String, relativeTo base: URL) -> URL {
@@ -419,22 +480,25 @@ final class EPUBParser: NSObject {
     func buildScrollHTML(
         from pkg: EPUBPackage, cosmetics: ReaderCosmeticSettings,
         scrollRestoreJS: String = "",
-        formatFirstChapter: Bool = false, removeParagraphIndents: Bool = false,
-        hideImages: Bool = false
+        options: ChapterRenderOptions = .plain,
+        hideImages: Bool = false,
+        skin: ReaderSkin? = nil
     ) throws -> String {
         var body = ""
         let base = pkg.rootFolder
         for i in pkg.spineURLs.indices {
-            let extracted = try Self.extractedChapterBody(
-                from: pkg, index: i, base: base,
-                formatFirstChapter: formatFirstChapter,
-                removeParagraphIndents: removeParagraphIndents
-            )
-            body += "\n<section class=\"ql-chapter\" id=\"chapter-\(i)\" data-chapter-index=\"\(i)\">\n"
+            let extracted = try Self.extractedChapterBody(from: pkg, index: i, base: base, options: options)
+            let cut = options.fanficPreface && options.plan?.isHidden(i) == true
+            body += "\n<section class=\"ql-chapter\(cut ? " hc-cut\" hidden aria-hidden=\"true" : "")\" id=\"chapter-\(i)\" data-chapter-index=\"\(i)\">\n"
                  + extracted
                  + "\n</section>\n"
         }
 
+        let identity = BookIdentity.detect(pkg)
+        let skinBody = skin.map { SkinTemplate.render($0.template, body: body, title: pkg.title, author: pkg.author,
+                                                       sourceURL: identity.sourceURL, siteLabel: identity.site?.label,
+                                                       date: pkg.metadata["date"]?.first ?? pkg.metadata["issued"]?.first) } ?? body
+        let overrideCSS = Self.readerOverrideCSS(cosmetics, skin: skin)
         return """
         <!doctype html>
         <html>
@@ -442,11 +506,11 @@ final class EPUBParser: NSObject {
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style id="honeycrisp-vars">\(Self.readerVarsCSS(cosmetics))</style>
-            <style>\(Self.readerCSS)</style>
+            <style>\(Self.readerCSS)\n\(skin?.css ?? "")\n\(Self.skinCanvasCSS(skin))\n\(overrideCSS)\n\(Self.prefaceCSS)\n\(SourceProfile.forGenerator(identity.generator)?.css ?? "")</style>
             <style>\(Self.imageVisibilityCSS(hideImages: hideImages))</style>
         </head>
         <body>
-        <div id="content">\(body)</div>
+        <div id="content">\(skinBody)</div>
         <script>window._qlPaginated = false;</script>
         <script>\(Self.readerJS)</script>
         <script>\(scrollRestoreJS)</script>
@@ -476,17 +540,14 @@ final class EPUBParser: NSObject {
         maxWidth: CGFloat = 700,
         paddingH: CGFloat = 24,
         paddingV: CGFloat = 24,
-        formatFirstChapter: Bool = false,
-        removeParagraphIndents: Bool = false,
-        hideImages: Bool = false
+        options: ChapterRenderOptions = .plain,
+        hideImages: Bool = false,
+        skin: ReaderSkin? = nil
     ) throws -> String {
         let base = pkg.rootFolder
-        let extracted = try Self.extractedChapterBody(
-            from: pkg, index: spineIndex, base: base,
-            formatFirstChapter: formatFirstChapter,
-            removeParagraphIndents: removeParagraphIndents
-        )
-        let body = "\n<section class=\"ql-chapter\" id=\"chapter-\(spineIndex)\" data-chapter-index=\"\(spineIndex)\">\n"
+        let extracted = try Self.extractedChapterBody(from: pkg, index: spineIndex, base: base, options: options)
+        let cut = options.fanficPreface && options.plan?.isHidden(spineIndex) == true
+        let body = "\n<section class=\"ql-chapter\(cut ? " hc-cut\" hidden aria-hidden=\"true" : "")\" id=\"chapter-\(spineIndex)\" data-chapter-index=\"\(spineIndex)\">\n"
             + extracted
             + "\n</section>\n"
 
@@ -510,6 +571,11 @@ final class EPUBParser: NSObject {
         </script>
         """
 
+        let identity = BookIdentity.detect(pkg)
+        let skinBody = skin.map { SkinTemplate.render($0.template, body: body, title: pkg.title, author: pkg.author,
+                                                       sourceURL: identity.sourceURL, siteLabel: identity.site?.label,
+                                                       date: pkg.metadata["date"]?.first ?? pkg.metadata["issued"]?.first) } ?? body
+        let overrideCSS = Self.readerOverrideCSS(cosmetics, skin: skin)
         return """
         <!doctype html>
         <html>
@@ -517,12 +583,12 @@ final class EPUBParser: NSObject {
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style id="honeycrisp-vars">\(Self.readerVarsCSS(cosmetics))</style>
-            <style>\(Self.readerCSS)</style>
+            <style>\(Self.readerCSS)\n\(skin?.css ?? "")\n\(Self.skinCanvasCSS(skin))\n\(overrideCSS)\n\(Self.prefaceCSS)\n\(SourceProfile.forGenerator(identity.generator)?.css ?? "")</style>
             <style>\(columnCSS)</style>
             <style>\(Self.imageVisibilityCSS(hideImages: hideImages))</style>
         </head>
         <body>
-        <div id="content">\(body)</div>
+        <div id="content">\(skinBody)</div>
         <script>window._qlPaginated = true;</script>
         <script>\(Self.readerJS)</script>
         \(paginationBootstrap)
@@ -629,39 +695,129 @@ final class EPUBParser: NSObject {
     }
 
     /// Extracts and prepares the `<body>` content of a single spine item: strips the
-    /// surrounding `<body>` tag, applies AO3 formatting / paragraph-indent stripping /
+    /// surrounding `<body>` tag, removes active content (`<style>`, `<script>`, `on*` attributes,
+    /// script-scheme URLs), applies AO3 formatting / paragraph-indent stripping /
     /// preface-heading stripping as requested, then rewrites resource URLs to absolute
-    /// file URLs. Shared by `buildScrollHTML` (all spine items, merged) and, in a future
+    /// file URLs. Internal (not private) so tests can call it directly. Shared by `buildScrollHTML`
+    /// (all spine items, merged) and, in a future
     /// paginated-mode HTML builder, a single spine item at a time — kept as one code path
     /// so the two rendering modes can't drift apart on formatting behaviour.
-    private static func extractedChapterBody(
+    static func extractedChapterBody(
         from pkg: EPUBPackage,
         index: Int,
         base: URL,
-        formatFirstChapter: Bool,
-        removeParagraphIndents: Bool
+        options: ChapterRenderOptions
     ) throws -> String {
         let url = pkg.spineURLs[index]
         let data = try Data(contentsOf: url)
         let src = String(data: data, encoding: .utf8) ?? (String(data: data, encoding: .isoLatin1) ?? "")
-        var extracted = Self.extractBody(html: src)
+        var extracted = Self.stripInlineThemeDeclarations(Self.stripActiveContent(Self.extractBody(html: src)))
+        extracted = SourceProfile.tagFanficSpacerParagraphs(in: extracted, generator: BookIdentity.detect(pkg).generator)
 
-        // Apply AO3 formatting to ALL chapters when enabled
-        if formatFirstChapter {
-            extracted = Self.applyFirstChapterFormatting(to: extracted)
+        if options.fanficPreface, let plan = options.plan, let meta = options.meta,
+            plan.roles.indices.contains(index)
+        {
+            switch plan.roles[index] {
+            case .primaryPreface:
+                return FanficPrefaceRenderer.html(data: meta, includeTitleBlock: options.includeTitleBlock)
+            case .cut:
+                return ""
+            case .chapter:
+                break
+            case .backMatter:
+                extracted = Self.stripAfterwordHeading(in: extracted)
+            }
         }
 
-        if removeParagraphIndents {
+        if options.removeParagraphIndents {
             extracted = Self.stripLeadingIndentWhitespace(extracted)
         }
 
         // AO3 EPUBs emit a redundant "Preface" heading on the first spine item;
         // the spine item is the preface by definition once rendered here.
-        if index == 0 {
+        if index == 0 && !options.fanficPreface {
             extracted = Self.stripPrefaceHeading(extracted)
         }
 
         return Self.rewriteResourceURLs(in: extracted, base: base)
+    }
+
+    private static func stripAfterwordHeading(in html: String) -> String {
+        let pattern = #"(?is)(<[^>]+id=[\"']afterword[\"'][^>]*>)(.*?)(<h[1-6][^>]*class=[\"'][^\"']*toc-heading[^\"']*[\"'][^>]*>.*?</h[1-6]>)"#
+        return html.replacingOccurrences(of: pattern, with: "$1$2", options: .regularExpression)
+    }
+
+    private static func stripInlineThemeDeclarations(_ html: String) -> String {
+        let pattern = #"(?i)\sstyle\s*=\s*([\"'])(.*?)\1"#
+        return html.replacingOccurrences(of: pattern) { match, matched in
+            let ns = matched as NSString
+            let declarationRange = match.range(at: 2)
+            guard declarationRange.location != NSNotFound else { return matched }
+            let source = ns.substring(with: declarationRange)
+            let kept = source.split(separator: ";", omittingEmptySubsequences: false).compactMap { item -> String? in
+                let declaration = item.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let colon = declaration.firstIndex(of: ":") else { return declaration.isEmpty ? nil : declaration }
+                let property = declaration[..<colon].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                return ["color", "background", "background-color", "font-family"].contains(property) ? nil : declaration
+            }
+            guard !kept.isEmpty else { return "" }
+            let quote = ns.substring(with: match.range(at: 1))
+            return " style=\(quote)\(kept.joined(separator: ";"))\(quote)"
+        }
+    }
+
+    // MARK: - Active content removal
+
+    /// Removes markup that can run code or restyle the page from a spine item's body: `<style>` and
+    /// `<script>` elements (with content, including Wikisource-style `<style><![CDATA[...]]></style>`),
+    /// `on*` event-handler attributes, and `href`/`src`-style attributes whose value is a script or HTML
+    /// data scheme (neutralized to `#`). Ordinary links and images are untouched. Book content is
+    /// untrusted; this runs before every other transformation.
+    static func stripActiveContent(_ html: String) -> String {
+        var out = html
+        // Self-closing forms first, so the paired-element pattern cannot swallow content after `<script src=x/>`.
+        out = out.replacingOccurrences(of: #"(?i)<(?:style|script)\b[^>]*/>"#, with: "", options: .regularExpression)
+        out = out.replacingOccurrences(of: #"(?is)<(style|script)\b[^>]*>.*?</\1\s*>"#, with: "", options: .regularExpression)
+        // Unclosed or stray tags left behind.
+        out = out.replacingOccurrences(of: #"(?i)</?(?:style|script)\b[^>]*>"#, with: "", options: .regularExpression)
+
+        // The tag prefix consumes quoted values as units, so `title="a onclick=1"` is not mistaken for a handler.
+        let handler = #"(?i)(<[A-Za-z](?:"[^"]*"|'[^']*'|[^<>"'])*?)[\s/]+on[A-Za-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>]+)"#
+        var passes = 0
+        var previous = ""
+        repeat {
+            previous = out
+            out = out.replacingOccurrences(of: handler, with: "$1", options: .regularExpression)
+            passes += 1
+        } while out != previous && passes < 32
+
+        return neutralizeScriptURLs(in: out)
+    }
+
+    private static func neutralizeScriptURLs(in html: String) -> String {
+        let pattern = #"\b(?:href|src|xlink:href|action|formaction)\s*=\s*(?:"([^"]*)"|'([^']*)')"#
+        return html.replacingOccurrences(of: pattern) { match, matched in
+            let ns = matched as NSString
+            var valueRange = match.range(at: 1)
+            if valueRange.location == NSNotFound { valueRange = match.range(at: 2) }
+            guard valueRange.location != NSNotFound else { return matched }
+            let local = NSRange(location: valueRange.location - match.range.location, length: valueRange.length)
+            guard isScriptScheme(ns.substring(with: local)) else { return matched }
+            return ns.replacingCharacters(in: local, with: "#")
+        }
+    }
+
+    /// True when a URL attribute value is `javascript:`, `vbscript:` or `data:text/html` after the same
+    /// normalization browsers apply (entity decoding, dropped whitespace and control characters, case).
+    private static func isScriptScheme(_ value: String) -> Bool {
+        var text = value.replacingOccurrences(of: "&tab;", with: "", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "&newline;", with: "", options: .caseInsensitive)
+        text = decodeHTMLEntities(text)
+        let dropped = CharacterSet.whitespacesAndNewlines.union(.controlCharacters)
+        var scalars = String.UnicodeScalarView()
+        for scalar in text.unicodeScalars where !dropped.contains(scalar) { scalars.append(scalar) }
+        let normalized = String(scalars).lowercased()
+        return normalized.hasPrefix("javascript:") || normalized.hasPrefix("vbscript:") || normalized.hasPrefix("data:text/html")
     }
 
     /// Strips leading space/tab runs immediately inside paragraph-like elements — the
@@ -683,25 +839,6 @@ final class EPUBParser: NSObject {
         html.replacingOccurrences(
             of: #"<(h[1-6])[^>]*>\s*[Pp]reface\s*</\1>"#,
             with: "", options: .regularExpression)
-    }
-
-    // MARK: - First Chapter Formatting Quirk
-
-    /// Hides `.toc-heading` h2 blocks and upsizes `.calibre2` bold elements to h2-scale.
-    private static func applyFirstChapterFormatting(to html: String) -> String {
-        // Hide toc-heading h2
-        var result = html.replacingOccurrences(
-            of: #"<h2[^>]*class="[^"]*toc-heading[^"]*"[^>]*>[\s\S]*?<\/h2>"#,
-            with: "",
-            options: .regularExpression
-        )
-        // Upsize calibre2 bold to h2 equivalent via inline style injection
-        result = result.replacingOccurrences(
-            of: #"(<b[^>]*class="[^"]*calibre2[^"]*"[^>]*)(>)"#,
-            with: #"$1 style="font-size:1.5em;font-weight:700;display:block;margin:0.5em 0;"$2"#,
-            options: .regularExpression
-        )
-        return result
     }
 
     private static func extractBody(html: String) -> String {
@@ -936,7 +1073,7 @@ final class EPUBParser: NSObject {
       var y = HONEYCRISP_POSITION_REFERENCE_Y;
       var range = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
       if (!range || !range.startContainer || range.startContainer.nodeType !== Node.TEXT_NODE) {
-        return Math.round((window.scrollY / Math.max(1, document.documentElement.scrollHeight)) * 1e6);
+        return -1;
       }
       var target = range.startContainer;
       var localOffset = range.startOffset;
@@ -952,19 +1089,20 @@ final class EPUBParser: NSObject {
     window.honeycrispCurrentChapterCharacterOffset = function() {
       var sections = document.querySelectorAll('.ql-chapter');
       var section = sections[window.honeycrispPageInfo().spineIndex];
-      if (!section) return 0;
+      if (!section) return -1;
       var x = Math.round(window.innerWidth / 2);
       var y = HONEYCRISP_POSITION_REFERENCE_Y;
       var range = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
-      var target = range && range.startContainer && section.contains(range.startContainer) ? range.startContainer : null;
-      var localOffset = target ? range.startOffset : 0;
+      var target = range && range.startContainer && range.startContainer.nodeType === Node.TEXT_NODE && section.contains(range.startContainer) ? range.startContainer : null;
+      if (!target) return -1;
+      var localOffset = range.startOffset;
       var walker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT, null);
       var count = 0, node;
       while ((node = walker.nextNode()) !== null) {
         if (node === target) return count + localOffset;
         count += node.length;
       }
-      return count;
+      return -1;
     };
 
     // Character range currently on screen, as [start, end] in the same offset space
@@ -1106,7 +1244,11 @@ final class EPUBParser: NSObject {
 
     function reportPosition() {
       if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.positionHandler) {
-        window.webkit.messageHandlers.positionHandler.postMessage(window.honeycrispCurrentCharacterOffset());
+        var sections = document.querySelectorAll('.ql-chapter');
+        var offset = sections.length > 1
+          ? window.honeycrispCurrentChapterCharacterOffset()
+          : window.honeycrispCurrentCharacterOffset();
+        window.webkit.messageHandlers.positionHandler.postMessage(offset);
       }
     }
 
@@ -1129,6 +1271,7 @@ final class EPUBParser: NSObject {
       var idx = 0;
 
       for (var i = 0; i < sections.length; i++) {
+        if (sections[i].classList.contains('hc-cut')) continue;
         var rect = sections[i].getBoundingClientRect();
         var top  = rect.top + window.scrollY;
         if (top <= viewTop + 1) {
@@ -1218,9 +1361,34 @@ final class EPUBParser: NSObject {
             --reader-line-height: \(cosmetics.lineHeight);
             --reader-max-width: \(cosmetics.maxWidth)px;
             --reader-padding-h: \(cosmetics.paddingH)px;
+            --reader-padding-v: \(cosmetics.paddingV)px;
             --reader-link-pointer-events: \(cosmetics.allowLinkClicks ? "auto" : "none");
         }
         """
+    }
+
+    private static func readerOverrideCSS(_ cosmetics: ReaderCosmeticSettings, skin: ReaderSkin?) -> String {
+        var rules: [String] = []
+        rules.append("html, body { -webkit-text-size-adjust: 100% !important; text-size-adjust: 100% !important; }")
+        if let skin, let family = skin.family, !family.isEmpty {
+            rules.append("body { font-family: \(family) !important; }")
+        }
+        if !cosmetics.fontFamily.isEmpty {
+            rules.append("body, #bodyContainer { font-family: \(cosmetics.fontFamily) !important; }")
+            rules.append("h1, h2, h3, h4, h5, h6 { font-family: \(cosmetics.fontFamily) !important; }")
+        }
+        rules.append("body { font-size: var(--reader-font-size) !important; line-height: var(--reader-line-height) !important; }")
+        if skin == nil { rules.append("body { max-width: var(--reader-max-width) !important; }") }
+        if !cosmetics.backgroundCSS.isEmpty { rules.append("body, #bodyContainer { background-color: \(cosmetics.backgroundCSS) !important; }") }
+        if !cosmetics.textCSS.isEmpty { rules.append("body, #bodyContainer { color: \(cosmetics.textCSS) !important; }") }
+        if !cosmetics.linkCSS.isEmpty { rules.append("#bodyContainer a:not(#ao3Preface a) { color: \(cosmetics.linkCSS) !important; }") }
+        rules.append("#bodyContainer p, #bodyContainer li, #bodyContainer blockquote, #bodyContainer dd { text-indent: \(cosmetics.paragraphIndent)em !important; margin-bottom: \(cosmetics.paragraphSpacing)em !important; }")
+        if cosmetics.justify { rules.append("#bodyContainer p:not([align]):not([class*=center]):not([style*=text-align]) { text-align: justify !important; }") }
+        if cosmetics.hyphenate { rules.append("#bodyContainer p, #bodyContainer li { -webkit-hyphens: auto !important; hyphens: auto !important; }") }
+        if skin != nil, cosmetics.maxWidth > 0 {
+            rules.append("body { max-width: none !important; }")
+        }
+        return rules.joined(separator: "\n")
     }
 
     static let readerCSS = """
@@ -1241,15 +1409,16 @@ final class EPUBParser: NSObject {
         box-sizing: border-box;
         overflow-x: hidden;
         max-width: 100%;
-        background-color: var(--reader-bg) !important;
         font-size: var(--reader-font-size);
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
     }
 
     *, *::before, *::after { box-sizing: inherit; }
 
     body {
-        font-family: var(--reader-font-family) !important;
-        color: var(--reader-text) !important;
+        font-family: var(--reader-font-family);
+        color: var(--reader-text);
         font-size: 1.1rem;
         line-height: var(--reader-line-height);
         padding: 0;
@@ -1259,8 +1428,9 @@ final class EPUBParser: NSObject {
         max-width: 100%;
     }
 
-    #content { width: 100%; max-width: var(--reader-max-width); margin: 0 auto; padding: 28px var(--reader-padding-h) 48px; }
+    #content { width: 100%; max-width: var(--reader-max-width); margin: 0 auto; padding: var(--reader-padding-v) var(--reader-padding-h); }
     .ql-chapter { margin: 40px 0; }
+    .ql-chapter.hc-cut { display: none !important; }
     .ql-chapter + .ql-chapter {
         border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
         padding-top: 40px;
@@ -1269,7 +1439,7 @@ final class EPUBParser: NSObject {
     img, svg, video, iframe { max-width: 100%; height: auto; display: block; margin: 1.2em auto; }
 
     h1, h2, h3, h4, h5, h6 {
-        font-family: var(--reader-font-family) !important;
+        font-family: var(--reader-font-family);
         line-height: 1.25;
         margin-top: 1.5em;
         margin-bottom: 0.5em;
@@ -1283,21 +1453,37 @@ final class EPUBParser: NSObject {
     }
 
     code, pre {
-        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace !important;
+        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
         white-space: pre-wrap;
         word-break: break-all;
     }
 
     a { color: var(--reader-link); pointer-events: var(--reader-link-pointer-events); }
 
-    * {
-        font-family: inherit !important;
-        color: inherit !important;
-        background-color: transparent !important;
-    }
+    :where(#bodyContainer *) { font-family: inherit; color: inherit; background-color: transparent; }
 
     img, svg { color: unset !important; }
     """
+
+    static let prefaceCSS = """
+    #ao3Preface, #ao3Preface * { box-sizing: border-box; }
+    #ao3Preface { margin: 0 auto 2em; max-width: 54em; font-size: .95em; }
+    #ao3Preface .heading { margin: .4em 0; }
+    #ao3Preface .byline, #ao3Preface .message { margin: .5em 0 1em; }
+    #ao3Preface .tags { display: grid; grid-template-columns: max-content minmax(0,1fr); gap: .25em .8em; }
+    #ao3Preface dt { font-weight: 600; }
+    #ao3Preface dt.wide { grid-column: 1; }
+    #ao3Preface dd.wide { grid-column: 2; }
+    #ao3Preface .module { margin: 1.2em 0; }
+    #ao3Preface .userstuff { margin: .5em 0; }
+    """
+
+    private static func skinCanvasCSS(_ skin: ReaderSkin?) -> String {
+        // The resolved reader color already includes skin tokens and user
+        // overrides. Use it for the full document canvas so it cannot diverge
+        // from the body/content background and expose a hard edge at the window.
+        return "html { background-color: var(--reader-bg) !important; }"
+    }
 }
 
 private extension String {

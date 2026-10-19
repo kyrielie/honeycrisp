@@ -127,6 +127,11 @@ final class ReaderContrastTests: XCTestCase {
             lineHeight: 1.5,
             maxWidth: 700,
             paddingH: 24,
+            paddingV: 24,
+            paragraphIndent: 0.3,
+            paragraphSpacing: 0.5,
+            justify: false,
+            hyphenate: false,
             allowLinkClicks: true
         )
     }

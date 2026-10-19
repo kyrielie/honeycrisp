@@ -16,7 +16,7 @@ entitlements, document type registration, and shared `Honeycrisp` scheme. Run
 Single-process, multi-window. Each opened book gets its own
 `ReaderWindowController` / `ReaderViewController` / `WKWebView`. There is no
 document model shared across windows and no library/database — the app's
-only persistent state is `UserDefaults` (settings, theme list, key bindings),
+only persistent state is `UserDefaults` (settings, reader overrides, skin id, key bindings),
 history (`HistoryManager`), and independent per-book bookmarks (`BookmarkManager`). This is a
 deliberate scope boundary: Honeycrisp is a reader, not a library manager
 (see `ambrosia` for that role).
@@ -31,7 +31,7 @@ EPUBReaderApp (SwiftUI @main, boots AppDelegate)
             ├── PaginationEngine           — column-layout state machine (paginated mode)
             ├── TOCSidebarViewController   — NSSplitView sidebar
             └── SearchBarViewController    — in-book search overlay
-    SettingsManager (singleton)            — UserDefaults-backed settings/themes
+    SettingsManager (singleton)            — UserDefaults-backed settings and reader overrides
     HistoryManager (singleton)             — UserDefaults-backed recent-files + position
     BookmarkManager (singleton)            — versioned per-book return points
     SettingsWindowController (singleton)   — App-menu Settings window
@@ -51,7 +51,7 @@ EPUBReaderApp (SwiftUI @main, boots AppDelegate)
 | `Parsing/TOCParser.swift` | Manifest-declared EPUB3 nav, NCX (EPUB2), and synthesized spine fallback; preserves hierarchy and resolves Start Reading landmarks. |
 | `Sidebar/TOCSidebarViewController.swift` | TOC outline view inside the reader's `NSSplitView`. |
 | `Sidebar/SearchBarViewController.swift` | Centered in-book search overlay, debounced input, contextual excerpts, and navigable results. Search terms pass to WebKit as JSON string literals. |
-| `Sidebar/ThemePopoverViewController.swift` | Toolbar gear-button quick theme switcher (Apple-Books-style popover). |
+| `Sidebar/ThemePopoverViewController.swift` | Toolbar gear-button reader-skin switcher. |
 | `History/HistoryManager.swift` | Singleton; `UserDefaults`-backed `[HistoryEntry]` — url, title, opened date, security-scoped bookmark, reading-progress percent, last spine index + character offset. |
 | `History/ReadingBookmark.swift` | Codable bookmarks in an independently versioned `UserDefaults` envelope, separate from History. |
 | `History/HistoryViewController.swift` | Popover list of recent books (open / remove actions). |
@@ -82,10 +82,8 @@ fix holds regardless of call order at any future call site.
 fully `UserDefaults`-backed properties, included in `resetAllToDefaults()`,
 but nothing in `EPUBParser`'s HTML-building path ever read either one and no
 Settings pane exposed a control for either — leftover sub-flags from before
-"Format for AO3" (`formatFirstChapter`) absorbed their behavior. Removed;
-any stale `readerRemoveFirstLine`/`readerEnlargeSecondLine` keys left in a
-user's `UserDefaults` from a prior build are now simply unread, which is
-harmless.
+The old Format for AO3 setting is retired and migrates to the default-off
+fanfiction preface toggle. Stale sub-flag keys are ignored.
 
 ## 3c. Fixed: ReaderWindow no longer swallows unhandled key events
 
@@ -109,23 +107,29 @@ back to `super.keyDown(with:)` when it didn't.
 4. `EPUBParser.buildScrollHTML` or `buildPageHTML` renders the actual HTML document (CSS vars baked in from `ReaderCosmeticSettings.current`), written to a temp file, loaded via `webView.loadFileURL`.
 5. `readerJS` (embedded in every rendered document) reports scroll/position/page-info back to Swift via `WKScriptMessageHandler`s registered in `ReaderViewController.loadView()`.
 
-Two independent HTML-generation paths (`buildScrollHTML` for scroll mode, one document per spine item via `buildPageHTML` for paginated mode) share one text-extraction routine (`extractedChapterBody`) and one CSS-vars function (`readerVarsCSS`) so the two rendering modes can't drift apart on formatting or theming.
+Two independent HTML-generation paths (`buildScrollHTML` for scroll mode, one document per spine item via `buildPageHTML` for paginated mode) share one text-extraction routine (`extractedChapterBody`, driven by a `ChapterRenderOptions` value that search and speech also receive) and one CSS-vars function (`readerVarsCSS`) so the two rendering modes can't drift apart on formatting or theming.
 
 ## 5. Settings persistence model
 
-`SettingsManager` is a thin, direct `UserDefaults` wrapper — every property is a computed `get`/`set` pair reading/writing a `UserDefaults` key, with no separate serialized settings object and no export/import path. `Theme` and `KeyBinding` values are `Codable` and stored as encoded `Data` blobs under single keys (`themes`, key-binding dictionary). Legacy-key migration (e.g. `migrateLegacyFontFamily`, `migrateLegacyThemes`) is handled inline, per-property, at read time.
+`SettingsManager` is a thin, direct `UserDefaults` wrapper. Reader skin bundles live in `Sources/Skins/Bundled` or Application Support; the selected skin id and global reader overrides live in `UserDefaults`. Existing editable-theme data is converted once to reader overrides and then removed.
+
+## 5b. EPUB rendering, prefaces and skins
+
+EPUB extraction builds one `FrontMatterPlan` per book from OPF metadata and chapter structure. The optional fanfiction-preface setting parses recognized AO3, FicHub, FicLab and WebToEpub front matter into `WorkMeta`, then renders escaped Honeycrisp HTML. Unrecognized or incomplete metadata leaves source content intact. Spine entries remain present; replaced front matter renders as hidden placeholders so TOC, bookmarks and offsets keep their spine indices. Search and speech use the same `ChapterRenderOptions` as visible HTML.
+
+`SourceProfiles` applies narrow, generator-specific fixes after extraction. `.nnwtheme` skins are loaded from the app bundle or Application Support. The loader validates metadata, stylesheet and a restricted template macro set; imported archives reject traversal and symlinks. Book CSS is not loaded. Honeycrisp reader CSS, skin CSS, the optional preface CSS and source-profile CSS are composed in that order, followed by canvas handling. User overrides apply globally.
 
 ## 5a. Stored data durability and anchor layout
 
 Storage durability. `HistoryManager` (bare `[HistoryEntry]` array) and `BookmarkManager` (versioned envelope) decode element by element. An element that fails to decode is kept as raw JSON and written back on the next save, so one bad element never wipes the rest. A blob that is not readable at all, or a bookmark envelope with a version other than the supported one, is first copied to `<key>.quarantine.<unix-seconds>` by `StorageQuarantine` (newest 3 kept), before the first overwrite. Loading alone never writes. In history, unreadable elements count toward `maxEntries` and are dropped first; `clearAll` removes them too.
 
-Anchor layout. Saved character offsets are only valid for the text extraction that produced them. `EPUBAnchor.currentLayout` (`Reader/PaginationEngine.swift`) is stored as `anchorLayout` on `HistoryEntry` and `ReadingBookmark`; data without the field decodes as `EPUBAnchor.legacyLayout`. Rule: bump `currentLayout` whenever a change alters character offsets, meaning anything touching `extractedChapterBody`, `searchableText`, indent stripping, preface stripping, or first-chapter formatting. Nothing reads the field yet. The PR that first bumps it must also choose the fallback for entries with an older layout (for example, restore by fraction from `readingProgressPercent`). `HistoryManager.record` carries `anchorLayout` forward with the position it describes; only `updatePosition` re-stamps it.
+Anchor layout. Saved character offsets are only valid for the text extraction that produced them. `EPUBAnchor.currentLayout` (`Reader/PaginationEngine.swift`) is stored as `anchorLayout` on `HistoryEntry` and `ReadingBookmark`; data without the field decodes as `EPUBAnchor.legacyLayout` (1). Layout 2 saves scroll positions as a spine index plus an offset local to that chapter. Layout-1 entries with spine index 0 use the legacy whole-document restore once; entries with a nonzero spine index use the chapter-local restore. `HistoryManager.record` carries `anchorLayout` forward with the position it describes; `updatePosition` stamps the current layout. Position saves with no text caret return a sentinel and are skipped, preserving the last valid position.
 
 ## 6. Known non-goals (intentional, not gaps)
 
 - No library/catalog view — File > Open / drag-drop / Open Recent / explicit bookmarks only.
 - No cross-book full-text search — `SearchBarViewController` is in-book only.
-- No publisher-CSS respect — the reader CSS reset in `EPUBParser.readerCSS` is deliberate.
+- No publisher CSS from the book. User-installed skins, global reader overrides and Honeycrisp-authored preface styling are allowed.
 - No per-window/per-book reading mode override — `currentMode` always initializes from the global `SettingsManager.shared.defaultReadingMode`.
 
 ## 7. Known architectural gaps and their resolution (see `docs/honeycrisp-settings-window-plan.md` for the Settings-window rebuild plan; other gaps below have no separate plan doc)

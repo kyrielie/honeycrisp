@@ -154,14 +154,18 @@ final class HistoryManager {
     }
 
     /// Saved restore position for an entry identified by URL, if any is recorded.
-    func savedPosition(for url: URL) -> (spineIndex: Int, characterOffset: Int)? {
+    func savedPosition(for url: URL) -> (spineIndex: Int, characterOffset: Int, anchorLayout: Int)? {
         guard let entry = entries.first(where: { $0.url == url }) else { return nil }
-        return (entry.lastSpineIndex, entry.lastCharacterOffset)
+        return (entry.lastSpineIndex, entry.lastCharacterOffset, entry.anchorLayout)
     }
 
     /// Return stored reading progress, or -1 if not recorded
     func readingProgress(for entry: HistoryEntry) -> Int {
         return entry.readingProgressPercent
+    }
+
+    func readingProgress(for url: URL) -> Int {
+        entries.first(where: { $0.url == url })?.readingProgressPercent ?? -1
     }
 
     func remove(id: UUID) {

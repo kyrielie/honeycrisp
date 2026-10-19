@@ -41,6 +41,12 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
 ### Parsing (`Sources/Parsing`)
 - `EPUBParser.swift` (1159): models, unzip, OPF, search, HTML and CSS building, `readerJS`.
   See section map below.
+- `ChapterRenderOptions.swift`: value passed to `extractedChapterBody` by the scroll and paginated renderers,
+  search and speech, so they all see the same text. Includes optional preface replacement.
+- `BookIdentity.swift`, `FrontMatterPlan.swift`, `WorkMeta*.swift`, `FanficPrefaceRenderer.swift`:
+  generator recognition, spine roles, metadata extraction and generated fanfiction prefaces.
+- `SourceProfiles.swift`: narrow generator-specific HTML and CSS corrections.
+- `Sources/Skins/`: `.nnwtheme` model, validation, template renderer, importer, store and four bundled skins.
 - `TOCParser.swift` (293): `TOCEntry`, `TOCNode`, `TOCParser`. EPUB3 nav (l.199), NCX (l.152),
   spine-synthesis fallback (l.261), `startReadingNode` (l.71), `firstSpineIndex(afterCoverIn:)`.
 
@@ -48,7 +54,7 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
 - `TOCSidebarViewController.swift` (172): outline sidebar; `TOCSidebarDelegate`.
 - `TOCPopupViewController.swift` (108): popup TOC outline.
 - `SearchBarViewController.swift` (288): in-book search overlay; `SearchBarDelegate`.
-- `ThemePopoverViewController.swift` (185): toolbar quick theme switcher.
+- `ThemePopoverViewController.swift`: toolbar skin switcher.
 
 ### History (`Sources/History`)
 - `HistoryManager.swift` (196): `HistoryEntry` (Codable, security-scoped bookmark, progress,
@@ -104,7 +110,7 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
 ### `Settings/SettingsManager.swift`
 | Lines | Content |
 |---|---|
-| 14-170 | `AppearanceMode`, `FontPreset(s)`, `ThemeColorSet`, `Theme`, `ReadingMode`, `NewBookOpensIn`, legacy theme enum |
+| 14-170 | `AppearanceMode`, legacy theme decoding models, `ReadingMode`, `NewBookOpensIn` |
 | 175-186 | Notification names and `SettingsManager.shared` |
 | 190-420 | Font, theme storage, legacy migrations (inline at read time), `updateTheme`/`addTheme`/`deleteTheme` |
 | 421-604 | Line height, font size, behaviour flags, pagination, reading-column geometry, `mutateCurrentTheme` (l.558), `applyAppearanceOverride` (l.597) |
@@ -118,7 +124,7 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
 | 161-281 | `SettingsTabViewController`: five tabs built from `tabSpecs` (General, Reading, Appearance, History, Shortcuts) |
 | 292-568 | `GeneralSettingsViewController` |
 | 569-692 | `ReaderSettingsViewController` (the "Reading" tab) |
-| 726-1795 | `AppearanceSettingsViewController`: control factories (l.922), visibility (l.1264), actions (l.1310), theme add/edit/duplicate/delete (l.1459); `ThemeBigSwatchButton` (l.1708) |
+| 726+ | `AppearanceSettingsViewController`: skin selection/import, global reader overrides, typography and preview |
 | 1798-1950 | `HistorySettingsViewController` and cell view |
 | 1951-1998 | `CustomFontStore`, `CustomFont` |
 
@@ -139,7 +145,7 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
 | Add a rebindable shortcut | `RebindableAction` in `KeyBinding.swift`; `AppDelegate.syncMenuShortcuts`; `ShortcutsSettingsViewController` |
 | Add a user setting | Property in `SettingsManager` (call `notifyCosmeticChange` or `notifyStructuralChange`); include in reset functions (l.668, l.713); control in the right pane in `SettingsWindowController`; if it affects rendering, extend `ReaderCosmeticSettings` and `readerVarsCSS` |
 | Change reader typography or CSS | `EPUBParser` CSS section (l.1038+), `paginatedColumnCSS`, `Theme` model |
-| Change how a chapter's HTML is cleaned | `extractedChapterBody`, `rewriteResourceURLs`, `applyFirstChapterFormatting` |
+| Change how a chapter's HTML is cleaned | `extractedChapterBody`, `stripActiveContent` (style, script, `on*`, script URLs), `rewriteResourceURLs`, `applyFirstChapterFormatting` |
 | Page turning or column layout | `PaginationEngine`, `PaginationJS`, `ReaderViewController` l.1172-1250 and l.1285-1460 |
 | Saved position and progress | `HistoryManager`, `RestorePosition`, `ReaderViewController` l.1127-1270, `scrollRestoreBootstrapJS` |
 | Table of contents or Start Reading | `TOCParser`, `Sidebar/TOC*`, `ReaderViewController` l.925-986 |
@@ -150,7 +156,7 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
 | Auto-scroll or speech | `ReaderViewController` l.737-830; speech delegate l.1645; menu actions in `AppDelegate` |
 | New DRM or parse error | `EPUBParseError` (l.92), `EPUBParser.isDRMProtected(extractedRoot:)` (DRM rules, called first by `parsePackage`; line numbers after l.126 have shifted), `parsePackage`; error surfaces via `showError` |
 | Window behavior, float on top | `ReaderWindowController` (`setupWindow`, `toggleFloat`) |
-| Themes | `Theme` and storage in `SettingsManager`, `AppearanceSettingsViewController`, `ThemePopoverViewController` |
+| Reader skins | `.nnwtheme` loader and store in `Sources/Skins`, `AppearanceSettingsViewController`, `ThemePopoverViewController` |
 | File type registration | `Honeycrisp/Info.plist`, `project.yml` settings |
 | Signing, sandbox, version | `project.yml` base settings; workflows for release |
 
@@ -159,6 +165,8 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
 | File | Covers |
 |---|---|
 | `EPUBParserTests.swift` | package and spine parsing, landmarks, search offsets, JS string escaping, DRM rules (LCP file, LCP and ADEPT markers, unknown algorithm; font-obfuscation-only and empty manifests open), missing container, unpack |
+| `ChapterBodyTests.swift` | render options reach search and speech, offsets agree with an independent text collector, single-pass entity decoding, active-content stripping (style, script, `on*`, script URLs) |
+| `EPUBFixtures.swift` | helper: on-disk EPUB root with real chapter content (`EPUBFixture.makeRoot`) |
 | `TOCParserTests.swift` | NCX, EPUB3 nav, nested hierarchy, Start Reading, missing-TOC fallback |
 | `HistoryManagerTests.swift` | record/progress/position persistence, clamping, cap, clear, reload, bad-element survival, whole-blob quarantine, unreadable elements and the cap |
 | `HistoryEntryTests.swift` | legacy decode defaults (including `anchorLayout`), round-trip of restore position and layout |

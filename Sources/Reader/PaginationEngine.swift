@@ -74,9 +74,24 @@ enum RestorePosition {
 
 enum EPUBAnchor {
     /// Layout of the text extraction in this build.
-    static let currentLayout = 1
+    static let currentLayout = 2
     /// Layout assumed for stored data that predates the `anchorLayout` field.
     static let legacyLayout = 1
+}
+
+enum ScrollRestorePlan: Equatable {
+    case none
+    case wholeDocument(Int)
+    case chapter(index: Int, offset: Int)
+
+    static func choose(saved: (spineIndex: Int, characterOffset: Int, anchorLayout: Int)?) -> ScrollRestorePlan {
+        guard let saved else { return .none }
+        if saved.anchorLayout == EPUBAnchor.legacyLayout && saved.spineIndex == 0 {
+            return saved.characterOffset > 0 ? .wholeDocument(saved.characterOffset) : .none
+        }
+        guard saved.spineIndex > 0 || saved.characterOffset > 0 else { return .none }
+        return .chapter(index: max(0, saved.spineIndex), offset: max(0, saved.characterOffset))
+    }
 }
 
 extension RestorePosition {

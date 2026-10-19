@@ -25,7 +25,11 @@ targets:
       - path: Sources
         excludes:
           - EPUBReader.entitlements
+          - Skins/Bundled/**
       - path: Assets.xcassets
+        buildPhase: resources
+      - path: Sources/Skins/Bundled
+        type: folder
         buildPhase: resources
     dependencies:
       - package: ZIPFoundation

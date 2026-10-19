@@ -69,7 +69,8 @@ xattr -d com.apple.quarantine /Applications/Honeycrisp.app
 - Paginated mode: one spine document per page, with columns per screen configurable
 - Scroll mode: all chapters merged into one continuous scroll, with auto-scroll
 - Text to speech from the current reading position
-- Themes: save preferred typography and colors as a named theme
+- Reader skins: choose Original, Quiet, Paper, or Fimfiction; install `.nnwtheme` folders or ZIP bundles from Settings > Appearance. Font and color overrides are global.
+- Replace recognized fanfiction front matter with a generated, searchable preface (off by default).
 - Light and dark appearance, following the system
 
 **Navigation**
@@ -97,7 +98,7 @@ These are intentional scope boundaries, not missing features.
 
 - **No library view.** File > Open, drag and drop, and the History popover are the only ways to open a book. See [ambrosia](https://github.com/kyrielie/ambrosia) for library management.
 - **No cross-library full-text search.** Search covers the open book only.
-- **No publisher CSS.** Honeycrisp strips publisher styling and applies its own reader CSS. This is by design, not a rendering bug.
+- **No publisher CSS from the book.** User-installed skins, reader overrides and Honeycrisp-authored preface styling are supported.
 - **No per-window or per-book reading mode.** Paginated versus scroll is a single global default set in Settings > General.
 
 ## Keyboard shortcuts

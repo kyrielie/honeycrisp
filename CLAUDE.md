@@ -58,13 +58,13 @@ Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
   broadly until a second format exists (see `docs/implementation-roadmap.md`).
 
 ## Non-goals (do not add)
-Library view, cross-book search, publisher CSS, quote sharing, per-window or per-book reading mode.
+ Library view, cross-book search, publisher CSS from the book; user-installed skins, reader overrides and Honeycrisp-authored preface styling are allowed; quote sharing, per-window or per-book reading mode.
 
 ## Testing rules
 - XCTest with small synthetic fixtures generated in temp directories. Never add real EPUBs;
   `samples/` is local, untracked, and must not be copied from or into the repo.
 - Add a focused test for any parser, persistence, or position-restore change.
-- No tests exist for `SettingsManager`, `KeyBinding`, `PaginationEngine` (beyond `RestorePosition`),
+- No tests exist for `SettingsManager`, Settings UI, `KeyBinding`, `PaginationEngine` (beyond `RestorePosition`),
   `ReaderViewController`, or search UI. Say so when a change touches them.
 
 ## Doc drift

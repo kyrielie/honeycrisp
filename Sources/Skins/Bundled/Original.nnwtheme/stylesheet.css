@@ -1,0 +1,3 @@
+:root { --nnw-bg: #ffffff; --nnw-ink: #000000; --nnw-link: #0068da; }
+@media (prefers-color-scheme: dark) { :root { --nnw-bg: #1c1c1e; --nnw-ink: #e8e0d4; --nnw-link: #5aa9ff; } }
+

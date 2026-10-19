@@ -36,6 +36,7 @@ final class HistoryManagerTests: XCTestCase {
         XCTAssertEqual(manager.entries[0].readingProgressPercent, 57)
         XCTAssertEqual(manager.savedPosition(for: firstURL)?.spineIndex, 3)
         XCTAssertEqual(manager.savedPosition(for: firstURL)?.characterOffset, 987)
+        XCTAssertEqual(manager.savedPosition(for: firstURL)?.anchorLayout, EPUBAnchor.currentLayout)
     }
 
     func testProgressAndPositionUpdatesClampNegativeAndOversizedValues() {

@@ -268,14 +268,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let readingMenu = NSMenu(title: "Reading")
         readingMenuItem.submenu = readingMenu
 
-        // Rebuilt on every opening (via the delegate below) rather than once here,
-        // since themes can be renamed/added/deleted at any time from Settings or
-        // the toolbar popover — a static snapshot taken at launch would go stale.
-        let themeMenu = NSMenu(title: "Theme")
-        themeMenu.delegate = self
-        let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
-        themeItem.submenu = themeMenu
-        readingMenu.addItem(themeItem)
+        let skinMenu = NSMenu(title: "Reader Skin")
+        skinMenu.delegate = self
+        let skinItem = NSMenuItem(title: "Reader Skin", action: nil, keyEquivalent: "")
+        skinItem.submenu = skinMenu
+        readingMenu.addItem(skinItem)
 
         let colsMenu = NSMenu(title: "Columns Per Screen")
         for cols in ColsPerScreen.allCases {
@@ -480,8 +477,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func selectTheme(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID else { return }
-        SettingsManager.shared.currentThemeID = id
+        guard let id = sender.representedObject as? String else { return }
+        SettingsManager.shared.readerSkinID = id
     }
 
     @objc private func selectColsPerScreen(_ sender: NSMenuItem) {
@@ -579,9 +576,10 @@ extension AppDelegate: NSMenuDelegate {
             return
         }
         menu.items.removeAll()
-        for theme in SettingsManager.shared.themes {
-            let item = NSMenuItem(title: theme.name, action: #selector(selectTheme(_:)), keyEquivalent: "")
-            item.representedObject = theme.id
+        SkinStore.shared.reload()
+        for skin in SkinStore.shared.skins {
+            let item = NSMenuItem(title: skin.name, action: #selector(selectTheme(_:)), keyEquivalent: "")
+            item.representedObject = skin.id
             item.target = self
             menu.addItem(item)
         }
@@ -593,7 +591,7 @@ extension AppDelegate: NSMenuDelegate {
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(selectTheme(_:)) {
-            menuItem.state = (menuItem.representedObject as? UUID == SettingsManager.shared.currentThemeID) ? .on : .off
+            menuItem.state = (menuItem.representedObject as? String == SettingsManager.shared.readerSkinID) ? .on : .off
             return true
         }
         if menuItem.action == #selector(selectColsPerScreen(_:)) {
