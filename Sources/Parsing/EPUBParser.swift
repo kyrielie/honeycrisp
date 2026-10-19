@@ -85,21 +85,26 @@ struct ReaderCosmeticSettings: Equatable {
     var paddingH: Int
     var allowLinkClicks: Bool
 
+    /// Every value passes through `ReaderCSSSanitizer`, so the initial render and the live patch both
+    /// get valid CSS no matter what is persisted. Hit colors derive from the sanitized page colors.
     static func current(from settings: SettingsManager) -> ReaderCosmeticSettings {
-        let hit = ReaderContrast.hitColors(background: settings.effectiveBackgroundCSS, text: settings.effectiveTextCSS)
+        let background = ReaderCSSSanitizer.hexColor(settings.effectiveBackgroundCSS, fallback: ReaderCSSSanitizer.fallbackBackground)
+        let text = ReaderCSSSanitizer.hexColor(settings.effectiveTextCSS, fallback: ReaderCSSSanitizer.fallbackText)
+        let link = ReaderCSSSanitizer.hexColor(settings.effectiveLinkCSS, fallback: ReaderCSSSanitizer.fallbackLink)
+        let hit = ReaderContrast.hitColors(background: background, text: text)
         return ReaderCosmeticSettings(
-            fontSizePercent: settings.fontSizePercent,
-            fontFamily: settings.fontFamily,
-            backgroundCSS: settings.effectiveBackgroundCSS,
-            textCSS: settings.effectiveTextCSS,
-            linkCSS: settings.effectiveLinkCSS,
+            fontSizePercent: ReaderCSSSanitizer.fontSizePercent(settings.fontSizePercent),
+            fontFamily: ReaderCSSSanitizer.fontFamily(settings.fontFamily),
+            backgroundCSS: background,
+            textCSS: text,
+            linkCSS: link,
             hitBackground: hit.hitBackground,
             hitText: hit.hitText,
             hitActiveBackground: hit.activeBackground,
             hitActiveText: hit.activeText,
-            lineHeight: settings.lineHeight,
-            maxWidth: settings.maxWidth,
-            paddingH: settings.paddingH,
+            lineHeight: ReaderCSSSanitizer.lineHeight(settings.lineHeight),
+            maxWidth: ReaderCSSSanitizer.maxWidth(settings.maxWidth),
+            paddingH: ReaderCSSSanitizer.paddingH(settings.paddingH),
             allowLinkClicks: settings.allowReaderLinkClicks
         )
     }

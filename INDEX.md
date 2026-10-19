@@ -66,6 +66,7 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
   `.keyBindingsChanged` (l.142).
 - `ShortcutsSettingsViewController.swift` (176): key-capture rows for the Shortcuts tab.
 - `ReaderContrast.swift`: pure luminance and contrast math, and `hitColors(background:text:)`, the search-hit palette (yellow with black on light pages, deep amber with white on dark; active hit keeps system selection colors plus an outline). Feeds `ReaderCosmeticSettings.hit*` and the `--reader-hit-*` variables in `readerVarsCSS`.
+- `ReaderCSSSanitizer.swift`: pure validation of values interpolated into `readerVarsCSS` (hex colors normalized to `#rrggbb`, font stacks limited to quoted or bare names, numeric clamps matching the `SettingsManager` setters). Invalid input returns the fallback, never a partial value. Applied in `ReaderCosmeticSettings.current(from:)`.
 
 ## Large-file section maps
 
