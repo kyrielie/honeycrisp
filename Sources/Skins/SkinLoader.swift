@@ -20,9 +20,19 @@ enum SkinLoader {
         return ReaderSkin(id: id, name: name, creator: plist["CreatorName"] as? String, version: plist["Version"] as? String,
                           css: validation.css, template: template, light: validation.light, dark: validation.dark,
                           usesDefaultColors: validation.usesDefaultColors, lowContrast: validation.lowContrast,
-                          fontImports: validation.fontImports, family: plist["Family"] as? String,
+                          fontImports: validation.fontImports, familyGroup: sanitizedGroupName(plist["Family"] as? String),
                           familyVariant: plist["FamilyVariant"] as? String,
                           license: files.license.flatMap { try? String(contentsOf: $0, encoding: .utf8) })
+    }
+
+    /// `Family` is display-only metadata. Strip control characters, trim, and cap the length so it is
+    /// safe to show in UI; it is never interpolated into CSS.
+    static func sanitizedGroupName(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let cleaned = String(String.UnicodeScalarView(raw.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return nil }
+        return String(cleaned.prefix(128))
     }
 
     static func validatedFiles(in directory: URL) throws -> (info: URL, css: URL, template: URL, license: URL?) {

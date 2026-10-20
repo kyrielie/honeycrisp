@@ -33,11 +33,13 @@ final class ReaderCSSSanitizerTests: XCTestCase {
         }
     }
 
-    func testSeededThemeColorsAreUnchanged() {
-        for theme in SettingsManager.seedThemes {
-            for set in [theme.light, theme.dark] {
-                for value in [set.background, set.text, set.link] {
-                    XCTAssertEqual(ReaderCSSSanitizer.hexColor(value, fallback: fallback), value.lowercased(), theme.name)
+    func testBundledThemeTokensAreUnchanged() throws {
+        let skins = try BundledThemes.load()
+        XCTAssertFalse(skins.isEmpty)
+        for skin in skins {
+            for tokens in [skin.light, skin.dark].compactMap({ $0 }) {
+                for value in [tokens.background, tokens.ink, tokens.link] {
+                    XCTAssertEqual(ReaderCSSSanitizer.hexColor(value, fallback: fallback), value.lowercased(), skin.name)
                 }
             }
         }

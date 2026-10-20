@@ -18,7 +18,8 @@ struct ReaderSkin: Equatable, Identifiable {
     var usesDefaultColors: Bool
     var lowContrast: Bool
     var fontImports: [String]
-    var family: String?
+    /// NNW `Family` plist key: a grouping name for a later grouped picker. Never a CSS font stack.
+    var familyGroup: String?
     var familyVariant: String?
     var license: String?
 }

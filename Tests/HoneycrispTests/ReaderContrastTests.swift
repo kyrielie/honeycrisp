@@ -53,15 +53,17 @@ final class ReaderContrastTests: XCTestCase {
         XCTAssertEqual(colors.activeText, "HighlightText")
     }
 
-    func testTextOverHitMeetsTheMinimumForEverySeededThemeInLightAndDark() {
-        XCTAssertFalse(SettingsManager.seedThemes.isEmpty)
-        for theme in SettingsManager.seedThemes {
-            for (mode, set) in [("light", theme.light), ("dark", theme.dark)] {
-                let colors = ReaderContrast.hitColors(background: set.background, text: set.text)
+    func testTextOverHitMeetsTheMinimumForEveryBundledThemeInLightAndDark() throws {
+        let skins = try BundledThemes.load()
+        XCTAssertFalse(skins.isEmpty)
+        for skin in skins {
+            for (mode, tokens) in [("light", skin.light), ("dark", skin.dark)] {
+                guard let tokens else { continue }
+                let colors = ReaderContrast.hitColors(background: tokens.background, text: tokens.ink)
                 XCTAssertGreaterThanOrEqual(
                     ReaderContrast.ratio(colors.hitText, colors.hitBackground),
                     ReaderContrast.minimumTextRatio,
-                    "\(theme.name) \(mode)")
+                    "\(skin.name) \(mode)")
             }
         }
     }

@@ -1216,7 +1216,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         previewLabel.textColor = SettingsManager.color(fromCSS: text)
 
         let px = Self.px(fromPercent: settings.fontSizePercent)
-        let firstFamily = (settings.readerFontOverride.isEmpty ? (skin?.family ?? settings.fontFamily) : settings.readerFontOverride)
+        let firstFamily = settings.effectiveReaderFontFamily
             .split(separator: ",").first?
             .trimmingCharacters(in: CharacterSet(charactersIn: " '\"")) ?? ""
         let previewFont =

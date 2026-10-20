@@ -91,22 +91,49 @@ struct ReaderCosmeticSettings: Equatable {
     var justify: Bool
     var hyphenate: Bool
     var allowLinkClicks: Bool
+    /// The sanitized user overrides these values were resolved from. nil fields mean "the theme decides".
+    /// Carried so the override stylesheet can emit rules only for what the user actually chose.
+    var overrides: ReaderOverrides = .none
 
     /// Every value passes through `ReaderCSSSanitizer`, so the initial render and the live patch both
     /// get valid CSS no matter what is persisted. Hit colors derive from the sanitized page colors.
     static func current(from settings: SettingsManager, skin: ReaderSkin? = nil) -> ReaderCosmeticSettings {
-        settings.migrateReaderOverridesIfNeeded()
         let isDark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let tokens = isDark ? (skin?.dark ?? skin?.light) : skin?.light
-        let currentColors = settings.effectiveColorSet
-        let background = ReaderCSSSanitizer.hexColor(settings.readerBackgroundOverride.isEmpty ? (tokens?.background ?? currentColors.background) : settings.readerBackgroundOverride, fallback: ReaderCSSSanitizer.fallbackBackground)
-        let text = ReaderCSSSanitizer.hexColor(settings.readerInkOverride.isEmpty ? (tokens?.ink ?? currentColors.text) : settings.readerInkOverride, fallback: ReaderCSSSanitizer.fallbackText)
-        let link = ReaderCSSSanitizer.hexColor(settings.readerLinkOverride.isEmpty ? (tokens?.link ?? currentColors.link) : settings.readerLinkOverride, fallback: ReaderCSSSanitizer.fallbackLink)
-        let skinFont = skin?.family.map { ReaderCSSSanitizer.fontFamily($0) } ?? settings.effectiveReaderFontFamily
+        return resolve(
+            theme: skin ?? SkinStore.shared.skin(id: settings.readerSkinID),
+            overrides: settings.readerOverrides,
+            isDark: isDark,
+            allowLinkClicks: settings.allowReaderLinkClicks,
+            removeParagraphIndents: settings.removeParagraphIndents)
+    }
+
+    /// Pure resolution of theme + user overrides into concrete values: no `NSApp`, no
+    /// `SettingsManager`, so the reader, the Settings preview and tests all share it.
+    /// Precedence per value: user override, then the theme's token for the mode, then the baseline.
+    /// `removeParagraphIndents` makes the indent 0 unless the user chose an explicit one.
+    static func resolve(
+        theme: ReaderSkin?,
+        overrides rawOverrides: ReaderOverrides,
+        isDark: Bool,
+        allowLinkClicks: Bool,
+        removeParagraphIndents: Bool = false
+    ) -> ReaderCosmeticSettings {
+        let overrides = rawOverrides.sanitized()
+        let tokens = isDark ? (theme?.dark ?? theme?.light) : theme?.light
+        let chosen = overrides.colors(isDark: isDark)
+        let background = ReaderCSSSanitizer.hexColor(
+            chosen.background ?? tokens?.background ?? ReaderBaseline.background,
+            fallback: ReaderCSSSanitizer.fallbackBackground)
+        let text = ReaderCSSSanitizer.hexColor(
+            chosen.ink ?? tokens?.ink ?? ReaderBaseline.text,
+            fallback: ReaderCSSSanitizer.fallbackText)
+        let link = ReaderCSSSanitizer.hexColor(
+            chosen.link ?? tokens?.link ?? ReaderBaseline.link,
+            fallback: ReaderCSSSanitizer.fallbackLink)
         let hit = ReaderContrast.hitColors(background: background, text: text)
         return ReaderCosmeticSettings(
-            fontSizePercent: ReaderCSSSanitizer.fontSizePercent(settings.fontSizePercent),
-            fontFamily: ReaderCSSSanitizer.fontFamily(settings.readerFontOverride.isEmpty ? skinFont : settings.readerFontOverride),
+            fontSizePercent: overrides.fontSizePercent ?? ReaderBaseline.fontSizePercent,
+            fontFamily: overrides.bodyFont ?? FontPresets.defaultStack,
             backgroundCSS: background,
             textCSS: text,
             linkCSS: link,
@@ -114,16 +141,16 @@ struct ReaderCosmeticSettings: Equatable {
             hitText: hit.hitText,
             hitActiveBackground: hit.activeBackground,
             hitActiveText: hit.activeText,
-            lineHeight: ReaderCSSSanitizer.lineHeight(settings.lineHeight),
-            maxWidth: ReaderCSSSanitizer.maxWidth(settings.maxWidth),
-            paddingH: ReaderCSSSanitizer.paddingH(settings.paddingH),
-            paddingV: ReaderCSSSanitizer.paddingV(settings.paddingV),
-            paragraphIndent: min(3, max(0, settings.paragraphIndent)),
-            paragraphSpacing: min(3, max(0, settings.paragraphSpacing)),
-            justify: settings.justifyReaderText,
-            hyphenate: settings.hyphenateReaderText,
-            allowLinkClicks: settings.allowReaderLinkClicks
-        )
+            lineHeight: overrides.lineHeight ?? ReaderBaseline.lineHeight,
+            maxWidth: overrides.maxWidth ?? ReaderBaseline.maxWidth,
+            paddingH: overrides.paddingH ?? ReaderBaseline.paddingH,
+            paddingV: overrides.paddingV ?? ReaderBaseline.paddingV,
+            paragraphIndent: overrides.paragraphIndent ?? (removeParagraphIndents ? 0 : ReaderBaseline.paragraphIndent),
+            paragraphSpacing: overrides.paragraphSpacing ?? ReaderBaseline.paragraphSpacing,
+            justify: overrides.justify ?? ReaderBaseline.justify,
+            hyphenate: overrides.hyphenate ?? ReaderBaseline.hyphenate,
+            allowLinkClicks: allowLinkClicks,
+            overrides: overrides)
     }
 }
 
@@ -1367,12 +1394,9 @@ final class EPUBParser: NSObject {
         """
     }
 
-    private static func readerOverrideCSS(_ cosmetics: ReaderCosmeticSettings, skin: ReaderSkin?) -> String {
+    static func readerOverrideCSS(_ cosmetics: ReaderCosmeticSettings, skin: ReaderSkin?) -> String {
         var rules: [String] = []
         rules.append("html, body { -webkit-text-size-adjust: 100% !important; text-size-adjust: 100% !important; }")
-        if let skin, let family = skin.family, !family.isEmpty {
-            rules.append("body { font-family: \(family) !important; }")
-        }
         if !cosmetics.fontFamily.isEmpty {
             rules.append("body, #bodyContainer { font-family: \(cosmetics.fontFamily) !important; }")
             rules.append("h1, h2, h3, h4, h5, h6 { font-family: \(cosmetics.fontFamily) !important; }")
