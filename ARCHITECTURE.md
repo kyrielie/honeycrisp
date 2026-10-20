@@ -57,11 +57,11 @@ EPUBReaderApp (SwiftUI @main, boots AppDelegate)
 | `Sidebar/TOCSidebarViewController.swift` | TOC outline view inside the reader's `NSSplitView`. |
 | `Sidebar/SearchBarViewController.swift` | Centered in-book search overlay, debounced input, contextual excerpts, and navigable results. Search terms pass to WebKit as JSON string literals. |
 | `Sidebar/ThemePopoverViewController.swift` | Toolbar gear-button quick theme switcher (Apple-Books-style popover). |
-| `History/HistoryManager.swift` | Singleton; `UserDefaults`-backed `[HistoryEntry]` — url, title, opened date, security-scoped bookmark, reading-progress percent, last spine index + character offset. |
+| `History/HistoryManager.swift` | Singleton; `UserDefaults`-backed `[HistoryEntry]` — url, title, opened date, security-scoped bookmark, reading-progress percent, and a flow locator with offset, layout, and fraction fallback. |
 | `History/ReadingBookmark.swift` | Codable bookmarks in an independently versioned `UserDefaults` envelope, separate from History. |
 | `History/HistoryViewController.swift` | Popover list of recent books (open / remove actions). |
 | `Settings/SettingsManager.swift` | Singleton; every user-facing setting, all directly `UserDefaults`-backed (no intermediate model object, no persistence layer). Owns the `Theme` list, font presets, reading-mode default, column count, appearance mode, and posts `.readerCosmeticSettingsChanged` / `.readerStructuralSettingsChanged` / `SettingsManager.settingsChangedNotification` on mutation. |
-| `Settings/SettingsWindowController.swift` | Tabbed Settings window (General / Appearance / Advanced-ish "History" tab), all views built imperatively in `loadView()`. |
+| `Settings/SettingsWindowController.swift` | Five-tab Settings window (General / Reading / Appearance / History / Shortcuts), all views built imperatively in `loadView()`. |
 | `Settings/ShortcutsSettingsViewController.swift` | Per-`RebindableAction` key-capture rows. |
 | `Settings/KeyBinding.swift` | `RebindableAction` enum + `KeyBinding` codable value type; defaults live here. |
 
@@ -137,7 +137,7 @@ Anchor layout. Saved character offsets are only valid for the text extraction th
 
 - **DRM**: resolved. `EPUBParser` detects real DRM markers and throws `EPUBParseError.drmProtected`; font obfuscation alone is not DRM. Original note: a DRM-protected EPUB fell into the generic `.malformed`/`.opfNotFound` path. Resolution was: detect `META-INF/encryption.xml` in `EPUBParser.parsePackage`, add `EPUBParseError.drmProtected`; the existing in-webview `showError` path already surfaces `errorDescription` with no further plumbing needed.
 - **Calibre annotations**: not supported (read or write). Blocked on confirming Calibre's actual on-disk format — Calibre stores highlights/bookmarks in its own library metadata (`metadata.db`/sidecar), not embedded in the EPUB file itself, and a standalone-opened EPUB (Honeycrisp's only input mode — see §6) generally won't carry that sidecar. Needs a real sample before a parser is written. When built: read-only by hard constraint, no write path to the EPUB or any sidecar, enforced in code (not just documented).
-- **Quote sharing**: deferred. Previously listed as a non-goal. No design or code yet; the README lists it under "Planned".
+- **Quote sharing**: parked in `docs/ROADMAP.md`; no design or code yet.
 - **Reading aids**: optional scroll-mode auto-scroll and current-spine native speech are menu-driven. Speech starts from the current selection/location and does not promise continuous multi-spine playback.
 - **Scroll-mode page count**: the plan's premise ("no cheap whole-book page count in scroll mode") turned out to already be **false as currently implemented** — `EPUBParser.readerJS`'s `honeycrispPageInfo()` already computes `ceil(scrollHeight/innerHeight)`, and `ReaderViewController.didReceiveScrollPageInfo` already displays it correctly. The only real defect found is a doc comment in `ReaderViewController` that mis-scopes a paginated-mode caveat onto scroll mode too. This item is closer to "verify and fix a comment" than "implement a new calculation."
 - **HIG cleanup**: four independent, all confirmed present — `window.title` forced empty in `ReaderViewController.setToolbarTitle` (window title should be set even while hidden from the titlebar, since Window menu/Mission Control/VoiceOver read the model value independent of `titleVisibility`); `ReaderWindowController.setupWindow` sets `isRestorable = false` with state restoration to be implemented (persisting book URL + frame via a security-scoped bookmark, not reading position — see below); 19 `NSLog` debug call sites across `SettingsWindowController`, `ShortcutsSettingsViewController`, `AppDelegate.openSettingsAction`, and one in `ReaderViewController.showThemePopover`, all left over from diagnosing a since-fixed Settings-menu bug, to be deleted; toolbar buttons in `ReaderViewController.makeToolbarButton` accessibility-labeled only via the underlying `NSImage`, to get `setAccessibilityLabel` on the control itself, matching the pattern `SettingsWindowController` already uses correctly elsewhere.
@@ -146,7 +146,7 @@ Anchor layout. Saved character offsets are only valid for the text extraction th
 ## 8. Decisions carried over from the revision plan
 
 - **Per-window/per-book reading-mode override**: audited, confirmed already absent from the code (`ReaderViewController.currentMode` and `HistoryEntry` both already have no per-book mode field) — closed with no code change, documented here so it stops being re-flagged as missing.
-- **Non-goals** (no library view, no cross-book search) are confirmed intentional and listed in the README. "No publisher styling" was dropped as a non-goal by roadmap decision R1. Quote sharing was removed from this list: the earlier scoping was outdated, and it is now deferred rather than ruled out.
+- **Non-goals** (no library view, no cross-book search) are confirmed intentional and listed in the README. "No publisher styling" was dropped as a non-goal by roadmap decision R1; quote sharing is parked in the roadmap.
 
 ## 9. Settings window: per-tab resize is wired but inert (by design)
 
@@ -161,7 +161,7 @@ It has no visible effect: every pane's `loadView()` constructs its root
 `NSView` with `frame: NSRect(origin: .zero, size: SettingsPaneMetrics.size)`
 — the same fixed 520×560 constant for General, Appearance, History, and
 Shortcuts — so `resolvePreferredPaneSize()` always resolves to the same
-size for all four tabs and the animated resize path never actually
+size for all five tabs and the animated resize path never actually
 resizes anything. This is intentional (see the doc comment on
 `SettingsPaneMetrics`: a prior version *did* size per-tab and that read as
 unwanted "responsive" resizing), but the plan document was never updated to

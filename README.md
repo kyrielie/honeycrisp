@@ -87,17 +87,13 @@ xattr -d com.apple.quarantine /Applications/Honeycrisp.app
 
 The toolbar is customizable (View > Customize Toolbar), including the title and page counter.
 
-## Planned
-
-- **Quote sharing:** share a selected passage with attribution (title, author, chapter). Not yet scheduled.
-
 ## Non-goals
 
 These are intentional scope boundaries, not missing features.
 
 - **No library view.** File > Open, drag and drop, and the History popover are the only ways to open a book. See [ambrosia](https://github.com/kyrielie/ambrosia) for library management.
 - **No cross-library full-text search.** Search covers the open book only.
-- **No publisher CSS.** Honeycrisp strips publisher styling and applies its own reader CSS. This is by design, not a rendering bug.
+- **Publisher styles are preserved.** Reader settings override the properties they own while book styling that carries meaning remains in place.
 - **No per-window or per-book reading mode.** Paginated versus scroll is a single global default set in Settings > General.
 
 ## Keyboard shortcuts
@@ -117,6 +113,14 @@ Shortcuts marked configurable can be rebound in Settings > Shortcuts.
 | ← / → | Previous / next page (paginated mode) | No |
 | ↑ / ↓ | Scroll (scroll mode) | No |
 | Page Up / Page Down | Previous / next page or large scroll | No |
+
+## Project documents
+
+| Document | Purpose |
+|---|---|
+| [Architecture](ARCHITECTURE.md) | What the current code does |
+| [Framework](docs/FRAMEWORK.md) | Target layers and contracts |
+| [Roadmap](docs/ROADMAP.md) | Decisions, milestones, and implementation order |
 
 ## Development
 

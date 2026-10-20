@@ -27,7 +27,7 @@ final class HistoryManagerTests: XCTestCase {
 
         manager.record(url: firstURL, title: "First")
         manager.updateProgress(url: firstURL, percent: 57)
-        manager.updatePosition(url: firstURL, spineIndex: 3, characterOffset: 987)
+        manager.updatePosition(url: firstURL, spineIndex: 3, characterOffset: 987, fraction: 0.62)
         manager.record(url: secondURL, title: "Second")
         manager.record(url: firstURL, title: "First, Updated")
 
@@ -36,6 +36,8 @@ final class HistoryManagerTests: XCTestCase {
         XCTAssertEqual(manager.entries[0].readingProgressPercent, 57)
         XCTAssertEqual(manager.savedPosition(for: firstURL)?.spineIndex, 3)
         XCTAssertEqual(manager.savedPosition(for: firstURL)?.characterOffset, 987)
+        XCTAssertEqual(manager.savedLocator(for: firstURL)?.flowRestoreTarget, .offset(resource: 3, offset: 987))
+        XCTAssertEqual(manager.entries[0].lastResourceFraction, 0.62, accuracy: 0.0001)
     }
 
     func testProgressAndPositionUpdatesClampNegativeAndOversizedValues() {

@@ -40,10 +40,13 @@ enum ReadingProgress {
         else { return nil }
 
         let weights = resources.map { measure in
-            max(0, measure.textLength ?? measure.byteSize)
+            let textLength = measure.textLength ?? 0
+            return max(0, textLength > 0 ? textLength : measure.byteSize)
         }
         let total = weights.reduce(0, +)
-        guard total > 0 else { return Double(resource) / Double(max(resources.count, 1)) }
+        guard total > 0 else {
+            return Locator.clamp((Double(resource) + Locator.clamp(fallbackFraction)) / Double(max(resources.count, 1)))
+        }
 
         let currentWeight = weights[resource]
         let withinResource: Double

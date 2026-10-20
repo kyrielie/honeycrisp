@@ -458,10 +458,26 @@ final class ReaderViewController: NSViewController {
 
                     self.currentMode = SettingsManager.shared.defaultReadingMode
                     self.applyScrollbarVisibility()
-                    let savedPosition = HistoryManager.shared.savedPosition(for: url)
+                    let savedPosition = HistoryManager.shared.savedLocator(for: url)?.flowRestoreTarget
+                    let savedResource: Int
+                    let savedOffset: Int?
+                    let savedFraction: Double?
+                    switch savedPosition {
+                    case let .some(.offset(resource, offset)):
+                        savedResource = resource
+                        savedOffset = offset
+                        savedFraction = nil
+                    case let .some(.fraction(resource, fraction)):
+                        savedResource = resource
+                        savedOffset = nil
+                        savedFraction = fraction
+                    case .none:
+                        savedResource = 0
+                        savedOffset = nil
+                        savedFraction = nil
+                    }
                     let hasMeaningfulSavedPosition =
-                        (savedPosition?.spineIndex ?? 0) > 0
-                        || (savedPosition?.characterOffset ?? 0) > 0
+                        savedResource > 0 || (savedOffset ?? 0) > 0 || (savedFraction ?? 0) > 0
                     let coverStartIndex =
                         SettingsManager.shared.skipCoverWhenOpening
                         ? tocParser.firstSpineIndex(afterCoverIn: pkg)
@@ -470,7 +486,7 @@ final class ReaderViewController: NSViewController {
                     let initialSpineIndex =
                         shouldSkipCover
                         ? (coverStartIndex ?? 0)
-                        : min(savedPosition?.spineIndex ?? 0, max(0, pkg.spineURLs.count - 1))
+                        : min(savedResource, max(0, pkg.spineURLs.count - 1))
                     self.currentSpineIndex = initialSpineIndex
                     if self.currentMode == .scroll && shouldSkipCover {
                         self.pendingInitialScrollSpineIndex = initialSpineIndex
@@ -479,13 +495,23 @@ final class ReaderViewController: NSViewController {
                         self.installScrollWheelMonitorIfNeeded()
                         self.installKeyDownMonitor()
                         if let savedPosition {
-                            self.pendingPaginatedRestorePosition =
-                                savedPosition.characterOffset > 0
-                                ? .characterOffset(savedPosition.characterOffset) : .start
+                            switch savedPosition {
+                            case .offset(_, let offset):
+                                self.pendingPaginatedRestorePosition = offset > 0 ? .characterOffset(offset) : .start
+                            case .fraction(_, let fraction):
+                                self.pendingPaginatedRestorePosition = .fraction(fraction)
+                            }
                         }
                     }
-                    if let savedPosition, self.currentMode == .scroll, savedPosition.characterOffset > 0 {
-                        self.pendingPaginatedRestorePosition = .characterOffset(savedPosition.characterOffset)
+                    if self.currentMode == .scroll, let savedPosition {
+                        switch savedPosition {
+                        case .offset(_, let offset) where offset > 0:
+                            self.pendingPaginatedRestorePosition = .characterOffset(offset)
+                        case .fraction(_, let fraction):
+                            self.pendingPaginatedRestorePosition = .fraction(fraction)
+                        default:
+                            break
+                        }
                     }
 
                     self.renderCurrentContent()
@@ -553,10 +579,16 @@ final class ReaderViewController: NSViewController {
             return "window.honeycrispNavigateToChapterFraction(\(restore.spineIndex), \(restore.fraction));"
         }
         if let url = currentEPUBURL,
-            let saved = HistoryManager.shared.savedPosition(for: url),
-            saved.characterOffset > 0
+            let target = HistoryManager.shared.savedLocator(for: url)?.flowRestoreTarget
         {
-            return "window.honeycrispNavigateToOffset(\(saved.characterOffset));"
+            switch target {
+            case .offset(_, let offset) where offset > 0:
+                return "window.honeycrispNavigateToOffset(\(offset));"
+            case .fraction(_, let fraction):
+                return "window.honeycrispNavigateToFraction(\(fraction));"
+            default:
+                break
+            }
         }
         if let initialSpineIndex = pendingInitialScrollSpineIndex {
             pendingInitialScrollSpineIndex = nil
@@ -1189,11 +1221,16 @@ final class ReaderViewController: NSViewController {
             // in paginated mode -- both read from HistoryEntry) lands back where the
             // reader actually was, not wherever they were the last time the book was opened.
             self.webView.evaluateJavaScript(
-                "window.honeycrispCurrentCharacterOffset ? window.honeycrispCurrentCharacterOffset() : 0"
+                "window.honeycrispCurrentPosition ? window.honeycrispCurrentPosition() : {offset: 0, fraction: 0}"
             ) { result, _ in
-                if let offset = result as? Int {
+                if let position = result as? [String: Any],
+                    let offset = position["offset"] as? Int,
+                    let fraction = position["fraction"] as? Double
+                {
                     let spineIndex = self.currentMode == .scroll ? 0 : self.currentSpineIndex
-                    HistoryManager.shared.updatePosition(url: url, spineIndex: spineIndex, characterOffset: offset)
+                    HistoryManager.shared.updatePosition(
+                        url: url, spineIndex: spineIndex, characterOffset: offset, fraction: fraction
+                    )
                 }
                 self.renderCurrentContent()
             }
@@ -1235,6 +1272,16 @@ final class ReaderViewController: NSViewController {
             url: url, spineIndex: currentMode == .scroll ? 0 : currentSpineIndex, characterOffset: offset)
     }
 
+    func didReceivePosition(offset: Int, fraction: Double) {
+        guard let url = currentEPUBURL else { return }
+        HistoryManager.shared.updatePosition(
+            url: url,
+            spineIndex: currentMode == .scroll ? 0 : currentSpineIndex,
+            characterOffset: offset,
+            fraction: fraction
+        )
+    }
+
     private func startPositionSaveTimer() {
         positionSaveTimer?.invalidate()
         positionSaveTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
@@ -1253,10 +1300,15 @@ final class ReaderViewController: NSViewController {
         guard let url = currentEPUBURL else { return }
         let spineIndex = currentMode == .scroll ? 0 : currentSpineIndex
         webView.evaluateJavaScript(
-            "window.honeycrispCurrentCharacterOffset ? window.honeycrispCurrentCharacterOffset() : 0"
+            "window.honeycrispCurrentPosition ? window.honeycrispCurrentPosition() : {offset: 0, fraction: 0}"
         ) { result, _ in
-            guard let offset = result as? Int else { return }
-            HistoryManager.shared.updatePosition(url: url, spineIndex: spineIndex, characterOffset: offset)
+            guard let position = result as? [String: Any],
+                let offset = position["offset"] as? Int,
+                let fraction = position["fraction"] as? Double
+            else { return }
+            HistoryManager.shared.updatePosition(
+                url: url, spineIndex: spineIndex, characterOffset: offset, fraction: fraction
+            )
         }
     }
 
@@ -2057,6 +2109,13 @@ private class PositionMessageHandler: NSObject, WKScriptMessageHandler {
     init(owner: ReaderViewController) { self.owner = owner }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if let position = message.body as? [String: Any],
+            let offset = position["offset"] as? Int,
+            let fraction = position["fraction"] as? Double
+        {
+            owner?.didReceivePosition(offset: offset, fraction: fraction)
+            return
+        }
         guard let offset = message.body as? Int else { return }
         owner?.didReceivePosition(offset)
     }

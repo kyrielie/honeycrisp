@@ -970,6 +970,26 @@ final class EPUBParser: NSObject {
       return count;
     };
 
+    window.honeycrispCurrentPosition = function() {
+      var offset = window.honeycrispCurrentCharacterOffset();
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+      var length = 0, node;
+      while ((node = walker.nextNode()) !== null) length += node.length;
+      var x = Math.round(window.innerWidth / 2), y = HONEYCRISP_POSITION_REFERENCE_Y;
+      var range = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+      var hasTextCaret = range && range.startContainer && range.startContainer.nodeType === Node.TEXT_NODE;
+      var fraction;
+      if (hasTextCaret && length > 0) {
+        fraction = offset / length;
+      } else if (window._qlPaginated && window.qlProgressFraction) {
+        fraction = window.qlProgressFraction();
+      } else {
+        var maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+        fraction = maxY > 0 ? window.scrollY / maxY : 0;
+      }
+      return { offset: offset, fraction: Math.max(0, Math.min(1, fraction)) };
+    };
+
     // Character range currently on screen, as [start, end] in the same offset space
     // as honeycrispCurrentCharacterOffset (paginated: whole body) or
     // honeycrispCurrentChapterCharacterOffset (scroll: the given chapter section).
@@ -1081,6 +1101,11 @@ final class EPUBParser: NSObject {
       window.scrollTo(0, Math.max(0, targetY));
     };
 
+    window.honeycrispNavigateToFraction = function(fraction) {
+      var maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      window.scrollTo(0, Math.max(0, Math.min(1, fraction)) * maxY);
+    };
+
     window.honeycrispNavigateToOffset = function(targetOffset) {
       var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
       var count = 0, node, lastNode = null;
@@ -1109,7 +1134,7 @@ final class EPUBParser: NSObject {
 
     function reportPosition() {
       if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.positionHandler) {
-        window.webkit.messageHandlers.positionHandler.postMessage(window.honeycrispCurrentCharacterOffset());
+        window.webkit.messageHandlers.positionHandler.postMessage(window.honeycrispCurrentPosition());
       }
     }
 

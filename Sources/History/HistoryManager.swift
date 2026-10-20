@@ -20,9 +20,10 @@ struct HistoryEntry: Codable, Identifiable {
     /// separate from readingProgressPercent (which stays exactly as-is and keeps
     /// driving the "N% read" history-list label).
     var lastCharacterOffset: Int = 0
-    /// `EPUBAnchor` layout that `lastCharacterOffset` was saved against. Stamped by `updatePosition`,
-    /// carried forward by `record`. Stored for a future change that alters extraction; nothing reads
-    /// it yet.
+    /// Fraction within the saved resource, used when its text layout changes.
+    var lastResourceFraction: Double = 0
+    /// `EPUBAnchor` layout that `lastCharacterOffset` was saved against. Restore uses it to choose
+    /// between the exact offset and `lastResourceFraction`.
     var anchorLayout: Int = EPUBAnchor.currentLayout
 
     init(url: URL, title: String, bookmarkData: Data? = nil) {
@@ -34,6 +35,7 @@ struct HistoryEntry: Codable, Identifiable {
         self.readingProgressPercent = -1
         self.lastSpineIndex = 0
         self.lastCharacterOffset = 0
+        self.lastResourceFraction = 0
         self.anchorLayout = EPUBAnchor.currentLayout
     }
 
@@ -53,6 +55,7 @@ struct HistoryEntry: Codable, Identifiable {
         readingProgressPercent = try values.decode(Int.self, forKey: .readingProgressPercent)
         lastSpineIndex = try values.decodeIfPresent(Int.self, forKey: .lastSpineIndex) ?? 0
         lastCharacterOffset = try values.decodeIfPresent(Int.self, forKey: .lastCharacterOffset) ?? 0
+        lastResourceFraction = Locator.clamp(try values.decodeIfPresent(Double.self, forKey: .lastResourceFraction) ?? 0)
         anchorLayout = try values.decodeIfPresent(Int.self, forKey: .anchorLayout) ?? EPUBAnchor.legacyLayout
     }
 }
@@ -108,6 +111,7 @@ final class HistoryManager {
         let existingProgress = existing?.readingProgressPercent ?? -1
         let existingSpineIndex = existing?.lastSpineIndex ?? 0
         let existingCharacterOffset = existing?.lastCharacterOffset ?? 0
+        let existingResourceFraction = existing?.lastResourceFraction ?? 0
         let existingAnchorLayout = existing?.anchorLayout ?? EPUBAnchor.currentLayout
         entries.removeAll { $0.url == url }
 
@@ -115,6 +119,7 @@ final class HistoryManager {
         entry.readingProgressPercent = existingProgress
         entry.lastSpineIndex = existingSpineIndex
         entry.lastCharacterOffset = existingCharacterOffset
+        entry.lastResourceFraction = existingResourceFraction
         entry.anchorLayout = existingAnchorLayout
         entries.insert(entry, at: 0)
 
@@ -145,10 +150,11 @@ final class HistoryManager {
     /// Update the precise restore position (spine item + UTF-16 character offset)
     /// for an entry identified by URL. Parallel to updateProgress, but doesn't touch
     /// readingProgressPercent — that field keeps being computed the way it already is.
-    func updatePosition(url: URL, spineIndex: Int, characterOffset: Int) {
+    func updatePosition(url: URL, spineIndex: Int, characterOffset: Int, fraction: Double = 0) {
         guard let idx = entries.firstIndex(where: { $0.url == url }) else { return }
         entries[idx].lastSpineIndex = spineIndex
         entries[idx].lastCharacterOffset = max(0, characterOffset)
+        entries[idx].lastResourceFraction = Locator.clamp(fraction)
         entries[idx].anchorLayout = EPUBAnchor.currentLayout
         save()
     }
@@ -157,6 +163,16 @@ final class HistoryManager {
     func savedPosition(for url: URL) -> (spineIndex: Int, characterOffset: Int)? {
         guard let entry = entries.first(where: { $0.url == url }) else { return nil }
         return (entry.lastSpineIndex, entry.lastCharacterOffset)
+    }
+
+    func savedLocator(for url: URL) -> Locator? {
+        guard let entry = entries.first(where: { $0.url == url }) else { return nil }
+        return .flow(
+            resource: entry.lastSpineIndex,
+            offset: entry.lastCharacterOffset,
+            layout: entry.anchorLayout,
+            fraction: entry.lastResourceFraction
+        )
     }
 
     /// Return stored reading progress, or -1 if not recorded
