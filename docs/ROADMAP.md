@@ -119,6 +119,29 @@ the language is unknown (help text "Needs book language").
 Status: in progress (a contained EPUB resource scheme handler and MIME mapping are implemented and
 unit covered; production chapter hosting, wrapper/style injection, and JavaScript isolation remain).
 
+Baseline of the current merged-document reader: `ReaderBaselineTests` generates synthetic books of 250 and
+2,000 nominal pages (a page is 1,800 characters; 20 pages per chapter) and times the path
+`ReaderViewController.renderScrollContent` takes. Recorded 2026-10-20 on macOS 15.8.1 (Xcode version not
+recorded; add it), medians of 3 runs, default `WKWebView` without the production message handlers:
+
+| Pages | Chapters | parsePackage | buildScrollHTML | write | load + layout | Open total | HTML | WebContent memory |
+|---|---|---|---|---|---|---|---|---|
+| 250 | 13 | 2.2 ms | 59 ms | 1.5 ms | 128 ms | about 190 ms | 0.5 MB | 25 MB |
+| 2,000 | 100 | 10.5 ms | 469 ms | 5.9 ms | 332 ms | about 820 ms | 3.7 MB | 124 MB |
+
+Open total is build + write + load and layout, plus the one-time parse. Reading: cost is linear in book
+size (build 7.9x for 8x pages; WebContent memory 4.9x). The Swift regex pipeline is about 58% of the
+2,000-page open, more than WebKit load and layout, so M3 windowing and M6 both act on the dominant cost.
+App-process footprint changed by under 4 MB per open, which is measurement noise, not a constraint.
+Layout is forced with `scrollHeight` (1,572,882 px at 2,000 pages), so "load + layout" is full-document
+layout, not time to first visible text. At 250 pages run 1 was about 24 ms slower than runs 2 and 3 (warm-up).
+
+M3 budgets, from this baseline (edit here to change them): for the same 2,000-page fixture, open at most
+200 ms and WebContent memory at most 30 MB, i.e. no worse than today's 250-page book. A result above
+that budget but at or below today's 2,000-page figures (820 ms, 125 MB) is not a pass; record it and
+weigh it in the adopt or fall-back decision. A result above today's figures rejects the host. The host
+is measured with the same generator, run count and median, by extending `ReaderBaselineTests`.
+
 Build for one chapter, then a window of three, in the existing book window. Components: scheme
 handler (path containment, MIME from manifest, style and `lang` injection), chapter document per
 resource served as XML where XHTML, cascade layers (C4), author JS off with app scripts in their own
@@ -130,8 +153,8 @@ Exit criteria, all measured:
 - self-closed anchors do not swallow content.
 - cosmetic changes patch all mounted chapters without reload.
 - position restore by `(resource, offset)` matches the parity test.
-- a synthetic 2,000-page book opens within a budget and memory stays under a budget; set both
-  numbers from a baseline measurement of the current reader first, then record them here.
+- a synthetic 2,000-page book opens in at most 200 ms and WebContent memory stays at or under 30 MB
+  (budgets and baseline above), measured with the same method as `ReaderBaselineTests`.
 - author scripts do not execute (positive-control test proves the old behavior was observable).
 
 Outcome recorded as a decision: adopt, or fall back to a sanitized merged document with
