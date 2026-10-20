@@ -105,10 +105,13 @@ enum ReaderCSSSanitizer {
 
     static func paddingH(_ value: Int) -> Int { min(120, max(0, value)) }
 
+    /// The one line-height range: the setter, the stylesheet guard and the Appearance stepper all use it.
+    static let lineHeightRange: ClosedRange<Double> = 1.2...2.4
+
     /// Non-finite input returns the default line height (1.6).
     static func lineHeight(_ value: Double) -> Double {
         guard value.isFinite else { return 1.6 }
-        return min(2.4, max(1.2, value))
+        return min(lineHeightRange.upperBound, max(lineHeightRange.lowerBound, value))
     }
 
     static func paragraphSpacing(_ value: Double) -> Double {

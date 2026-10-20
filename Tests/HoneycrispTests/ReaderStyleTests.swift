@@ -54,6 +54,12 @@ final class ReaderStyleTests: XCTestCase {
         XCTAssertTrue(EPUBParser.readerCSS.contains("b, strong { font-weight: var(--reader-bold-weight); }"))
     }
 
+    func testSpacerParagraphRuleCollapsesBoxWithoutOverridingDisplayOrWhitespace() {
+        let css = EPUBParser.readerCSS
+        XCTAssertTrue(css.contains("p.ql-spacer { margin-block: 0 !important; height: 0; overflow: hidden; }"))
+        XCTAssertFalse(css.contains("p.ql-spacer { display"))
+    }
+
     func testFirstLineIndentIsOptionalAndSanitized() {
         let bookDefault = EPUBParser.readerVarsCSS(makeCosmetics())
         let custom = EPUBParser.readerVarsCSS(makeCosmetics(paragraphIndent: 2.5))

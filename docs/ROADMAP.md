@@ -162,7 +162,8 @@ updated.
 
 ### M6. Content pipeline on SwiftSoup (M)
 
-Status: not started.
+Status: not started (spike only: `SwiftSoupSpikeTests`, test-target dependency, outcome pending; the
+R5 decision is recorded after the owner runs it).
 
 Move body extraction, active-content removal, AO3 formatting, indent stripping and text extraction to
 SwiftSoup. Verify the package builds under the project's settings first. Gate: parity test (C2)
@@ -232,6 +233,14 @@ the new platform style.
   `docs/compatibility-corpus.md`; fix general issues before source-specific ones.
 - KEPUB: handle only markers actually observed.
 - Settings polish: refresh Appearance after Reset All, swatch accessibility, system spacing.
+  Done: numeric Appearance rows are slider plus editable field plus nudge stepper (no wrapping, one
+  line-height range, correct labels, structural settings apply on release); controls load stored values when
+  the tab is built. Open: preview that shows paragraph spacing and bold weight, paragraph spacing "Book
+  Default" (persisted-format change), live relayout of paginated mode after cosmetic changes, Reading-tab
+  auto-scroll stepper.
+- Collapse empty spacer paragraphs (`SettingsManager.collapseSpacerParagraphs`, off by default) tags
+  spacer paragraphs with a class in the current regex pipeline and keeps their text nodes. M6 moves
+  `markSpacerParagraphs` to SwiftSoup with the other transforms.
 - Docs updated with each milestone; deletion of anything superseded.
 
 ## 4. Order
@@ -255,6 +264,11 @@ be reopened by editing this file.
 
 ## 6. Verify before coding
 
+- Decision B1: the offset parity case in `WebKitOffsetParityTests` stays an expected failure until M3
+  replaces the merged document; no offset-definition change and no `currentLayout` bump before then.
+- Decision B2: SwiftSoup 2.14.3 is the candidate (tag manifest is `swift-tools-version:6.0`, macOS 12
+  platform floor; verified from the tag). Assumed buildable on the owner's Xcode; the M6 spike
+  (`SwiftSoupSpikeTests`) confirms or rejects R5.
 - WebKit: author-JS-off semantics with client-world scripts and user scripts on macOS 13;
   `WKURLSchemeHandler` response headers (Content-Security-Policy honored or not); whether
   `ENABLE_OUTGOING_NETWORK_CONNECTIONS` can be dropped once content cannot reach the network.

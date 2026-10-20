@@ -466,6 +466,7 @@ final class EPUBParser: NSObject {
         from pkg: EPUBPackage, cosmetics: ReaderCosmeticSettings,
         scrollRestoreJS: String = "",
         formatFirstChapter: Bool = false, removeParagraphIndents: Bool = false,
+        collapseSpacerParagraphs: Bool = false,
         hideImages: Bool = false
     ) throws -> String {
         let languageAttribute = pkg.language.map { " lang=\"\($0)\"" } ?? ""
@@ -475,7 +476,8 @@ final class EPUBParser: NSObject {
             let extracted = try Self.extractedChapterBody(
                 from: pkg, index: i, base: base,
                 formatFirstChapter: formatFirstChapter,
-                removeParagraphIndents: removeParagraphIndents
+                removeParagraphIndents: removeParagraphIndents,
+                collapseSpacerParagraphs: collapseSpacerParagraphs
             )
             body += "\n<section class=\"ql-chapter\" id=\"chapter-\(i)\" data-chapter-index=\"\(i)\">\n"
                  + extracted
@@ -525,6 +527,7 @@ final class EPUBParser: NSObject {
         paddingV: CGFloat = 24,
         formatFirstChapter: Bool = false,
         removeParagraphIndents: Bool = false,
+        collapseSpacerParagraphs: Bool = false,
         hideImages: Bool = false
     ) throws -> String {
         let languageAttribute = pkg.language.map { " lang=\"\($0)\"" } ?? ""
@@ -532,7 +535,8 @@ final class EPUBParser: NSObject {
         let extracted = try Self.extractedChapterBody(
             from: pkg, index: spineIndex, base: base,
             formatFirstChapter: formatFirstChapter,
-            removeParagraphIndents: removeParagraphIndents
+            removeParagraphIndents: removeParagraphIndents,
+            collapseSpacerParagraphs: collapseSpacerParagraphs
         )
         let body = "\n<section class=\"ql-chapter\" id=\"chapter-\(spineIndex)\" data-chapter-index=\"\(spineIndex)\">\n"
             + extracted
@@ -687,7 +691,8 @@ final class EPUBParser: NSObject {
         index: Int,
         base: URL,
         formatFirstChapter: Bool,
-        removeParagraphIndents: Bool
+        removeParagraphIndents: Bool,
+        collapseSpacerParagraphs: Bool = false
     ) throws -> String {
         let url = pkg.spineURLs[index]
         let data = try Data(contentsOf: url)
@@ -701,6 +706,10 @@ final class EPUBParser: NSObject {
 
         if removeParagraphIndents {
             extracted = Self.stripLeadingIndentWhitespace(extracted)
+        }
+
+        if collapseSpacerParagraphs {
+            extracted = Self.markSpacerParagraphs(extracted)
         }
 
         // AO3 EPUBs emit a redundant "Preface" heading on the first spine item;
@@ -722,6 +731,39 @@ final class EPUBParser: NSObject {
         html.replacingOccurrences(
             of: #"(?i)(<(?:p|div|li|h[1-6]|blockquote|td|th)[^>]*>)[ \t]+"#,
             with: "$1", options: .regularExpression)
+    }
+
+    /// Matches a `<p>` whose whole content is whitespace, `&nbsp;` (named or numeric) or `<br>`.
+    /// `<p\b` keeps `<pre>` and `<param>` out. Calibre and AO3 conversions emit one of these
+    /// between every pair of real paragraphs.
+    private static let spacerParagraphPattern =
+        #"<p\b[^>]*>(?:\s|&nbsp;|&#160;|&#[xX][aA]0;|<br\s*/?>)+</p>"#
+
+    /// Adds the `ql-spacer` class to spacer paragraphs (see `spacerParagraphPattern`). `readerCSS`
+    /// then collapses them to zero height, so the paragraph spacing setting is the only gap left.
+    /// Tag, not delete: the text nodes stay, so character offsets, search and speech text, and
+    /// saved positions are unchanged. Merges into an existing `class` attribute.
+    private static func markSpacerParagraphs(_ html: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: spacerParagraphPattern, options: [.caseInsensitive])
+        else { return html }
+        let result = NSMutableString(string: html)
+        // Reverse order so earlier ranges stay valid while replacing.
+        for match in regex.matches(in: html, range: NSRange(location: 0, length: result.length)).reversed() {
+            let matched = result.substring(with: match.range)
+            guard let close = matched.firstIndex(of: ">") else { continue }
+            let opening = matched.prefix(2)  // "<p" or "<P": keep the book's tag case
+            let attributes = String(matched[matched.index(matched.startIndex, offsetBy: 2)..<close])
+            let rest = matched[matched.index(after: close)...]
+            let newAttributes: String
+            if attributes.range(of: #"(?i)(?<![\w-])class\s*="#, options: .regularExpression) != nil {
+                newAttributes = attributes.replacingOccurrences(
+                    of: #"(?i)(?<![\w-])class\s*=\s*(["'])"#, with: "class=$1ql-spacer ", options: .regularExpression)
+            } else {
+                newAttributes = attributes + " class=\"ql-spacer\""
+            }
+            result.replaceCharacters(in: match.range, with: "\(opening)\(newAttributes)>\(rest)")
+        }
+        return result as String
     }
 
     /// Strips a redundant "Preface" heading (AO3 uses <h2 class="toc-heading"> in
@@ -1352,6 +1394,10 @@ final class EPUBParser: NSObject {
         margin-block-end: var(--reader-paragraph-spacing) !important;
         text-indent: var(--reader-paragraph-indent);
     }
+
+    /* Empty spacer paragraphs tagged by markSpacerParagraphs (opt-in setting). The text node stays
+       in the DOM; only its box collapses. No display, white-space or line-height override. */
+    p.ql-spacer { margin-block: 0 !important; height: 0; overflow: hidden; }
 
     b, strong { font-weight: var(--reader-bold-weight); }
 

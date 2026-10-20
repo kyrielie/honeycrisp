@@ -571,7 +571,7 @@ final class SettingsManager {
     /// Per-theme now -- see Theme.lineHeight's doc comment.
     var lineHeight: Double {
         get { currentTheme.lineHeight }
-        set { mutateCurrentTheme { $0.lineHeight = min(2.4, max(1.2, newValue)) }; notifyCosmeticChange() }
+        set { mutateCurrentTheme { $0.lineHeight = ReaderCSSSanitizer.lineHeight(newValue) }; notifyCosmeticChange() }
     }
 
     // MARK: Font size
@@ -629,6 +629,14 @@ final class SettingsManager {
     var removeParagraphIndents: Bool {
         get { defaults.bool(forKey: "readerRemoveParagraphIndents") }
         set { defaults.set(newValue, forKey: "readerRemoveParagraphIndents"); notifyStructuralChange() }
+    }
+
+    /// Collapses empty spacer paragraphs (a `<p>` holding only `&nbsp;`, whitespace or `<br>`) to zero
+    /// height, so Paragraph Spacing is the only gap between paragraphs. Structural for the same
+    /// reason as `removeParagraphIndents`: it changes the HTML that gets built.
+    var collapseSpacerParagraphs: Bool {
+        get { defaults.bool(forKey: "readerCollapseSpacerParagraphs") }
+        set { defaults.set(newValue, forKey: "readerCollapseSpacerParagraphs"); notifyStructuralChange() }
     }
 
     /// Hides embedded images in EPUB reading content while keeping their source
@@ -920,6 +928,7 @@ final class SettingsManager {
     func resetAllToDefaults() {
         formatFirstChapter = false
         removeParagraphIndents = false
+        collapseSpacerParagraphs = false
         hideImages = false
         skipCoverWhenOpening = false
         autoScrollSpeed = 60

@@ -10,10 +10,12 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 
 Touches `EPUBParser`, `PaginationEngine`, `ReaderViewController`, `ReaderWindowController`,
 `SettingsManager`, `SettingsWindowController`, `ThemePopoverViewController`, plus new
-`ReaderStyleTests` and `SettingsManagerThemeTests`. Known contents: theme and popover work, the
-code-font toggle (`useThemeFontForCode`), `EPUBParser.strippingEmbeddedStyles` and
-`EPUBAnchor.currentLayout = 2`. Roadmap M0 decides keep or drop (the style-stripping pieces are
-dropped). The diff was not audited line by line.
+`ReaderStyleTests` and `SettingsManagerThemeTests`. Keep set (roadmap M0): theme and popover work,
+the code-font toggle (`useThemeFontForCode`), the new theme tests. Dropped at M0:
+`EPUBParser.strippingEmbeddedStyles` and the `currentLayout` bump (the code has
+`EPUBAnchor.currentLayout = 1`). Also uncommitted: the "Collapse empty spacer paragraphs" setting
+(`collapseSpacerParagraphs`, `EPUBParser.markSpacerParagraphs`, `SpacerParagraphTests`). The diff was
+not audited line by line.
 
 ## Repo root
 
@@ -54,6 +56,7 @@ dropped). The diff was not audited line by line.
 - `PaginationJS.swift` (313): JS for paginated mode: column snap, boundaries, char-offset seek.
   Posts `pageAction` and `positionUpdate`.
 - `EPUBDropTargetView.swift` (43): drag and drop of `.epub` files.
+- `EPUBResourceSchemeHandler.swift` (~100): `honeycrisp-epub://book/...` scheme handler (containment, MIME, optional response headers, `ActiveTaskSet`). Not wired into the reader yet (roadmap M3).
 
 ### Parsing (`Sources/Parsing`)
 - `EPUBParser.swift` (1356): models, unzip, OPF, DRM, search, HTML and CSS building, `readerJS`.
@@ -128,7 +131,7 @@ dropped). The diff was not audited line by line.
 |---|---|
 | 9-130 | `EPUBPackage`, `EPUBManifestItem`, `EPUBSpineItem`, `EPUBLandmark`, `BookSearchResult`, `ReaderCosmeticSettings` (`current(from:)`), `EPUBParseError` (incl. `.drmProtected`) |
 | 131-413 | `EPUBParser`: `javaScriptStringLiteral`, `unpackEPUB`, `isDRMProtected(extractedRoot:)`, `parsePackage`, `searchResults`, `speechText`, `searchableText`, `parseOPF`, `parseLandmarks` |
-| 414-721 | HTML building: `buildScrollHTML`, `buildPageHTML`, `paginatedColumnCSS`, `extractedChapterBody`, `strippingEmbeddedStyles` (uncommitted), `stripLeadingIndentWhitespace`, `stripPrefaceHeading` |
+| 414-775 | HTML building: `buildScrollHTML`, `buildPageHTML`, `paginatedColumnCSS`, `extractedChapterBody`, `stripLeadingIndentWhitespace`, `markSpacerParagraphs`, `stripPrefaceHeading` |
 | 722-772 | `MARK: First Chapter Formatting Quirk` (`applyFirstChapterFormatting`), then `extractBody` and `rewriteResourceURLs` (regex URL rewriting) |
 | 773-1225 | `readerJS` string: progress, position, page info, chapter navigation, auto-scroll, search |
 | 1226-1356 | CSS: `readerVarsCSS` turns `ReaderCosmeticSettings` into CSS variables; `readerCSS` |
@@ -200,12 +203,19 @@ dropped). The diff was not audited line by line.
 | `RestorePositionTests.swift` | fraction clamping, bootstrap call generation |
 | `ReaderCSSSanitizerTests.swift` | hex normalization and injection rejection, preset and custom font stacks, length limits, numeric clamps, non-finite fallback |
 | `ReaderContrastTests.swift` | contrast math, hit palette per page luminance, 4.5:1 floor for every seed theme, `--reader-hit-*` variables, no fixed yellow in `readerCSS` |
+| `SettingsValueFormatTests.swift` | em, px and line-height labels, typed-number parsing, line-height range shared with the sanitizer, slider snap and clamp math |
 | `ReaderStyleTests.swift` (uncommitted) | in-body `<style>` and stylesheet-link stripping (dropped at M0), `--reader-code-font-family` var and `readerCSS` rule, `useThemeFontForCode` default, persistence, reset |
+| `LocatorTests.swift` | restore by offset when `layout` matches, by clamped fraction otherwise, Codable round trip, progress from text lengths or byte sizes, nil for paged or unknown resource |
+| `EPUBResourceSchemeHandlerTests.swift` | scheme handler path containment (traversal and foreign schemes rejected), MIME mapping, `ActiveTaskSet` bookkeeping, root normalization |
+| `ChapterHostSpikeTests.swift` (spike, roadmap M3) | `WKWebView` through the scheme handler: self-closed anchors, nested relative images, class-only italic from book CSS, author script positive control and with content JS off, client-world scripts and message handlers, CSP header, `.html` served as XML, stopping a load mid-flight; outcomes are attachments to record in the roadmap |
+| `WebKitOffsetParityTests.swift` | real `WKWebView` harness: offset parity (`XCTExpectFailure`, merged-document wrapper whitespace), known resource and link rewrite bugs (`XCTExpectFailure`), publisher class styles survive |
+| `SwiftSoupSpikeTests.swift` (spike, roadmap M6/R5) | SwiftSoup 2.14.3 on synthetic XHTML: XML serialization, text-node offsets versus `searchResults`, known `&amp;lt;` double-decode drift (expected failure), active-content removal, spacer detection parity, 1 MB parse time; test-target dependency only |
+| `SpacerParagraphTests.swift` (uncommitted) | spacer paragraphs tagged only when the setting is on, real paragraphs and `<pre>` untouched, text nodes unchanged, tag case kept |
 | `SettingsManagerThemeTests.swift` (uncommitted) | seed keys, Codable round trip, seed-key migration, reset and customized check by identity, delete protection (isolated `UserDefaults` suite) |
 
 Not covered: `SettingsManager` beyond themes, `KeyBinding`, `PaginationEngine` navigation,
-`ReaderViewController`, search UI, all Settings panes, `AppDelegate`. No `WKWebView` harness exists
-yet (roadmap M1).
+`ReaderViewController`, search UI, all Settings panes, `AppDelegate`. The `WKWebView` harness is
+`WebKitOffsetParityTests` only; its parity case is an expected failure until M3 (roadmap decision B1).
 
 ## Docs map
 
@@ -217,3 +227,8 @@ yet (roadmap M1).
 | `ARCHITECTURE.md` | What the code does today, data flow, historical decisions | Says four Settings tabs in places; code has five |
 | `README.md` | Features, install, build | Architecture table is partial |
 | `docs/compatibility-corpus.md` | Synthetic fixture to test mapping, real-file validation table | All real-sample rows pending |
+
+- `SettingsValueFormat.swift`: pure display strings and typed-number parsing for the Appearance sliders (em, px,
+  line height).
+- `ValueSliderControl.swift`: slider plus editable field plus nudge stepper used by every numeric Appearance row;
+  `commitsOnRelease` for settings that re-render the book, throttled live updates for the rest.

@@ -43,7 +43,7 @@ Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
 - `Package.swift` is a secondary SwiftPM entry point with no test target; CI does not use it.
 - Targets: macOS 13.0, Swift 5.9 (the test target declares macOS 14.0 in `project.yml`). Gate newer
   platform APIs with `#available`; do not write macOS 26 (Liquid Glass) code until it can be tested
-  (roadmap R16, M10). Only dependency: ZIPFoundation (`from: 0.9.0`, resolved 0.9.20).
+  (roadmap R16, M10). Only app dependency: ZIPFoundation (`from: 0.9.0`, resolved 0.9.20). SwiftSoup 2.14.3 is a test-target-only spike (roadmap R5, M6); not linked into the app.
 - CI (`.github/workflows/`): `tests.yml` on push to main and PRs; `build-dmg.yml` and `release.yml`
   are manual. Releases are ad-hoc signed, not notarized; version comes from the tag.
 - `Assets.xcassets/` exists in the repo but is stripped from upload zips by `make_upload_zip.sh`.

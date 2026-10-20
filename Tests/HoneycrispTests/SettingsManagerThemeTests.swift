@@ -23,6 +23,16 @@ final class SettingsManagerThemeTests: XCTestCase {
         super.tearDown()
     }
 
+    // MARK: Spacer paragraphs
+
+    func testCollapseSpacerParagraphsDefaultsOffAndPersists() {
+        XCTAssertFalse(manager.collapseSpacerParagraphs)
+        manager.collapseSpacerParagraphs = true
+        XCTAssertTrue(manager.collapseSpacerParagraphs)
+        XCTAssertTrue(SettingsManager(defaults: defaults).collapseSpacerParagraphs)
+        XCTAssertTrue(defaults.bool(forKey: "readerCollapseSpacerParagraphs"))
+    }
+
     // MARK: Seeds
 
     func testSeedThemesHaveUniqueKeysAndAreDefault() {

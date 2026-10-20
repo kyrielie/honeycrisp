@@ -349,6 +349,23 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         indentHint.textColor = .secondaryLabelColor
         stack.addArrangedSubview(indentHint)
 
+        let spacerCheckbox = NSButton(
+            checkboxWithTitle: "Collapse empty spacer paragraphs",
+            target: self,
+            action: #selector(toggleCollapseSpacerParagraphs(_:))
+        )
+        spacerCheckbox.state = SettingsManager.shared.collapseSpacerParagraphs ? .on : .off
+        stack.addArrangedSubview(spacerCheckbox)
+        self.spacerCheckbox = spacerCheckbox
+
+        let spacerHint = NSTextField(
+            wrappingLabelWithString:
+                "Hides the blank paragraphs some converted books put between every paragraph, so Paragraph Spacing in Appearance controls the gap."
+        )
+        spacerHint.font = NSFont.systemFont(ofSize: 11)
+        spacerHint.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(spacerHint)
+
         let hideImagesCheckbox = NSButton(
             checkboxWithTitle: "Hide images while reading",
             target: self,
@@ -479,6 +496,7 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
     private weak var linkClicksCheckbox: NSButton?
     private weak var formatCheckbox: NSButton?
     private weak var indentCheckbox: NSButton?
+    private weak var spacerCheckbox: NSButton?
     private weak var hideImagesCheckbox: NSButton?
     private weak var skipCoverCheckbox: NSButton?
     private weak var newBookControl: NSSegmentedControl?
@@ -536,6 +554,10 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         SettingsManager.shared.removeParagraphIndents = sender.state == .on
     }
 
+    @objc private func toggleCollapseSpacerParagraphs(_ sender: NSButton) {
+        SettingsManager.shared.collapseSpacerParagraphs = sender.state == .on
+    }
+
     @objc private func toggleHideImages(_ sender: NSButton) {
         SettingsManager.shared.hideImages = sender.state == .on
     }
@@ -578,6 +600,7 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         // refresh gating, not here.
         formatCheckbox?.state = SettingsManager.shared.formatFirstChapter ? .on : .off
         indentCheckbox?.state = SettingsManager.shared.removeParagraphIndents ? .on : .off
+        spacerCheckbox?.state = SettingsManager.shared.collapseSpacerParagraphs ? .on : .off
         hideImagesCheckbox?.state = SettingsManager.shared.hideImages ? .on : .off
         skipCoverCheckbox?.state = SettingsManager.shared.skipCoverWhenOpening ? .on : .off
         linkClicksCheckbox?.state = SettingsManager.shared.allowReaderLinkClicks ? .on : .off
@@ -616,6 +639,8 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         speedStepper.minValue = 10
         speedStepper.maxValue = 1200
         speedStepper.increment = 25
+        speedStepper.valueWraps = false
+        speedStepper.setAccessibilityLabel("Auto-scroll speed")
         speedStepper.integerValue = Int(SettingsManager.shared.autoScrollSpeed)
         speedStepper.target = self
         speedStepper.action = #selector(autoScrollSpeedChanged(_:))
@@ -771,25 +796,18 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     /// when the tab first appears, matching the swatch that's already shown
     /// selected.
     private var expandedThemeID: UUID? = SettingsManager.shared.currentThemeID
-    private var lineHeightStepper: NSStepper!
-    private var lineHeightLabel: NSTextField!
+    private var lineHeightControl: ValueSliderControl!
     private var textAlignmentPopup: NSPopUpButton!
     private var hyphenationCheckbox: NSButton!
-    private var paragraphSpacingStepper: NSStepper!
-    private var paragraphSpacingLabel: NSTextField!
+    private var paragraphSpacingControl: ValueSliderControl!
     private var paragraphIndentCheckbox: NSButton!
-    private var paragraphIndentStepper: NSStepper!
-    private var paragraphIndentLabel: NSTextField!
+    private var paragraphIndentControl: ValueSliderControl!
     private var boldWeightPopup: NSPopUpButton!
     private var contrastWarningLabels: [UUID: NSTextField] = [:]
-    private var fontSizeStepper: NSStepper!
-    private var fontSizeLabel: NSTextField!
-    private var maxWidthStepper: NSStepper!
-    private var maxWidthLabel: NSTextField!
-    private var paddingHStepper: NSStepper!
-    private var paddingHLabel: NSTextField!
-    private var paddingVStepper: NSStepper!
-    private var paddingVLabel: NSTextField!
+    private var fontSizeControl: ValueSliderControl!
+    private var maxWidthControl: ValueSliderControl!
+    private var paddingHControl: ValueSliderControl!
+    private var paddingVControl: ValueSliderControl!
 
     private var previewBox: NSBox!
     private var previewLabel: NSTextField!
@@ -835,15 +853,6 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         let themeGridRow = grid.addRow(with: [makeThemeGrid(), NSGridCell.emptyContentView])
         themeGridRow.mergeCells(in: NSRange(location: 0, length: 2))
         themeGridRow.cell(at: 0).xPlacement = .fill
-        let transferRow = NSStackView(views: [
-            NSButton(title: "Import Theme…", target: self, action: #selector(importThemeClicked(_:))),
-            NSButton(title: "Export Theme…", target: self, action: #selector(exportThemeClicked(_:))),
-        ])
-        transferRow.orientation = .horizontal
-        transferRow.spacing = 8
-        let transferGridRow = grid.addRow(with: [NSGridCell.emptyContentView, transferRow])
-        transferGridRow.mergeCells(in: NSRange(location: 0, length: 2))
-
         // Typography, no header.
         grid.addRow(with: [label("Font:"), makeFontPopup()])
         fontFamilyFieldRow = grid.addRow(with: [NSGridCell.emptyContentView, makeFontFamilyField()])
@@ -856,15 +865,24 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         grid.addRow(with: [label("Paragraph Spacing:"), makeParagraphSpacingRow()])
         grid.addRow(with: [label("First-line Indent:"), makeParagraphIndentRow()])
         grid.addRow(with: [label("Bold Text:"), makeBoldWeightPopup()])
+        syncTextFlowControls()
 
         // Layout, no header.
         grid.addRow(with: [label("Max Width:"), makeMaxWidthRow()])
         grid.addRow(with: [label("Horizontal Margin:"), makePaddingHRow()])
         grid.addRow(with: [label("Vertical Margin:"), makePaddingVRow()])
 
-        let resetButton = NSButton(title: "Reset to Defaults", target: self, action: #selector(resetToDefaults(_:)))
-        resetButton.bezelStyle = .rounded
-        grid.addRow(with: [NSGridCell.emptyContentView, resetButton])
+        let themeActions = NSStackView(views: [
+            NSButton(title: "Import Theme…", target: self, action: #selector(importThemeClicked(_:))),
+            NSButton(title: "Export Theme…", target: self, action: #selector(exportThemeClicked(_:))),
+            NSButton(title: "Reset to Defaults", target: self, action: #selector(resetToDefaults(_:))),
+        ])
+        themeActions.orientation = .horizontal
+        themeActions.spacing = 8
+        themeActions.arrangedSubviews.forEach { ($0 as? NSButton)?.bezelStyle = .rounded }
+        let actionsGridRow = grid.addRow(with: [themeActions, NSGridCell.emptyContentView])
+        actionsGridRow.mergeCells(in: NSRange(location: 0, length: 2))
+        actionsGridRow.cell(at: 0).xPlacement = .fill
 
         // ── Preview (responsive: below the form, no fixed height, sized by its
         // own wrapped text at whatever width the window currently is) ────────
@@ -1016,37 +1034,46 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     }
 
     @objc private func exportThemeClicked(_ sender: Any?) {
+        guard let window = view.window else { return }
+        let data: Data
+        do { data = try ThemeExport.encode(SettingsManager.shared.currentTheme) }
+        catch { showThemeTransferError(error); return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.canCreateDirectories = true
         let safeName = SettingsManager.shared.currentTheme.name
             .components(separatedBy: CharacterSet(charactersIn: "/:")).joined(separator: "-")
         panel.nameFieldStringValue = "\(safeName).honeycrisp-theme.json"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let hasAccess = url.startAccessingSecurityScopedResource()
-        defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
-        do {
-            try ThemeExport.encode(SettingsManager.shared.currentTheme).write(to: url, options: .atomic)
-        } catch { showThemeTransferError(error) }
+        panel.prompt = "Export"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            let hasAccess = url.startAccessingSecurityScopedResource()
+            defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
+            do { try data.write(to: url, options: .atomic) }
+            catch { self?.showThemeTransferError(error) }
+        }
     }
 
     @objc private func importThemeClicked(_ sender: Any?) {
+        guard let window = view.window else { return }
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let hasAccess = url.startAccessingSecurityScopedResource()
-        defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
-        let theme: Theme
-        do { theme = try ThemeExport.decode(Data(contentsOf: url)) }
-        catch { showThemeTransferError(error); return }
-        SettingsManager.shared.addTheme(theme)
-        expandedThemeID = theme.id
-        refreshAllTypographyControls()
-        rebuildThemeGrid()
-        refreshPreview()
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let self, let url = panel.url else { return }
+            let hasAccess = url.startAccessingSecurityScopedResource()
+            defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let theme = try ThemeExport.decode(Data(contentsOf: url))
+                SettingsManager.shared.addTheme(theme)
+                self.expandedThemeID = theme.id
+                self.refreshAllTypographyControls()
+                self.rebuildThemeGrid()
+                self.refreshPreview()
+            } catch { self.showThemeTransferError(error) }
+        }
     }
 
     private func showThemeTransferError(_ error: Error) {
@@ -1054,7 +1081,11 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         alert.messageText = "Theme File Could Not Be Accessed"
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
-        alert.runModal()
+        if let window = view.window {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
     }
 
     private func makeCodeFontCheckbox() -> NSButton {
@@ -1251,32 +1282,34 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         return button
     }
 
-    /// Line height is a unitless CSS multiplier (e.g. 1.6), not a pixel value --
-    /// shown as a stepper with a one-decimal label, same visual language as the
-    /// px steppers below, replacing the old bare slider with no visible value.
+    /// Generic factory for the Appearance sliders. `commitsOnRelease` is for settings that re-render the book.
+    // swiftlint:disable:next function_parameter_count
+    private func makeSliderControl(
+        name: String, range: ClosedRange<Double>, step: Double, fractionDigits: Int,
+        initial: Double, commitsOnRelease: Bool,
+        format: @escaping (Double) -> String,
+        onChange: @escaping (ValueSliderControl, Double) -> Void
+    ) -> ValueSliderControl {
+        let spec = ValueSliderControl.Spec(
+            range: range, step: step, fractionDigits: fractionDigits, accessibilityName: name, format: format)
+        let control = ValueSliderControl(spec: spec, value: initial, commitsOnRelease: commitsOnRelease)
+        control.onChange = { [unowned control] value in onChange(control, value) }
+        return control
+    }
+
+    /// Line height is a unitless CSS multiplier (e.g. 1.6), not a pixel value.
     private func makeLineHeightRow() -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = 6
-
-        let stepper = NSStepper()
-        stepper.minValue = 1.0
-        stepper.maxValue = 3.0
-        stepper.increment = 0.1
-        stepper.doubleValue = SettingsManager.shared.lineHeight
-        stepper.target = self
-        stepper.action = #selector(lineHeightStepperChanged(_:))
-        stepper.setAccessibilityLabel("Line Height")
-        stepper.setAccessibilityValueDescription(String(format: "%.1f", SettingsManager.shared.lineHeight))
-        lineHeightStepper = stepper
-
-        let valueLabel = NSTextField(labelWithString: String(format: "%.1f", SettingsManager.shared.lineHeight))
-        valueLabel.font = NSFont.systemFont(ofSize: 13)
-        lineHeightLabel = valueLabel
-
-        row.addArrangedSubview(stepper)
-        row.addArrangedSubview(valueLabel)
-        return row
+        let control = makeSliderControl(
+            name: "Line Height", range: ReaderCSSSanitizer.lineHeightRange, step: 0.1, fractionDigits: 2,
+            initial: SettingsManager.shared.lineHeight, commitsOnRelease: false,
+            format: SettingsValueFormat.lineHeight
+        ) { [weak self] control, value in
+            SettingsManager.shared.lineHeight = value
+            control.setValue(SettingsManager.shared.lineHeight)
+            self?.refreshPreview()
+        }
+        lineHeightControl = control
+        return control
     }
 
     private func makeTextAlignmentPopup() -> NSView {
@@ -1294,54 +1327,60 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
 
     private func makeHyphenationCheckbox() -> NSView {
         let checkbox = NSButton(
-            checkboxWithTitle: "Use book language when available",
+            checkboxWithTitle: "Hyphenate words",
             target: self,
             action: #selector(hyphenationChanged(_:))
         )
         checkbox.toolTip = "Automatic hyphenation requires a valid language in the book metadata."
+        checkbox.setAccessibilityLabel("Hyphenate words")
         hyphenationCheckbox = checkbox
-        return checkbox
+
+        let help = NSTextField(wrappingLabelWithString: "Needs book language. Books without one are not hyphenated.")
+        help.font = NSFont.systemFont(ofSize: 11)
+        help.textColor = .secondaryLabelColor
+
+        let stack = NSStackView(views: [checkbox, help])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        return stack
     }
 
     private func makeParagraphSpacingRow() -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = 8
-        let stepper = NSStepper()
-        stepper.minValue = 0
-        stepper.maxValue = 3
-        stepper.increment = 0.25
-        stepper.target = self
-        stepper.action = #selector(paragraphSpacingChanged(_:))
-        let value = NSTextField(labelWithString: "1.0 em")
-        value.widthAnchor.constraint(equalToConstant: 60).isActive = true
-        paragraphSpacingStepper = stepper
-        paragraphSpacingLabel = value
-        row.addArrangedSubview(stepper)
-        row.addArrangedSubview(value)
-        return row
+        let control = makeSliderControl(
+            name: "Paragraph Spacing", range: 0...3, step: 0.25, fractionDigits: 2,
+            initial: SettingsManager.shared.paragraphSpacing, commitsOnRelease: false,
+            format: SettingsValueFormat.em
+        ) { [weak self] control, value in
+            SettingsManager.shared.paragraphSpacing = value
+            control.setValue(SettingsManager.shared.paragraphSpacing)
+            self?.refreshPreview()
+        }
+        paragraphSpacingControl = control
+        return control
     }
 
     private func makeParagraphIndentRow() -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = 8
         let bookDefault = NSButton(
             checkboxWithTitle: "Book Default", target: self, action: #selector(paragraphIndentDefaultChanged(_:)))
-        let stepper = NSStepper()
-        stepper.minValue = 0
-        stepper.maxValue = 4
-        stepper.increment = 0.25
-        stepper.target = self
-        stepper.action = #selector(paragraphIndentChanged(_:))
-        let value = NSTextField(labelWithString: "Book")
-        value.widthAnchor.constraint(equalToConstant: 60).isActive = true
+        bookDefault.setAccessibilityLabel("First-line Indent: Book Default")
+        let control = makeSliderControl(
+            name: "First-line Indent", range: 0...4, step: 0.25, fractionDigits: 2,
+            initial: SettingsManager.shared.paragraphIndent ?? 0, commitsOnRelease: false,
+            format: SettingsValueFormat.em
+        ) { [weak self] control, value in
+            SettingsManager.shared.paragraphIndent = value
+            control.setValue(SettingsManager.shared.paragraphIndent ?? value)
+            self?.refreshPreview()
+        }
+        control.disabledText = "Book"
         paragraphIndentCheckbox = bookDefault
-        paragraphIndentStepper = stepper
-        paragraphIndentLabel = value
-        row.addArrangedSubview(bookDefault)
-        row.addArrangedSubview(stepper)
-        row.addArrangedSubview(value)
+        paragraphIndentControl = control
+
+        let row = NSStackView(views: [bookDefault, control])
+        row.orientation = .vertical
+        row.alignment = .leading
+        row.spacing = 4
         return row
     }
 
@@ -1354,71 +1393,26 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         }
         popup.target = self
         popup.action = #selector(boldWeightChanged(_:))
+        popup.setAccessibilityLabel("Bold Text")
         boldWeightPopup = popup
         return popup
-    }
-
-    /// Single parameterized factory for the remaining integer px steppers
-    /// (max width / h margin / v margin). Font size has its own row below
-    /// since it displays px while storing percent underneath.
-    // swiftlint:disable:next function_parameter_count
-    private func makeStepperRow(
-        label accessibilityName: String,
-        min: Double, max: Double, increment: Double,
-        initialValue: Int,
-        action: Selector,
-        stepper stepperOut: inout NSStepper!, valueLabel valueLabelOut: inout NSTextField!
-    ) -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = 6
-
-        let stepper = NSStepper()
-        stepper.minValue = min
-        stepper.maxValue = max
-        stepper.increment = increment
-        stepper.integerValue = initialValue
-        stepper.target = self
-        stepper.action = action
-        stepper.setAccessibilityLabel(accessibilityName)
-        stepper.setAccessibilityValueDescription("\(initialValue) pixels")
-        stepperOut = stepper
-
-        let valueLabel = NSTextField(labelWithString: "\(initialValue)px")
-        valueLabel.font = NSFont.systemFont(ofSize: 13)
-        valueLabelOut = valueLabel
-
-        row.addArrangedSubview(stepper)
-        row.addArrangedSubview(valueLabel)
-        return row
     }
 
     /// Displays and edits the reader's root font size as an actual pixel
     /// number rather than a percentage -- see baseFontSizePx's doc comment.
     private func makeFontSizeRow() -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = 6
-
-        let currentPx = Self.px(fromPercent: SettingsManager.shared.fontSizePercent)
-        let stepper = NSStepper()
-        stepper.minValue = Double(Self.px(fromPercent: 50))  // matches fontSizePercent's stored clamp (50-300%)
-        stepper.maxValue = Double(Self.px(fromPercent: 300))
-        stepper.increment = 1
-        stepper.integerValue = currentPx
-        stepper.target = self
-        stepper.action = #selector(fontSizeStepperChanged(_:))
-        stepper.setAccessibilityLabel("Font Size")
-        stepper.setAccessibilityValueDescription("\(currentPx) pixels")
-        fontSizeStepper = stepper
-
-        let valueLabel = NSTextField(labelWithString: "\(currentPx)px")
-        valueLabel.font = NSFont.systemFont(ofSize: 13)
-        fontSizeLabel = valueLabel
-
-        row.addArrangedSubview(stepper)
-        row.addArrangedSubview(valueLabel)
-        return row
+        let minPx = Double(Self.px(fromPercent: 50))  // matches fontSizePercent's stored clamp (50-300%)
+        let maxPx = Double(Self.px(fromPercent: 300))
+        let control = makeSliderControl(
+            name: "Font Size", range: minPx...maxPx, step: 1, fractionDigits: 0,
+            initial: Double(Self.px(fromPercent: SettingsManager.shared.fontSizePercent)),
+            commitsOnRelease: false, format: SettingsValueFormat.px
+        ) { [weak self] _, value in
+            SettingsManager.shared.fontSizePercent = Self.percent(fromPx: Int(value.rounded()))
+            self?.refreshPreview()
+        }
+        fontSizeControl = control
+        return control
     }
 
     private static func px(fromPercent percent: Int) -> Int {
@@ -1429,31 +1423,44 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         Int((Double(px) / baseFontSizePx * 100.0).rounded())
     }
 
+    // Max width and the margins re-render the book, so they apply when the slider is released.
     private func makeMaxWidthRow() -> NSView {
-        makeStepperRow(
-            label: "Max Width", min: 320, max: 1400, increment: 20,
-            initialValue: SettingsManager.shared.maxWidth,
-            action: #selector(maxWidthStepperChanged(_:)),
-            stepper: &maxWidthStepper, valueLabel: &maxWidthLabel
-        )
+        let control = makeSliderControl(
+            name: "Max Width", range: 320...1400, step: 20, fractionDigits: 0,
+            initial: Double(SettingsManager.shared.maxWidth), commitsOnRelease: true,
+            format: SettingsValueFormat.px
+        ) { control, value in
+            SettingsManager.shared.maxWidth = Int(value.rounded())
+            control.setValue(Double(SettingsManager.shared.maxWidth))
+        }
+        maxWidthControl = control
+        return control
     }
 
     private func makePaddingHRow() -> NSView {
-        makeStepperRow(
-            label: "Horizontal Margin", min: 0, max: 120, increment: 4,
-            initialValue: SettingsManager.shared.paddingH,
-            action: #selector(paddingHStepperChanged(_:)),
-            stepper: &paddingHStepper, valueLabel: &paddingHLabel
-        )
+        let control = makeSliderControl(
+            name: "Horizontal Margin", range: 0...120, step: 4, fractionDigits: 0,
+            initial: Double(SettingsManager.shared.paddingH), commitsOnRelease: true,
+            format: SettingsValueFormat.px
+        ) { control, value in
+            SettingsManager.shared.paddingH = Int(value.rounded())
+            control.setValue(Double(SettingsManager.shared.paddingH))
+        }
+        paddingHControl = control
+        return control
     }
 
     private func makePaddingVRow() -> NSView {
-        makeStepperRow(
-            label: "Vertical Margin", min: 0, max: 120, increment: 4,
-            initialValue: SettingsManager.shared.paddingV,
-            action: #selector(paddingVStepperChanged(_:)),
-            stepper: &paddingVStepper, valueLabel: &paddingVLabel
-        )
+        let control = makeSliderControl(
+            name: "Vertical Margin", range: 0...120, step: 4, fractionDigits: 0,
+            initial: Double(SettingsManager.shared.paddingV), commitsOnRelease: true,
+            format: SettingsValueFormat.px
+        ) { control, value in
+            SettingsManager.shared.paddingV = Int(value.rounded())
+            control.setValue(Double(SettingsManager.shared.paddingV))
+        }
+        paddingVControl = control
+        return control
     }
 
     // MARK: - Visibility
@@ -1603,13 +1610,6 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         refreshPreview()
     }
 
-    @objc private func lineHeightStepperChanged(_ sender: NSStepper) {
-        SettingsManager.shared.lineHeight = sender.doubleValue
-        lineHeightLabel.stringValue = String(format: "%.1f", sender.doubleValue)
-        sender.setAccessibilityValueDescription(String(format: "%.1f", sender.doubleValue))
-        refreshPreview()
-    }
-
     @objc private func textAlignmentChanged(_ sender: NSPopUpButton) {
         guard let rawValue = sender.selectedItem?.representedObject as? String,
             let alignment = ThemeTextAlignment(rawValue: rawValue)
@@ -1623,24 +1623,10 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         refreshPreview()
     }
 
-    @objc private func paragraphSpacingChanged(_ sender: NSStepper) {
-        SettingsManager.shared.paragraphSpacing = sender.doubleValue
-        paragraphSpacingLabel.stringValue = String(format: "%.2g em", sender.doubleValue)
-        refreshPreview()
-    }
-
     @objc private func paragraphIndentDefaultChanged(_ sender: NSButton) {
         let useBookIndent = sender.state == .on
-        paragraphIndentStepper.isEnabled = !useBookIndent
-        SettingsManager.shared.paragraphIndent = useBookIndent ? nil : paragraphIndentStepper.doubleValue
-        paragraphIndentLabel.stringValue = useBookIndent
-            ? "Book" : String(format: "%.2g em", paragraphIndentStepper.doubleValue)
-        refreshPreview()
-    }
-
-    @objc private func paragraphIndentChanged(_ sender: NSStepper) {
-        SettingsManager.shared.paragraphIndent = sender.doubleValue
-        paragraphIndentLabel.stringValue = String(format: "%.2g em", sender.doubleValue)
+        paragraphIndentControl.isEnabled = !useBookIndent
+        SettingsManager.shared.paragraphIndent = useBookIndent ? nil : paragraphIndentControl.value
         refreshPreview()
     }
 
@@ -1649,32 +1635,6 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             let weight = ThemeBoldWeight(rawValue: raw) else { return }
         SettingsManager.shared.boldWeight = weight
         refreshPreview()
-    }
-
-    @objc private func fontSizeStepperChanged(_ sender: NSStepper) {
-        let px = sender.integerValue
-        SettingsManager.shared.fontSizePercent = Self.percent(fromPx: px)
-        fontSizeLabel.stringValue = "\(px)px"
-        sender.setAccessibilityValueDescription("\(px) pixels")
-        refreshPreview()
-    }
-
-    @objc private func maxWidthStepperChanged(_ sender: NSStepper) {
-        SettingsManager.shared.maxWidth = sender.integerValue
-        maxWidthLabel.stringValue = "\(SettingsManager.shared.maxWidth)px"
-        sender.setAccessibilityValueDescription("\(SettingsManager.shared.maxWidth) pixels")
-    }
-
-    @objc private func paddingHStepperChanged(_ sender: NSStepper) {
-        SettingsManager.shared.paddingH = sender.integerValue
-        paddingHLabel.stringValue = "\(SettingsManager.shared.paddingH)px"
-        sender.setAccessibilityValueDescription("\(SettingsManager.shared.paddingH) pixels")
-    }
-
-    @objc private func paddingVStepperChanged(_ sender: NSStepper) {
-        SettingsManager.shared.paddingV = sender.integerValue
-        paddingVLabel.stringValue = "\(SettingsManager.shared.paddingV)px"
-        sender.setAccessibilityValueDescription("\(SettingsManager.shared.paddingV) pixels")
     }
 
     @objc private func resetToDefaults(_ sender: NSButton) {
@@ -1706,38 +1666,37 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     /// Defaults and after switching the active theme, since typography is now
     /// per-theme (see Theme.fontFamily's doc comment) rather than one global
     /// setting shared across every theme.
-    private func refreshAllTypographyControls() {
-        selectFontPopupItem(forCurrentFontFamily: SettingsManager.shared.fontFamily)
-        fontFamilyField.stringValue = SettingsManager.shared.fontFamily
-        codeFontCheckbox.state = SettingsManager.shared.useThemeFontForCode ? .on : .off
-        refreshThemeGridSelection()
-        lineHeightStepper.doubleValue = SettingsManager.shared.lineHeight
-        lineHeightLabel.stringValue = String(format: "%.1f", SettingsManager.shared.lineHeight)
+    /// Loads stored values into the alignment, hyphenation, paragraph spacing, first-line indent and bold
+    /// controls. Their factories only create the views, so this must also run once when the tab is built;
+    /// before that, the spacing control sat at 0 while its label said 1.0 em, and the first click wrote 0.
+    private func syncTextFlowControls() {
         if let item = textAlignmentPopup.itemArray.first(where: {
             $0.representedObject as? String == SettingsManager.shared.textAlignment.rawValue
         }) {
             textAlignmentPopup.select(item)
         }
         hyphenationCheckbox.state = SettingsManager.shared.hyphenate ? .on : .off
-        paragraphSpacingStepper.doubleValue = SettingsManager.shared.paragraphSpacing
-        paragraphSpacingLabel.stringValue = String(format: "%.2g em", SettingsManager.shared.paragraphSpacing)
+        paragraphSpacingControl.setValue(SettingsManager.shared.paragraphSpacing)
         let indent = SettingsManager.shared.paragraphIndent
         paragraphIndentCheckbox.state = indent == nil ? .on : .off
-        paragraphIndentStepper.isEnabled = indent != nil
-        paragraphIndentStepper.doubleValue = indent ?? 0
-        paragraphIndentLabel.stringValue = indent.map { String(format: "%.2g em", $0) } ?? "Book"
+        paragraphIndentControl.isEnabled = indent != nil
+        paragraphIndentControl.setValue(indent ?? paragraphIndentControl.value)
         if let item = boldWeightPopup.itemArray.first(where: {
             $0.representedObject as? String == SettingsManager.shared.boldWeight.rawValue
         }) { boldWeightPopup.select(item) }
-        let px = Self.px(fromPercent: SettingsManager.shared.fontSizePercent)
-        fontSizeStepper.integerValue = px
-        fontSizeLabel.stringValue = "\(px)px"
-        maxWidthStepper.integerValue = SettingsManager.shared.maxWidth
-        maxWidthLabel.stringValue = "\(SettingsManager.shared.maxWidth)px"
-        paddingHStepper.integerValue = SettingsManager.shared.paddingH
-        paddingHLabel.stringValue = "\(SettingsManager.shared.paddingH)px"
-        paddingVStepper.integerValue = SettingsManager.shared.paddingV
-        paddingVLabel.stringValue = "\(SettingsManager.shared.paddingV)px"
+    }
+
+    private func refreshAllTypographyControls() {
+        selectFontPopupItem(forCurrentFontFamily: SettingsManager.shared.fontFamily)
+        fontFamilyField.stringValue = SettingsManager.shared.fontFamily
+        codeFontCheckbox.state = SettingsManager.shared.useThemeFontForCode ? .on : .off
+        refreshThemeGridSelection()
+        lineHeightControl.setValue(SettingsManager.shared.lineHeight)
+        syncTextFlowControls()
+        fontSizeControl.setValue(Double(Self.px(fromPercent: SettingsManager.shared.fontSizePercent)))
+        maxWidthControl.setValue(Double(SettingsManager.shared.maxWidth))
+        paddingHControl.setValue(Double(SettingsManager.shared.paddingH))
+        paddingVControl.setValue(Double(SettingsManager.shared.paddingV))
         updateCustomModeVisibility()
     }
 

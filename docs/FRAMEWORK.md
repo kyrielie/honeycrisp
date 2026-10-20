@@ -210,7 +210,7 @@ search/speech  -> L2 text extraction (parity with C2) -> Locator -> L3 scrolls a
 |---|---|---|
 | Unit (pure) | Locator math, progress, sanitizer, navigation history, theme codec, history and bookmark durability | every pure type ships with tests |
 | Pipeline | synthetic chapter fixtures in, expected served HTML and extracted text out | fixtures are generated in temp directories; never add real EPUBs |
-| WebKit harness | parity (C2), style cascade (C4), host behavior (C5) in a real `WKWebView` | required before any L2, L3 or C4 change merges; this suite does not exist yet |
+| WebKit harness | parity (C2), style cascade (C4), host behavior (C5) in a real `WKWebView` | required before any L2, L3 or C4 change merges; started: `WebKitOffsetParityTests` exists, and its parity and rewrite cases are expected failures until the merged document is replaced (roadmap M3, decision B1) |
 | Device | local `samples/` runs recorded in `docs/compatibility-corpus.md` | observed outcome only, never copy book content |
 
 A change to an untested area (`SettingsManager`, `KeyBinding`, `PaginationEngine`,

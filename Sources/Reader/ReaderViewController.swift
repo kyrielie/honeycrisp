@@ -546,12 +546,14 @@ final class ReaderViewController: NSViewController {
             // "Format for AO3" maps to the same formatFirstChapter flag in SettingsManager
             let format = SettingsManager.shared.formatFirstChapter
             let removeIndents = SettingsManager.shared.removeParagraphIndents
+            let collapseSpacers = SettingsManager.shared.collapseSpacerParagraphs
             let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, language: pkg.language)
             lastBuiltCosmetics = cosmetics
             let html = try parser.buildScrollHTML(
                 from: pkg, cosmetics: cosmetics,
                 scrollRestoreJS: scrollRestoreBootstrapJS(),
                 formatFirstChapter: format, removeParagraphIndents: removeIndents,
+                collapseSpacerParagraphs: collapseSpacers,
                 hideImages: SettingsManager.shared.hideImages
             )
             let indexURL = pkg.rootFolder.appendingPathComponent(Self.readerHTMLFilename)
@@ -621,6 +623,7 @@ final class ReaderViewController: NSViewController {
             let parser = EPUBParser()
             let format = SettingsManager.shared.formatFirstChapter
             let removeIndents = SettingsManager.shared.removeParagraphIndents
+            let collapseSpacers = SettingsManager.shared.collapseSpacerParagraphs
             let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, language: pkg.language)
             lastBuiltCosmetics = cosmetics
             let bounds = webView.bounds.isEmpty ? NSRect(x: 0, y: 0, width: 780, height: 920) : webView.bounds
@@ -634,6 +637,7 @@ final class ReaderViewController: NSViewController {
                 paddingH: CGFloat(SettingsManager.shared.paddingH),
                 paddingV: CGFloat(SettingsManager.shared.paddingV),
                 formatFirstChapter: format, removeParagraphIndents: removeIndents,
+                collapseSpacerParagraphs: collapseSpacers,
                 hideImages: SettingsManager.shared.hideImages
             )
             let indexURL = pkg.rootFolder.appendingPathComponent(Self.readerHTMLFilename)
