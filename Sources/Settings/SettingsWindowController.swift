@@ -773,6 +773,12 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     private var expandedThemeID: UUID? = SettingsManager.shared.currentThemeID
     private var lineHeightStepper: NSStepper!
     private var lineHeightLabel: NSTextField!
+    private var textAlignmentPopup: NSPopUpButton!
+    private var hyphenationCheckbox: NSButton!
+    private var paragraphSpacingStepper: NSStepper!
+    private var paragraphSpacingLabel: NSTextField!
+    private var boldWeightPopup: NSPopUpButton!
+    private var contrastWarningLabels: [UUID: NSTextField] = [:]
     private var fontSizeStepper: NSStepper!
     private var fontSizeLabel: NSTextField!
     private var maxWidthStepper: NSStepper!
@@ -826,6 +832,14 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         let themeGridRow = grid.addRow(with: [makeThemeGrid(), NSGridCell.emptyContentView])
         themeGridRow.mergeCells(in: NSRange(location: 0, length: 2))
         themeGridRow.cell(at: 0).xPlacement = .fill
+        let transferRow = NSStackView(views: [
+            NSButton(title: "Import Theme…", target: self, action: #selector(importThemeClicked(_:))),
+            NSButton(title: "Export Theme…", target: self, action: #selector(exportThemeClicked(_:))),
+        ])
+        transferRow.orientation = .horizontal
+        transferRow.spacing = 8
+        let transferGridRow = grid.addRow(with: [NSGridCell.emptyContentView, transferRow])
+        transferGridRow.mergeCells(in: NSRange(location: 0, length: 2))
 
         // Typography, no header.
         grid.addRow(with: [label("Font:"), makeFontPopup()])
@@ -834,6 +848,10 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         grid.addRow(with: [label("Code:"), makeCodeFontCheckbox()])
         grid.addRow(with: [label("Font Size:"), makeFontSizeRow()])
         grid.addRow(with: [label("Line Height:"), makeLineHeightRow()])
+        grid.addRow(with: [label("Text Alignment:"), makeTextAlignmentPopup()])
+        grid.addRow(with: [label("Hyphenation:"), makeHyphenationCheckbox()])
+        grid.addRow(with: [label("Paragraph Spacing:"), makeParagraphSpacingRow()])
+        grid.addRow(with: [label("Bold Text:"), makeBoldWeightPopup()])
 
         // Layout, no header.
         grid.addRow(with: [label("Max Width:"), makeMaxWidthRow()])
@@ -991,6 +1009,30 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         fontPopup.target = self
         fontPopup.action = #selector(fontChanged(_:))
         return fontPopup
+    }
+
+    @objc private func exportThemeClicked(_ sender: Any?) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "\(SettingsManager.shared.currentTheme.name).honeycrisp-theme.json"
+        guard panel.runModal() == .OK, let url = panel.url,
+            let data = try? ThemeExport.encode(SettingsManager.shared.currentTheme)
+        else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    @objc private func importThemeClicked(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url,
+            let data = try? Data(contentsOf: url), let theme = try? ThemeExport.decode(data)
+        else { return }
+        SettingsManager.shared.addTheme(theme)
+        expandedThemeID = theme.id
+        refreshAllTypographyControls()
+        rebuildThemeGrid()
+        refreshPreview()
     }
 
     private func makeCodeFontCheckbox() -> NSButton {
@@ -1215,6 +1257,62 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         return row
     }
 
+    private func makeTextAlignmentPopup() -> NSView {
+        let popup = NSPopUpButton()
+        for alignment in ThemeTextAlignment.allCases {
+            popup.addItem(withTitle: alignment.label)
+            popup.lastItem?.representedObject = alignment.rawValue
+        }
+        popup.target = self
+        popup.action = #selector(textAlignmentChanged(_:))
+        popup.setAccessibilityLabel("Text Alignment")
+        textAlignmentPopup = popup
+        return popup
+    }
+
+    private func makeHyphenationCheckbox() -> NSView {
+        let checkbox = NSButton(
+            checkboxWithTitle: "Use book language when available",
+            target: self,
+            action: #selector(hyphenationChanged(_:))
+        )
+        checkbox.toolTip = "Automatic hyphenation requires a valid language in the book metadata."
+        hyphenationCheckbox = checkbox
+        return checkbox
+    }
+
+    private func makeParagraphSpacingRow() -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 8
+        let stepper = NSStepper()
+        stepper.minValue = 0
+        stepper.maxValue = 3
+        stepper.increment = 0.25
+        stepper.target = self
+        stepper.action = #selector(paragraphSpacingChanged(_:))
+        let value = NSTextField(labelWithString: "1.0 em")
+        value.widthAnchor.constraint(equalToConstant: 60).isActive = true
+        paragraphSpacingStepper = stepper
+        paragraphSpacingLabel = value
+        row.addArrangedSubview(stepper)
+        row.addArrangedSubview(value)
+        return row
+    }
+
+    private func makeBoldWeightPopup() -> NSView {
+        let popup = NSPopUpButton()
+        let labels = ["Book Default", "Normal", "Medium", "Bold"]
+        for (weight, title) in zip(ThemeBoldWeight.allCases, labels) {
+            popup.addItem(withTitle: title)
+            popup.lastItem?.representedObject = weight.rawValue
+        }
+        popup.target = self
+        popup.action = #selector(boldWeightChanged(_:))
+        boldWeightPopup = popup
+        return popup
+    }
+
     /// Single parameterized factory for the remaining integer px steppers
     /// (max width / h margin / v margin). Font size has its own row below
     /// since it displays px while storing percent underneath.
@@ -1351,6 +1449,13 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
 
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineHeightMultiple = SettingsManager.shared.lineHeight
+        switch SettingsManager.shared.textAlignment {
+        case .book: paragraphStyle.alignment = .natural
+        case .left: paragraphStyle.alignment = .left
+        case .center: paragraphStyle.alignment = .center
+        case .right: paragraphStyle.alignment = .right
+        case .justify: paragraphStyle.alignment = .justified
+        }
         previewLabel.attributedStringValue = NSAttributedString(
             string: previewLabel.stringValue,
             attributes: [
@@ -1455,6 +1560,32 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         refreshPreview()
     }
 
+    @objc private func textAlignmentChanged(_ sender: NSPopUpButton) {
+        guard let rawValue = sender.selectedItem?.representedObject as? String,
+            let alignment = ThemeTextAlignment(rawValue: rawValue)
+        else { return }
+        SettingsManager.shared.textAlignment = alignment
+        refreshPreview()
+    }
+
+    @objc private func hyphenationChanged(_ sender: NSButton) {
+        SettingsManager.shared.hyphenate = sender.state == .on
+        refreshPreview()
+    }
+
+    @objc private func paragraphSpacingChanged(_ sender: NSStepper) {
+        SettingsManager.shared.paragraphSpacing = sender.doubleValue
+        paragraphSpacingLabel.stringValue = String(format: "%.2g em", sender.doubleValue)
+        refreshPreview()
+    }
+
+    @objc private func boldWeightChanged(_ sender: NSPopUpButton) {
+        guard let raw = sender.selectedItem?.representedObject as? String,
+            let weight = ThemeBoldWeight(rawValue: raw) else { return }
+        SettingsManager.shared.boldWeight = weight
+        refreshPreview()
+    }
+
     @objc private func fontSizeStepperChanged(_ sender: NSStepper) {
         let px = sender.integerValue
         SettingsManager.shared.fontSizePercent = Self.percent(fromPx: px)
@@ -1517,6 +1648,17 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         refreshThemeGridSelection()
         lineHeightStepper.doubleValue = SettingsManager.shared.lineHeight
         lineHeightLabel.stringValue = String(format: "%.1f", SettingsManager.shared.lineHeight)
+        if let item = textAlignmentPopup.itemArray.first(where: {
+            $0.representedObject as? String == SettingsManager.shared.textAlignment.rawValue
+        }) {
+            textAlignmentPopup.select(item)
+        }
+        hyphenationCheckbox.state = SettingsManager.shared.hyphenate ? .on : .off
+        paragraphSpacingStepper.doubleValue = SettingsManager.shared.paragraphSpacing
+        paragraphSpacingLabel.stringValue = String(format: "%.2g em", SettingsManager.shared.paragraphSpacing)
+        if let item = boldWeightPopup.itemArray.first(where: {
+            $0.representedObject as? String == SettingsManager.shared.boldWeight.rawValue
+        }) { boldWeightPopup.select(item) }
         let px = Self.px(fromPercent: SettingsManager.shared.fontSizePercent)
         fontSizeStepper.integerValue = px
         fontSizeLabel.stringValue = "\(px)px"
@@ -1551,6 +1693,10 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             newTheme.maxWidth = base.maxWidth
             newTheme.paddingH = base.paddingH
             newTheme.paddingV = base.paddingV
+            newTheme.textAlignment = base.textAlignment
+            newTheme.hyphenate = base.hyphenate
+            newTheme.paragraphSpacing = base.paragraphSpacing
+            newTheme.boldWeight = base.boldWeight
         }
         SettingsManager.shared.addTheme(newTheme)
         expandedThemeID = newTheme.id
@@ -1578,6 +1724,10 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         copy.maxWidth = original.maxWidth
         copy.paddingH = original.paddingH
         copy.paddingV = original.paddingV
+        copy.textAlignment = original.textAlignment
+        copy.hyphenate = original.hyphenate
+        copy.paragraphSpacing = original.paragraphSpacing
+        copy.boldWeight = original.boldWeight
         SettingsManager.shared.addTheme(copy)
         expandedThemeID = copy.id
         refreshAllTypographyControls()
@@ -1702,6 +1852,13 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         content.addArrangedSubview(colorsRow)
         colorsRow.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
 
+        let contrastWarning = NSTextField(wrappingLabelWithString: Self.contrastWarning(for: theme))
+        contrastWarning.textColor = .systemOrange
+        contrastWarning.font = NSFont.systemFont(ofSize: 11)
+        contrastWarningLabels[theme.id] = contrastWarning
+        content.addArrangedSubview(contrastWarning)
+        contrastWarning.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+
         outer.contentView?.addSubview(content)
         NSLayoutConstraint.activate([
             content.topAnchor.constraint(equalTo: outer.contentView!.topAnchor, constant: 14),
@@ -1738,7 +1895,16 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         }
         SettingsManager.shared.updateTheme(theme)
         themeButtons[id]?.refresh(with: theme)
+        contrastWarningLabels[id]?.stringValue = Self.contrastWarning(for: theme)
         refreshPreview()
+    }
+
+    private static func contrastWarning(for theme: Theme) -> String {
+        let lowContrast = [theme.light, theme.dark].contains { colors in
+            ReaderContrast.ratio(colors.background, colors.text) < ReaderContrast.minimumTextRatio
+                || ReaderContrast.ratio(colors.background, colors.link) < ReaderContrast.minimumTextRatio
+        }
+        return lowContrast ? "Some text colors have low contrast. The theme is still saved." : ""
     }
 }
 

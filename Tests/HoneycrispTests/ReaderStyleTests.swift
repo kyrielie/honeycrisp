@@ -28,6 +28,32 @@ final class ReaderStyleTests: XCTestCase {
         XCTAssertTrue(makeCosmetics().overrideMonospace)
     }
 
+    func testTextAlignmentAndHyphenationUseLowSpecificityCSS() {
+        let vars = EPUBParser.readerVarsCSS(
+            makeCosmetics(textAlignment: .center, hyphenate: true, language: "en-US")
+        )
+        XCTAssertTrue(vars.contains("--reader-text-align: center;"))
+        XCTAssertTrue(vars.contains("--reader-hyphens: auto;"))
+        XCTAssertTrue(EPUBParser.readerCSS.contains("p {"))
+        XCTAssertTrue(EPUBParser.readerCSS.contains("text-align: var(--reader-text-align);"))
+        XCTAssertTrue(EPUBParser.readerCSS.contains("-webkit-hyphens: var(--reader-hyphens);"))
+    }
+
+    func testHyphenationIsDisabledWhenLanguageIsMissingOrInvalid() {
+        let missing = EPUBParser.readerVarsCSS(makeCosmetics(hyphenate: true))
+        let invalid = EPUBParser.readerVarsCSS(makeCosmetics(hyphenate: true, language: "en\"><script"))
+        XCTAssertTrue(missing.contains("--reader-hyphens: manual;"))
+        XCTAssertTrue(invalid.contains("--reader-hyphens: manual;"))
+    }
+
+    func testReaderVarsCarryParagraphSpacingAndBoldWeight() {
+        let vars = EPUBParser.readerVarsCSS(makeCosmetics(paragraphSpacing: 1.5, boldWeight: .medium))
+        XCTAssertTrue(vars.contains("--reader-paragraph-spacing: 1.5em;"))
+        XCTAssertTrue(vars.contains("--reader-bold-weight: 600;"))
+        XCTAssertTrue(EPUBParser.readerCSS.contains("margin-block-end: var(--reader-paragraph-spacing);"))
+        XCTAssertTrue(EPUBParser.readerCSS.contains("b, strong { font-weight: var(--reader-bold-weight); }"))
+    }
+
     // MARK: Setting
 
     func testUseThemeFontForCodeSettingDefaultsPersistsAndResets() {
@@ -50,7 +76,14 @@ final class ReaderStyleTests: XCTestCase {
 
     // MARK: Helpers
 
-    private func makeCosmetics(overrideMonospace: Bool = true) -> ReaderCosmeticSettings {
+    private func makeCosmetics(
+        overrideMonospace: Bool = true,
+        textAlignment: ThemeTextAlignment = .book,
+        hyphenate: Bool = false,
+        language: String? = nil,
+        paragraphSpacing: Double = 1.0,
+        boldWeight: ThemeBoldWeight = .book
+    ) -> ReaderCosmeticSettings {
         ReaderCosmeticSettings(
             fontSizePercent: 100,
             fontFamily: "Charter, Georgia, serif",
@@ -65,7 +98,12 @@ final class ReaderStyleTests: XCTestCase {
             maxWidth: 700,
             paddingH: 24,
             allowLinkClicks: true,
-            overrideMonospace: overrideMonospace
+            overrideMonospace: overrideMonospace,
+            textAlignment: textAlignment,
+            hyphenate: hyphenate,
+            language: language,
+            paragraphSpacing: paragraphSpacing,
+            boldWeight: boldWeight
         )
     }
 }

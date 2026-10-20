@@ -110,4 +110,9 @@ enum ReaderCSSSanitizer {
         guard value.isFinite else { return 1.6 }
         return min(2.4, max(1.2, value))
     }
+
+    static func paragraphSpacing(_ value: Double) -> Double {
+        guard value.isFinite else { return 1.0 }
+        return min(3, max(0, value))
+    }
 }

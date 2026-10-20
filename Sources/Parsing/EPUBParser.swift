@@ -11,6 +11,7 @@ struct EPUBPackage {
     let spineURLs: [URL]
     let title: String
     let author: String
+    let language: String?
     let coverURL: URL?
     let manifest: [String: EPUBManifestItem]
     let spine: [EPUBSpineItem]
@@ -21,12 +22,13 @@ struct EPUBPackage {
     init(
         rootFolder: URL, spineURLs: [URL], title: String, author: String, coverURL: URL?,
         manifest: [String: EPUBManifestItem] = [:], spine: [EPUBSpineItem]? = nil, version: String? = nil,
-        navigationURL: URL? = nil, landmarks: [EPUBLandmark] = []
+        navigationURL: URL? = nil, landmarks: [EPUBLandmark] = [], language: String? = nil
     ) {
         self.rootFolder = rootFolder
         self.spineURLs = spineURLs
         self.title = title
         self.author = author
+        self.language = language
         self.coverURL = coverURL
         self.manifest = manifest
         self.spine = spine ?? spineURLs.enumerated().map { EPUBSpineItem(manifestID: "spine-\($0.offset)", url: $0.element, isLinear: true) }
@@ -86,10 +88,15 @@ struct ReaderCosmeticSettings: Equatable {
     var allowLinkClicks: Bool
     /// When true, `code` and `pre` use the theme font instead of the monospace stack.
     var overrideMonospace: Bool = true
+    var textAlignment: ThemeTextAlignment = .book
+    var hyphenate: Bool = false
+    var language: String?
+    var paragraphSpacing: Double = 1.0
+    var boldWeight: ThemeBoldWeight = .book
 
     /// Every value passes through `ReaderCSSSanitizer`, so the initial render and the live patch both
     /// get valid CSS no matter what is persisted. Hit colors derive from the sanitized page colors.
-    static func current(from settings: SettingsManager) -> ReaderCosmeticSettings {
+    static func current(from settings: SettingsManager, language: String? = nil) -> ReaderCosmeticSettings {
         let background = ReaderCSSSanitizer.hexColor(settings.effectiveBackgroundCSS, fallback: ReaderCSSSanitizer.fallbackBackground)
         let text = ReaderCSSSanitizer.hexColor(settings.effectiveTextCSS, fallback: ReaderCSSSanitizer.fallbackText)
         let link = ReaderCSSSanitizer.hexColor(settings.effectiveLinkCSS, fallback: ReaderCSSSanitizer.fallbackLink)
@@ -108,7 +115,12 @@ struct ReaderCosmeticSettings: Equatable {
             maxWidth: ReaderCSSSanitizer.maxWidth(settings.maxWidth),
             paddingH: ReaderCSSSanitizer.paddingH(settings.paddingH),
             allowLinkClicks: settings.allowReaderLinkClicks,
-            overrideMonospace: settings.useThemeFontForCode
+            overrideMonospace: settings.useThemeFontForCode,
+            textAlignment: settings.textAlignment,
+            hyphenate: settings.hyphenate,
+            language: language,
+            paragraphSpacing: settings.paragraphSpacing,
+            boldWeight: settings.boldWeight
         )
     }
 }
@@ -303,8 +315,10 @@ final class EPUBParser: NSObject {
 
         let titleNode = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='title']")).first as? XMLElement
         let authorNode = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='creator']")).first as? XMLElement
+        let languageNode = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='language']")).first as? XMLElement
         let bookTitle = titleNode?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let bookAuthor = authorNode?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let language = Self.sanitizedLanguageTag(languageNode?.stringValue)
 
         var hrefByID: [String: String] = [:]
         var mediaTypeByID: [String: String] = [:]
@@ -363,7 +377,7 @@ final class EPUBParser: NSObject {
         return EPUBPackage(
             rootFolder: rootFolder, spineURLs: spineURLs, title: bookTitle, author: bookAuthor,
             coverURL: coverURL, manifest: manifest, spine: spineItems, version: version,
-            navigationURL: navigationURL, landmarks: landmarks)
+            navigationURL: navigationURL, landmarks: landmarks, language: language)
     }
 
     private static func resolve(_ href: String, relativeTo base: URL) -> URL {
@@ -374,6 +388,33 @@ final class EPUBParser: NSObject {
         resolved.query = components?.query
         resolved.fragment = components?.fragment
         return resolved.url ?? file
+    }
+
+    static func sanitizedLanguageTag(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let parts = value.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "-")
+        let letters = CharacterSet.letters
+        let digits = CharacterSet.decimalDigits
+        func isASCIIAlpha(_ value: Substring) -> Bool {
+            value.unicodeScalars.allSatisfy { $0.isASCII && letters.contains($0) }
+        }
+        func isASCIIAlphanumeric(_ value: Substring) -> Bool {
+            value.unicodeScalars.allSatisfy { $0.isASCII && (letters.contains($0) || digits.contains($0)) }
+        }
+        guard let primary = parts.first, (2...8).contains(primary.count), isASCIIAlpha(primary) else {
+            return nil
+        }
+        guard parts.dropFirst().allSatisfy({
+            (1...8).contains($0.count) && isASCIIAlphanumeric($0)
+        }) else { return nil }
+        return parts.enumerated().map { index, part in
+            if index == 0 { return part.lowercased() }
+            if part.count == 4, isASCIIAlpha(part) {
+                return part.prefix(1).uppercased() + part.dropFirst().lowercased()
+            }
+            if part.count == 2, isASCIIAlpha(part) { return part.uppercased() }
+            return part.lowercased()
+        }.joined(separator: "-")
     }
 
     private static func parseLandmarks(at url: URL) -> [EPUBLandmark] {
@@ -425,6 +466,7 @@ final class EPUBParser: NSObject {
         formatFirstChapter: Bool = false, removeParagraphIndents: Bool = false,
         hideImages: Bool = false
     ) throws -> String {
+        let languageAttribute = pkg.language.map { " lang=\"\($0)\"" } ?? ""
         var body = ""
         let base = pkg.rootFolder
         for i in pkg.spineURLs.indices {
@@ -440,7 +482,7 @@ final class EPUBParser: NSObject {
 
         return """
         <!doctype html>
-        <html>
+        <html\(languageAttribute)>
         <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -483,6 +525,7 @@ final class EPUBParser: NSObject {
         removeParagraphIndents: Bool = false,
         hideImages: Bool = false
     ) throws -> String {
+        let languageAttribute = pkg.language.map { " lang=\"\($0)\"" } ?? ""
         let base = pkg.rootFolder
         let extracted = try Self.extractedChapterBody(
             from: pkg, index: spineIndex, base: base,
@@ -515,7 +558,7 @@ final class EPUBParser: NSObject {
 
         return """
         <!doctype html>
-        <html>
+        <html\(languageAttribute)>
         <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1240,6 +1283,10 @@ final class EPUBParser: NSObject {
             --reader-font-size: \(cosmetics.fontSizePercent)%;
             --reader-font-family: \(cosmetics.fontFamily);
             --reader-code-font-family: \(cosmetics.overrideMonospace ? cosmetics.fontFamily : Self.monospaceStack);
+            --reader-text-align: \(cosmetics.textAlignment.cssValue);
+            --reader-hyphens: \(cosmetics.hyphenate && sanitizedLanguageTag(cosmetics.language) != nil ? "auto" : "manual");
+            --reader-paragraph-spacing: \(ReaderCSSSanitizer.paragraphSpacing(cosmetics.paragraphSpacing))em;
+            --reader-bold-weight: \(cosmetics.boldWeight.cssValue);
             --reader-bg: \(cosmetics.backgroundCSS);
             --reader-text: \(cosmetics.textCSS);
             --reader-link: \(cosmetics.linkCSS);
@@ -1290,6 +1337,15 @@ final class EPUBParser: NSObject {
         overflow-x: hidden;
         max-width: 100%;
     }
+
+    p {
+        text-align: var(--reader-text-align);
+        hyphens: var(--reader-hyphens);
+        -webkit-hyphens: var(--reader-hyphens);
+        margin-block-end: var(--reader-paragraph-spacing);
+    }
+
+    b, strong { font-weight: var(--reader-bold-weight); }
 
     #content { width: 100%; max-width: var(--reader-max-width); margin: 0 auto; padding: 28px var(--reader-padding-h) 48px; }
     .ql-chapter { margin: 40px 0; }

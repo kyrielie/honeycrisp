@@ -70,6 +70,39 @@ struct ThemeColorSet: Codable, Equatable {
     var link: String
 }
 
+enum ThemeTextAlignment: String, Codable, CaseIterable {
+    case book
+    case left
+    case center
+    case right
+    case justify
+
+    var label: String {
+        switch self {
+        case .book: return "Book Default"
+        case .left: return "Left"
+        case .center: return "Center"
+        case .right: return "Right"
+        case .justify: return "Justified"
+        }
+    }
+
+    var cssValue: String { self == .book ? "inherit" : rawValue }
+}
+
+enum ThemeBoldWeight: String, Codable, CaseIterable {
+    case book, normal, medium, bold
+
+    var cssValue: String {
+        switch self {
+        case .book: return "bolder"
+        case .normal: return "400"
+        case .medium: return "600"
+        case .bold: return "700"
+        }
+    }
+}
+
 /// A fully user-editable appearance: a name plus one ThemeColorSet per system
 /// appearance mode. Replaces the old fixed `ReaderTheme` enum (System/Light/Dark/
 /// Sepia/Custom) and the old `SavedTheme` preset-on-top-of-.custom model — there's
@@ -96,6 +129,10 @@ struct Theme: Codable, Identifiable, Equatable {
     var maxWidth: Int
     var paddingH: Int
     var paddingV: Int
+    var textAlignment: ThemeTextAlignment
+    var hyphenate: Bool
+    var paragraphSpacing: Double
+    var boldWeight: ThemeBoldWeight
     // True only for the three seeded themes (Original/Quiet/Paper). Drives
     // two things: deleteTheme(_:) refuses to remove these regardless of how
     // many themes exist, and resetReaderToDefaults() knows to restore these
@@ -117,6 +154,10 @@ struct Theme: Codable, Identifiable, Equatable {
         maxWidth: Int = 700,
         paddingH: Int = 24,
         paddingV: Int = 24,
+        textAlignment: ThemeTextAlignment = .book,
+        hyphenate: Bool = false,
+        paragraphSpacing: Double = 1.0,
+        boldWeight: ThemeBoldWeight = .book,
         isDefault: Bool = false,
         seedKey: String? = nil
     ) {
@@ -130,12 +171,17 @@ struct Theme: Codable, Identifiable, Equatable {
         self.maxWidth = maxWidth
         self.paddingH = paddingH
         self.paddingV = paddingV
+        self.textAlignment = textAlignment
+        self.hyphenate = hyphenate
+        self.paragraphSpacing = paragraphSpacing
+        self.boldWeight = boldWeight
         self.isDefault = isDefault
         self.seedKey = seedKey
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, light, dark, fontFamily, fontSizePercent, lineHeight, maxWidth, paddingH, paddingV, isDefault, seedKey
+        case id, name, light, dark, fontFamily, fontSizePercent, lineHeight, maxWidth, paddingH, paddingV,
+            textAlignment, hyphenate, paragraphSpacing, boldWeight, isDefault, seedKey
     }
 
     init(from decoder: Decoder) throws {
@@ -150,8 +196,50 @@ struct Theme: Codable, Identifiable, Equatable {
         maxWidth = try values.decodeIfPresent(Int.self, forKey: .maxWidth) ?? 700
         paddingH = try values.decodeIfPresent(Int.self, forKey: .paddingH) ?? 24
         paddingV = try values.decodeIfPresent(Int.self, forKey: .paddingV) ?? 24
+        textAlignment = try values.decodeIfPresent(ThemeTextAlignment.self, forKey: .textAlignment) ?? .book
+        hyphenate = try values.decodeIfPresent(Bool.self, forKey: .hyphenate) ?? false
+        paragraphSpacing = try values.decodeIfPresent(Double.self, forKey: .paragraphSpacing) ?? 1.0
+        boldWeight = try values.decodeIfPresent(ThemeBoldWeight.self, forKey: .boldWeight) ?? .book
         isDefault = try values.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
         seedKey = try values.decodeIfPresent(String.self, forKey: .seedKey)
+    }
+}
+
+struct ThemeExport: Codable {
+    let version: Int
+    let theme: Theme
+
+    static func encode(_ theme: Theme) throws -> Data {
+        try JSONEncoder().encode(ThemeExport(version: 1, theme: theme))
+    }
+
+    static func decode(_ data: Data) throws -> Theme {
+        let document = try JSONDecoder().decode(ThemeExport.self, from: data)
+        guard document.version == 1 else { throw CocoaError(.fileReadCorruptFile) }
+        var theme = document.theme
+        theme = Theme(
+            name: String(theme.name.prefix(80)).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Imported Theme" : String(theme.name.prefix(80)).trimmingCharacters(in: .whitespacesAndNewlines),
+            light: ThemeColorSet(
+                background: ReaderCSSSanitizer.hexColor(theme.light.background, fallback: ReaderCSSSanitizer.fallbackBackground),
+                text: ReaderCSSSanitizer.hexColor(theme.light.text, fallback: ReaderCSSSanitizer.fallbackText),
+                link: ReaderCSSSanitizer.hexColor(theme.light.link, fallback: ReaderCSSSanitizer.fallbackLink)),
+            dark: ThemeColorSet(
+                background: ReaderCSSSanitizer.hexColor(theme.dark.background, fallback: "#1e1e1e"),
+                text: ReaderCSSSanitizer.hexColor(theme.dark.text, fallback: "#eeeeee"),
+                link: ReaderCSSSanitizer.hexColor(theme.dark.link, fallback: "#6ba8ff")),
+            fontFamily: ReaderCSSSanitizer.fontFamily(theme.fontFamily),
+            fontSizePercent: ReaderCSSSanitizer.fontSizePercent(theme.fontSizePercent),
+            lineHeight: ReaderCSSSanitizer.lineHeight(theme.lineHeight),
+            maxWidth: ReaderCSSSanitizer.maxWidth(theme.maxWidth),
+            paddingH: ReaderCSSSanitizer.paddingH(theme.paddingH),
+            paddingV: min(120, max(0, theme.paddingV)),
+            textAlignment: theme.textAlignment,
+            hyphenate: theme.hyphenate,
+            paragraphSpacing: ReaderCSSSanitizer.paragraphSpacing(theme.paragraphSpacing),
+            boldWeight: theme.boldWeight
+        )
+        return theme
     }
 }
 
@@ -489,6 +577,26 @@ final class SettingsManager {
         set { mutateCurrentTheme { $0.fontSizePercent = min(300, max(50, newValue)) }; notifyCosmeticChange() }
     }
 
+    var textAlignment: ThemeTextAlignment {
+        get { currentTheme.textAlignment }
+        set { mutateCurrentTheme { $0.textAlignment = newValue }; notifyCosmeticChange() }
+    }
+
+    var hyphenate: Bool {
+        get { currentTheme.hyphenate }
+        set { mutateCurrentTheme { $0.hyphenate = newValue }; notifyCosmeticChange() }
+    }
+
+    var paragraphSpacing: Double {
+        get { currentTheme.paragraphSpacing }
+        set { mutateCurrentTheme { $0.paragraphSpacing = min(3, max(0, newValue)) }; notifyCosmeticChange() }
+    }
+
+    var boldWeight: ThemeBoldWeight {
+        get { currentTheme.boldWeight }
+        set { mutateCurrentTheme { $0.boldWeight = newValue }; notifyCosmeticChange() }
+    }
+
     // MARK: Behaviour flags
 
     /// "Format for AO3" — removes toc-heading elements and enlarges calibre2 elements
@@ -709,6 +817,9 @@ final class SettingsManager {
                     || theme.maxWidth != 700
                     || theme.paddingH != 24
                     || theme.paddingV != 24
+                    || theme.textAlignment != .book
+                    || theme.hyphenate
+                    || theme.paragraphSpacing != 1.0 || theme.boldWeight != .book
                 {
                     return true
                 }
@@ -719,6 +830,9 @@ final class SettingsManager {
                     || theme.maxWidth != Self.customThemeDefaultMaxWidth
                     || theme.paddingH != Self.customThemeDefaultPaddingH
                     || theme.paddingV != Self.customThemeDefaultPaddingV
+                    || theme.textAlignment != .book
+                    || theme.hyphenate
+                    || theme.paragraphSpacing != 1.0 || theme.boldWeight != .book
                 {
                     return true
                 }
@@ -771,6 +885,10 @@ final class SettingsManager {
             updatedTheme.maxWidth = theme.isDefault ? 700 : Self.customThemeDefaultMaxWidth
             updatedTheme.paddingH = theme.isDefault ? 24 : Self.customThemeDefaultPaddingH
             updatedTheme.paddingV = theme.isDefault ? 24 : Self.customThemeDefaultPaddingV
+            updatedTheme.textAlignment = .book
+            updatedTheme.hyphenate = false
+            updatedTheme.paragraphSpacing = 1.0
+            updatedTheme.boldWeight = .book
             return updatedTheme
         }
         themes = resetList

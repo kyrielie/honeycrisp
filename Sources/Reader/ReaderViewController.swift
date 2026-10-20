@@ -546,7 +546,7 @@ final class ReaderViewController: NSViewController {
             // "Format for AO3" maps to the same formatFirstChapter flag in SettingsManager
             let format = SettingsManager.shared.formatFirstChapter
             let removeIndents = SettingsManager.shared.removeParagraphIndents
-            let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared)
+            let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, language: pkg.language)
             lastBuiltCosmetics = cosmetics
             let html = try parser.buildScrollHTML(
                 from: pkg, cosmetics: cosmetics,
@@ -621,7 +621,7 @@ final class ReaderViewController: NSViewController {
             let parser = EPUBParser()
             let format = SettingsManager.shared.formatFirstChapter
             let removeIndents = SettingsManager.shared.removeParagraphIndents
-            let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared)
+            let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, language: pkg.language)
             lastBuiltCosmetics = cosmetics
             let bounds = webView.bounds.isEmpty ? NSRect(x: 0, y: 0, width: 780, height: 920) : webView.bounds
             let html = try parser.buildPageHTML(
@@ -1180,7 +1180,7 @@ final class ReaderViewController: NSViewController {
     /// `EPUBParser.readerVarsCSS` function buildScrollHTML/buildPageHTML use for the
     /// initial paint, so this can't drift from what a fresh load would produce.
     @objc private func applyCosmeticCSSUpdate() {
-        let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared)
+        let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, language: currentPackage?.language)
         let cssLiteral = Self.jsStringLiteral(EPUBParser.readerVarsCSS(cosmetics))
         let js = """
             (function() {
@@ -1877,7 +1877,9 @@ extension ReaderViewController: WKNavigationDelegate {
         // async load) window it produced a color flip after the correct colors had
         // already painted. Only re-sync if lastBuiltCosmetics actually disagrees with
         // the current settings snapshot.
-        let currentCosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared)
+        let currentCosmetics = ReaderCosmeticSettings.current(
+            from: SettingsManager.shared, language: currentPackage?.language
+        )
         if lastBuiltCosmetics != currentCosmetics {
             applyCosmeticCSSUpdate()
         }

@@ -122,6 +122,13 @@ final class EPUBParserTests: XCTestCase {
         XCTAssertEqual(decoded, input)
     }
 
+    func testLanguageTagSanitizingAndCanonicalization() {
+        XCTAssertEqual(EPUBParser.sanitizedLanguageTag(" EN-us "), "en-US")
+        XCTAssertEqual(EPUBParser.sanitizedLanguageTag("zh-hant-tw"), "zh-Hant-TW")
+        XCTAssertNil(EPUBParser.sanitizedLanguageTag("en\"><script"))
+        XCTAssertNil(EPUBParser.sanitizedLanguageTag("x"))
+    }
+
     func testParsePackageRejectsAnEmptyOrNonHTMLSpine() throws {
         let root = try makeEPUBRoot(
             opfPath: "package.opf",

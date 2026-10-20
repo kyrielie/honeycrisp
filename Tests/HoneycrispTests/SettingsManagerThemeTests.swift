@@ -53,6 +53,41 @@ final class SettingsManagerThemeTests: XCTestCase {
         XCTAssertNil(try JSONDecoder().decode(Theme.self, from: data).seedKey)
     }
 
+    func testTextAlignmentAndHyphenationRoundTripAndReset() throws {
+        manager.textAlignment = .justify
+        manager.hyphenate = true
+        manager.paragraphSpacing = 2.25
+        manager.boldWeight = .medium
+        let theme = try XCTUnwrap(manager.themes.first)
+        let decoded = try JSONDecoder().decode(Theme.self, from: JSONEncoder().encode(theme))
+        XCTAssertEqual(decoded.textAlignment, .justify)
+        XCTAssertTrue(decoded.hyphenate)
+        XCTAssertEqual(decoded.paragraphSpacing, 2.25)
+        XCTAssertEqual(decoded.boldWeight, .medium)
+        XCTAssertTrue(manager.isReaderCustomized)
+
+        manager.resetReaderToDefaults()
+        XCTAssertEqual(manager.textAlignment, .book)
+        XCTAssertFalse(manager.hyphenate)
+        XCTAssertEqual(manager.paragraphSpacing, 1.0)
+        XCTAssertEqual(manager.boldWeight, .book)
+        XCTAssertFalse(manager.isReaderCustomized)
+    }
+
+    func testThemeExportImportsAsSanitizedCustomCopy() throws {
+        var source = SettingsManager.seedThemes[0]
+        source.fontFamily = "bad); color:red"
+        source.light.text = "url(javascript:bad)"
+        source.paragraphSpacing = 99
+        let imported = try ThemeExport.decode(ThemeExport.encode(source))
+        XCTAssertNotEqual(imported.id, source.id)
+        XCTAssertFalse(imported.isDefault)
+        XCTAssertNil(imported.seedKey)
+        XCTAssertEqual(imported.fontFamily, FontPresets.defaultStack)
+        XCTAssertEqual(imported.light.text, ReaderCSSSanitizer.fallbackText)
+        XCTAssertEqual(imported.paragraphSpacing, 3.0)
+    }
+
     // MARK: Reset by identity, not name
 
     func testRenamedDefaultThemeIsRestoredInPlaceNotDuplicated() {

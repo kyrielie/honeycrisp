@@ -5,9 +5,8 @@ This is the only plan document. It replaces `roadmap-unified.md`, `implementatio
 `theme-and-typography-plan.md`, `reference-survey.md` and `honeycrisp-settings-window-plan.md`.
 Design rules and contracts live in `docs/FRAMEWORK.md`; this file covers decisions, order and gates.
 
-Status: plan. Nothing here was built or run in the review environment (no macOS toolchain). Statements
-about the code were read from the tree at `main` (55c9155) plus uncommitted changes. Items marked
-"verify" are unchecked.
+Status: active implementation. Local macOS build and tests are available; milestones below reflect
+the current working tree and remain uncommitted. Items marked "verify" are unchecked.
 
 ## 1. Baseline
 
@@ -63,7 +62,8 @@ milestone is done when its exit criteria hold and the affected docs are updated.
 
 ### M0. Baseline and truth (S)
 
-Status: in progress (docs done; code keep or drop split and cleanup remain).
+Status: in progress (keep/drop decision and listed cleanup applied; local build and tests pass; the
+keep set still needs its separate commit).
 
 - Review the uncommitted diff file by file. Keep: code-font toggle, theme and popover work, new
   theme tests. Drop: `strippingEmbeddedStyles`, its tests, and the `currentLayout` bump to 2 (R1).
@@ -79,7 +79,8 @@ Exit: tree builds, `./test.sh` passes locally, docs list one plan and one design
 
 ### M1. Safety net and contracts (M)
 
-Status: not started.
+Status: complete (Locator, fraction fallback, and progress derivation are implemented; synthetic
+WebKit parity and regression fixtures pass with expected failures for the currently known defects).
 
 - Define `Locator` (C1) as a pure type with the fraction fallback; store `fraction` with new records
   (defaulting decode); make restore read `anchorLayout`. Tests for match, mismatch and missing fields.
@@ -91,9 +92,14 @@ Status: not started.
 
 Exit: all fixtures exist and the known bugs are reproduced by failing or expected-fail tests.
 
+Harness finding: the first live-DOM parity fixture currently reports a three UTF-16-unit offset
+shift from whitespace in the merged-document wrapper. This is an expected failure in M1 and must be
+resolved before the M3 host can adopt the parity contract.
+
 ### M2. Typography and themes (M, parallel track, independent of M3 to M6)
 
-Status: not started.
+Status: complete (alignment, language-aware hyphenation, paragraph spacing, bold weight, versioned
+theme transfer, and non-blocking contrast warnings are implemented; local test script passes).
 
 Order: text alignment and hyphenation per theme (`Theme.textAlign`, `Theme.hyphenate`, vars, reset,
 customized check, tests); `EPUBPackage.language` from `dc:language`, sanitized to BCP 47, emitted as
@@ -109,7 +115,8 @@ the language is unknown (help text "Needs book language").
 
 ### M3. Spike: chapter host, scheme handler, user layer (L, behind a flag)
 
-Status: not started.
+Status: in progress (a contained EPUB resource scheme handler and MIME mapping are implemented and
+unit covered; production chapter hosting, wrapper/style injection, and JavaScript isolation remain).
 
 Build for one chapter, then a window of three, in the existing book window. Components: scheme
 handler (path containment, MIME from manifest, style and `lang` injection), chapter document per
