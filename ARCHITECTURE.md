@@ -4,6 +4,11 @@ Native macOS EPUB reader. AppKit + WebKit, no SwiftUI beyond the `@main` boot
 shim. XcodeGen `project.yml` is the source of truth for the generated Xcode
 project. The root Swift package is a secondary build entry point. macOS 13+.
 
+This file describes what the code does today. The target design and its contracts are in
+`docs/FRAMEWORK.md`; the plan and decisions are in `docs/ROADMAP.md`. Until roadmap milestone M3,
+book scripts and resource URLs are not restricted: `allowsContentJavaScript` is `true` and chapter
+bodies keep `<script>` and event attributes.
+
 ## 1. Project generation
 
 `project.yml` defines the macOS app target, ZIPFoundation dependency, sandbox
@@ -125,12 +130,12 @@ Anchor layout. Saved character offsets are only valid for the text extraction th
 
 - No library/catalog view — File > Open / drag-drop / Open Recent / explicit bookmarks only.
 - No cross-book full-text search — `SearchBarViewController` is in-book only.
-- No publisher-CSS respect — the reader CSS reset in `EPUBParser.readerCSS` is deliberate.
+- Publisher CSS is not loaded today (the `<head>` is dropped). This is changing: the roadmap (R1) keeps the book's own styles and overrides only the properties the user owns. See `docs/FRAMEWORK.md` C4.
 - No per-window/per-book reading mode override — `currentMode` always initializes from the global `SettingsManager.shared.defaultReadingMode`.
 
-## 7. Known architectural gaps and their resolution (see `docs/honeycrisp-settings-window-plan.md` for the Settings-window rebuild plan; other gaps below have no separate plan doc)
+## 7. Known architectural gaps and their resolution (historical notes; current plan is `docs/ROADMAP.md`)
 
-- **DRM**: no detection today — a DRM-protected EPUB falls into the generic `.malformed`/`.opfNotFound` path. Resolution: detect `META-INF/encryption.xml` in `EPUBParser.parsePackage`, add `EPUBParseError.drmProtected`; the existing in-webview `showError` path already surfaces `errorDescription` with no further plumbing needed.
+- **DRM**: resolved. `EPUBParser` detects real DRM markers and throws `EPUBParseError.drmProtected`; font obfuscation alone is not DRM. Original note: a DRM-protected EPUB fell into the generic `.malformed`/`.opfNotFound` path. Resolution was: detect `META-INF/encryption.xml` in `EPUBParser.parsePackage`, add `EPUBParseError.drmProtected`; the existing in-webview `showError` path already surfaces `errorDescription` with no further plumbing needed.
 - **Calibre annotations**: not supported (read or write). Blocked on confirming Calibre's actual on-disk format — Calibre stores highlights/bookmarks in its own library metadata (`metadata.db`/sidecar), not embedded in the EPUB file itself, and a standalone-opened EPUB (Honeycrisp's only input mode — see §6) generally won't carry that sidecar. Needs a real sample before a parser is written. When built: read-only by hard constraint, no write path to the EPUB or any sidecar, enforced in code (not just documented).
 - **Quote sharing**: deferred. Previously listed as a non-goal. No design or code yet; the README lists it under "Planned".
 - **Reading aids**: optional scroll-mode auto-scroll and current-spine native speech are menu-driven. Speech starts from the current selection/location and does not promise continuous multi-spine playback.
@@ -141,11 +146,11 @@ Anchor layout. Saved character offsets are only valid for the text extraction th
 ## 8. Decisions carried over from the revision plan
 
 - **Per-window/per-book reading-mode override**: audited, confirmed already absent from the code (`ReaderViewController.currentMode` and `HistoryEntry` both already have no per-book mode field) — closed with no code change, documented here so it stops being re-flagged as missing.
-- **Non-goals** (no library view, no cross-book search, no publisher styling) are confirmed intentional and get a README "Non-goals" section; no code changes. Quote sharing was removed from this list: the earlier scoping was outdated, and it is now deferred rather than ruled out.
+- **Non-goals** (no library view, no cross-book search) are confirmed intentional and listed in the README. "No publisher styling" was dropped as a non-goal by roadmap decision R1. Quote sharing was removed from this list: the earlier scoping was outdated, and it is now deferred rather than ruled out.
 
-## 9. Settings window: per-tab resize is wired but inert (by design, undocumented in the plan)
+## 9. Settings window: per-tab resize is wired but inert (by design)
 
-`docs/honeycrisp-settings-window-plan.md` §1.3/§2.2 called the animated
+The original Settings-window rebuild plan (since removed) called the animated
 per-tab resize (a `SettingsPaneSizing` protocol, `resolvePreferredPaneSize()`,
 `SettingsPanelWindow.setWindowSize`, per-tab size caching) "the main
 structural gap" and "the core structural change." All of that machinery is
@@ -161,8 +166,7 @@ resizes anything. This is intentional (see the doc comment on
 `SettingsPaneMetrics`: a prior version *did* size per-tab and that read as
 unwanted "responsive" resizing), but the plan document was never updated to
 reflect the reversal, so it still reads as if per-tab resize is live
-behavior. Treat `docs/honeycrisp-settings-window-plan.md` §1.3/§2.2/§2.4 as
-superseded by this section, not as current behavior. Not changed in code —
+behavior. Treat that plan as superseded by this section, not as current behavior. Not changed in code —
 this is a deliberate product decision, not a bug, so it's left as-is with
 the documentation now caught up to it.
 

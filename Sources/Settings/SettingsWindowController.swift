@@ -762,6 +762,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     private var fontPopup: NSPopUpButton!
     private var fontFamilyField: NSTextField!  // free-form CSS font-family stack entry
     private var fontPickerButton: NSButton!  // opens NSFontPanel (replaces import button)
+    private var codeFontCheckbox: NSButton!  // theme font vs monospace for code and pre
     private var themeGridContainer: NSStackView!  // vertical stack of full-width rows, wrapping
     private var themeButtons: [UUID: ThemeBigSwatchButton] = [:]
     /// Only one theme's inline editor is expanded at a time; selecting a
@@ -830,6 +831,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         grid.addRow(with: [label("Font:"), makeFontPopup()])
         fontFamilyFieldRow = grid.addRow(with: [NSGridCell.emptyContentView, makeFontFamilyField()])
         fontPickerButtonRow = grid.addRow(with: [NSGridCell.emptyContentView, makeFontPickerButton()])
+        grid.addRow(with: [label("Code:"), makeCodeFontCheckbox()])
         grid.addRow(with: [label("Font Size:"), makeFontSizeRow()])
         grid.addRow(with: [label("Line Height:"), makeLineHeightRow()])
 
@@ -976,9 +978,9 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         guard sender.selectedSegment >= 0, sender.selectedSegment < modes.count else { return }
         SettingsManager.shared.appearanceMode = modes[sender.selectedSegment]
         // The bottom preview box is keyed off effective light/dark, which
-        // just changed. The theme grid swatches above always render each
-        // theme's own *light* colors regardless of appearance mode (see
-        // ThemeBigSwatchButton.swatchImage), so they don't need a rebuild.
+        // just changed. The theme grid swatches draw both halves of each theme
+        // and re-resolve dynamic colors through their drawing handler, so they
+        // don't need a rebuild.
         refreshPreview()
     }
 
@@ -989,6 +991,19 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         fontPopup.target = self
         fontPopup.action = #selector(fontChanged(_:))
         return fontPopup
+    }
+
+    private func makeCodeFontCheckbox() -> NSButton {
+        let checkbox = NSButton(
+            checkboxWithTitle: "Use theme font for code and preformatted text",
+            target: self, action: #selector(codeFontToggled(_:)))
+        checkbox.state = SettingsManager.shared.useThemeFontForCode ? .on : .off
+        codeFontCheckbox = checkbox
+        return checkbox
+    }
+
+    @objc private func codeFontToggled(_ sender: NSButton) {
+        SettingsManager.shared.useThemeFontForCode = sender.state == .on
     }
 
     private func makeFontFamilyField() -> NSTextField {
@@ -1467,11 +1482,27 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     }
 
     @objc private func resetToDefaults(_ sender: NSButton) {
-        SettingsManager.shared.resetReaderToDefaults()
-        expandedThemeID = SettingsManager.shared.currentThemeID
-        refreshAllTypographyControls()
-        rebuildThemeGrid()
-        refreshPreview()
+        let alert = NSAlert()
+        alert.messageText = "Reset all themes to defaults?"
+        alert.informativeText =
+            "Original, Quiet and Paper return to their built-in colors and typography, and every custom theme "
+            + "keeps its name and colors but gets default typography. This cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Reset")
+        alert.addButton(withTitle: "Cancel")
+        let perform: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            SettingsManager.shared.resetReaderToDefaults()
+            self.expandedThemeID = SettingsManager.shared.currentThemeID
+            self.refreshAllTypographyControls()
+            self.rebuildThemeGrid()
+            self.refreshPreview()
+        }
+        if let window = view.window {
+            alert.beginSheetModal(for: window, completionHandler: perform)
+        } else {
+            perform(alert.runModal())
+        }
     }
 
     /// Re-reads every typography control (font popup/field, line height,
@@ -1482,6 +1513,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     private func refreshAllTypographyControls() {
         selectFontPopupItem(forCurrentFontFamily: SettingsManager.shared.fontFamily)
         fontFamilyField.stringValue = SettingsManager.shared.fontFamily
+        codeFontCheckbox.state = SettingsManager.shared.useThemeFontForCode ? .on : .off
         refreshThemeGridSelection()
         lineHeightStepper.doubleValue = SettingsManager.shared.lineHeight
         lineHeightLabel.stringValue = String(format: "%.1f", SettingsManager.shared.lineHeight)
@@ -1500,7 +1532,8 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     // MARK: - Theme add / edit / duplicate / delete
 
     @objc private func addThemeClicked(_ sender: Any?) {
-        let base = SettingsManager.shared.themes.first
+        // Start from the active theme so a new theme looks like what the reader sees now.
+        let base: Theme? = SettingsManager.shared.currentTheme
         let light = base?.light ?? ThemeColorSet(background: "#ffffff", text: "#000000", link: "#0068da")
         let dark = base?.dark ?? ThemeColorSet(background: "#1c1c1e", text: "#e8e0d4", link: "#5aa9ff")
         let existingNames = Set(SettingsManager.shared.themes.map(\.name))
@@ -1720,6 +1753,17 @@ extension AppearanceSettingsViewController: NSTextFieldDelegate {
         SettingsManager.shared.updateTheme(theme)
         themeButtons[id]?.refresh(with: theme)
     }
+
+    /// An emptied name is ignored while typing (see above); on commit, put the stored name back
+    /// so the field never disagrees with the swatch label.
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let field = obj.object as? ThemeIdentifiedTextField, let id = field.themeID,
+            let theme = SettingsManager.shared.themes.first(where: { $0.id == id })
+        else { return }
+        if field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            field.stringValue = theme.name
+        }
+    }
 }
 
 // MARK: - Inline theme editor field/control identity helpers
@@ -1788,11 +1832,9 @@ final class ThemeBigSwatchButton: NSButton {
         setAccessibilityLabel(theme.name)
     }
 
-    /// Rendered against the swatch's own light colors and its own font — the
-    /// grid's meant to show what each theme looks like on its own terms, not
-    /// shift with the window's momentary system appearance while browsing the
-    /// list, and not all show whichever theme happens to be currently active.
-    /// Same best-effort CSS-stack-to-NSFont resolution as
+    /// Shows both the light and dark colors of the theme in its own font, so the grid
+    /// reads the same whichever appearance the window is in and does not depend on which
+    /// theme is active. Same best-effort CSS-stack-to-NSFont resolution as
     /// AppearanceSettingsViewController.refreshPreview: takes the first family
     /// name in the theme's own font stack and falls back to the system font
     /// if AppKit doesn't have a font by that name.
@@ -1804,42 +1846,54 @@ final class ThemeBigSwatchButton: NSButton {
         return NSFont(name: firstFamily, size: size) ?? NSFont.systemFont(ofSize: size, weight: .medium)
     }
 
+    /// Drawn through a drawing handler, not lockFocus, so dynamic colors (name label, separator,
+    /// accent ring) re-resolve whenever the effective appearance changes instead of being baked in
+    /// at creation time. The page rect is split diagonally: light colors upper left, dark colors
+    /// lower right, so one swatch shows both halves of the theme.
     private static func swatchImage(for theme: Theme, selected: Bool) -> NSImage {
         let size = swatchSize
-        let image = NSImage(size: size)
-        image.lockFocus()
+        return NSImage(size: size, flipped: false) { _ in
+            let swatchRect = NSRect(x: 1, y: 20, width: size.width - 2, height: size.height - 22)
+            let path = NSBezierPath(roundedRect: swatchRect, xRadius: 8, yRadius: 8)
 
-        let bg = SettingsManager.color(fromCSS: theme.light.background)
-        let text = SettingsManager.color(fromCSS: theme.light.text)
+            NSGraphicsContext.saveGraphicsState()
+            path.addClip()
+            SettingsManager.color(fromCSS: theme.light.background).setFill()
+            swatchRect.fill()
+            let darkHalf = NSBezierPath()
+            darkHalf.move(to: NSPoint(x: swatchRect.maxX, y: swatchRect.maxY))
+            darkHalf.line(to: NSPoint(x: swatchRect.maxX, y: swatchRect.minY))
+            darkHalf.line(to: NSPoint(x: swatchRect.minX, y: swatchRect.minY))
+            darkHalf.close()
+            SettingsManager.color(fromCSS: theme.dark.background).setFill()
+            darkHalf.fill()
+            NSGraphicsContext.restoreGraphicsState()
 
-        let swatchRect = NSRect(x: 1, y: 20, width: size.width - 2, height: size.height - 22)
-        let path = NSBezierPath(roundedRect: swatchRect, xRadius: 8, yRadius: 8)
-        bg.setFill()
-        path.fill()
-        (selected ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
-        path.lineWidth = selected ? 2.5 : 1
-        path.stroke()
+            (selected ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
+            path.lineWidth = selected ? 2.5 : 1
+            path.stroke()
 
-        let aa = NSAttributedString(
-            string: "Aa",
-            attributes: [
-                .font: Self.previewFont(for: theme, ofSize: 26),
-                .foregroundColor: text,
-            ])
-        let aaSize = aa.size()
-        aa.draw(at: NSPoint(x: swatchRect.midX - aaSize.width / 2, y: swatchRect.midY - aaSize.height / 2))
+            let aaFont = Self.previewFont(for: theme, ofSize: 22)
+            let lightAa = NSAttributedString(
+                string: "A",
+                attributes: [.font: aaFont, .foregroundColor: SettingsManager.color(fromCSS: theme.light.text)])
+            let darkAa = NSAttributedString(
+                string: "a",
+                attributes: [.font: aaFont, .foregroundColor: SettingsManager.color(fromCSS: theme.dark.text)])
+            let lightSize = lightAa.size()
+            let darkSize = darkAa.size()
+            let gap: CGFloat = 2
+            let startX = swatchRect.midX - (lightSize.width + darkSize.width + gap) / 2
+            lightAa.draw(at: NSPoint(x: startX, y: swatchRect.midY - lightSize.height / 2))
+            darkAa.draw(at: NSPoint(x: startX + lightSize.width + gap, y: swatchRect.midY - darkSize.height / 2))
 
-        let name = NSAttributedString(
-            string: theme.name,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 11),
-                .foregroundColor: NSColor.labelColor,
-            ])
-        let nameSize = name.size()
-        name.draw(at: NSPoint(x: size.width / 2 - nameSize.width / 2, y: 2))
-
-        image.unlockFocus()
-        return image
+            let name = NSAttributedString(
+                string: theme.name,
+                attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor])
+            let nameSize = name.size()
+            name.draw(at: NSPoint(x: size.width / 2 - nameSize.width / 2, y: 2))
+            return true
+        }
     }
 }
 

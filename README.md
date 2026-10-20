@@ -158,7 +158,9 @@ Formatting is a local check for now.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): design rationale and module responsibilities
 - [INDEX.md](INDEX.md): file and section map for locating code
-- [docs/](docs/): roadmap, settings window plan, and the [compatibility corpus](docs/compatibility-corpus.md)
+- [docs/ROADMAP.md](docs/ROADMAP.md): the plan, decisions and milestones
+- [docs/FRAMEWORK.md](docs/FRAMEWORK.md): target design, layers and contracts
+- [docs/compatibility-corpus.md](docs/compatibility-corpus.md): fixture map and real-file validation table
 
 Local EPUB corpus files are excluded from source control unless their redistribution terms are
 verified.

@@ -1,8 +1,19 @@
 # Honeycrisp code index
 
-Navigation map for development. Line numbers are as of commit `5c3dd27` and drift; re-grep
-`// MARK:` lines if a range looks wrong. Rules and commands live in `CLAUDE.md`. Design rationale
-lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
+Navigation map for development. Base: `main` at 55c9155 plus uncommitted work (listed below). About
+10,400 lines of Swift in `Sources/` and 1,500 in `Tests/`. Ranges are at `// MARK:` granularity and
+drift: regenerate with `scripts/index-anchors.sh`, then update the tables in the same pass that moves
+code. Functions are named, not numbered, so they survive edits. Rules and commands: `CLAUDE.md`.
+Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built description: `ARCHITECTURE.md`.
+
+## Uncommitted work in this tree
+
+Touches `EPUBParser`, `PaginationEngine`, `ReaderViewController`, `ReaderWindowController`,
+`SettingsManager`, `SettingsWindowController`, `ThemePopoverViewController`, plus new
+`ReaderStyleTests` and `SettingsManagerThemeTests`. Known contents: theme and popover work, the
+code-font toggle (`useThemeFontForCode`), `EPUBParser.strippingEmbeddedStyles` and
+`EPUBAnchor.currentLayout = 2`. Roadmap M0 decides keep or drop (the style-stripping pieces are
+dropped). The diff was not audited line by line.
 
 ## Repo root
 
@@ -14,119 +25,141 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
 | `Sources/EPUBReader.entitlements` | Bookmarks app-scope entitlement (excluded from compiled sources) |
 | `Assets.xcassets/` | App icon and accent color (in repo, not in upload zips) |
 | `test.sh` | xcodegen + `xcodebuild test` wrapper |
-| `.swiftlint.yml` | SwiftLint rules: line length 160, trailing commas required |
+| `.swiftlint.yml` | The SwiftLint config in use: line length 160, trailing commas required |
+| `swiftlint.yml` | Stale 292-byte duplicate of the above, without the dot; delete it (roadmap M0) |
 | `make_upload_zip.sh` | Builds the review zip: tracked files plus `.git-meta/` |
+| `scripts/index-anchors.sh` | Prints line counts, MARKs and type declarations for refreshing this index |
+| `scripts/make-diff.sh` | Builds a `git apply`-ready diff of a work tree against a base tree |
 | `.github/workflows/` | `tests.yml` (push/PR), `build-dmg.yml`, `release.yml` (manual) |
-| `docs/` | Roadmap, corpus notes, settings window status (see Docs map) |
+| `docs/` | `ROADMAP.md`, `FRAMEWORK.md`, `compatibility-corpus.md` (see Docs map) |
 
 ## Source map
 
 ### App (`Sources/App`)
 - `EPUBReaderApp.swift` (33): `@main`; adapts `AppDelegate`; empty `Settings` scene by design.
-- `AppDelegate.swift` (593): launch, Apple-Event and `open urls` routing (l.68-117), all menus
-  (`setupMenus` l.127), live shortcut sync (`syncMenuShortcuts` l.340), menu actions (l.372-484),
-  `readerVC()` lookup of the key window's reader (l.488), dynamic menus via `NSMenuDelegate`
-  (l.500: Open Recent, bookmarks), validation (l.562).
+- `AppDelegate.swift` (633): launch, Apple-Event and `open urls` routing (top of file to l.132);
+  `// MARK: Menu Setup` (`setupMenus`, l.133-355); live shortcut sync (`syncMenuShortcuts`,
+  l.356-395); menu actions (l.396-511, each forwards to `readerVC()?`); helpers incl. `readerVC()`
+  (l.512-518); `NSMenuDelegate` dynamic menus (`menuNeedsUpdate`: Open Recent, bookmarks) and
+  `validateMenuItem` (l.519-633).
 
 ### Reader (`Sources/Reader`)
-- `ReaderWindowController.swift` (145): window setup, `loadEPUB(at:)`, `showOpenPanel`,
-  `loadRecent`, `toggleFloat`, close flushes position. Also `ReaderWindow` (key forwarding).
-- `ReaderViewController.swift` (2047): the reading surface. See section map below.
-- `PaginationEngine.swift` (253): `PaginationEngine` (Swift driver of column layout),
-  `ColsPerScreen`, `RestorePosition` (`.start/.end/.fraction/.characterOffset`). `EPUBAnchor.currentLayout`: version of the text extraction that saved offsets refer to; bump it when offsets change (ARCHITECTURE.md 5a).
+- `ReaderWindowController.swift` (147): `setupWindow`, `loadEPUB(at:)`, `showOpenPanel`,
+  `loadRecent`, `toggleFloat`, `windowWillClose` flushes position. Also `ReaderWindow` (key forwarding).
+- `ReaderViewController.swift` (2204): the reading surface. See section map below.
+- `PaginationEngine.swift` (269): `ColsPerScreen` (l.38), `RestorePosition` (l.60,
+  `.start/.end/.fraction/.characterOffset`), `EPUBAnchor` (l.75; `currentLayout`, `legacyLayout`),
+  `PaginationEngine` (l.117, Swift driver of column layout). Bump `currentLayout` when offsets change
+  (ARCHITECTURE.md 5a). Nothing reads `anchorLayout` yet (roadmap M1).
 - `PaginationJS.swift` (313): JS for paginated mode: column snap, boundaries, char-offset seek.
   Posts `pageAction` and `positionUpdate`.
-- `EPUBDropTargetView.swift` (41): drag and drop of `.epub` files.
+- `EPUBDropTargetView.swift` (43): drag and drop of `.epub` files.
 
 ### Parsing (`Sources/Parsing`)
-- `EPUBParser.swift` (1159): models, unzip, OPF, search, HTML and CSS building, `readerJS`.
+- `EPUBParser.swift` (1356): models, unzip, OPF, DRM, search, HTML and CSS building, `readerJS`.
   See section map below.
-- `TOCParser.swift` (293): `TOCEntry`, `TOCNode`, `TOCParser`. EPUB3 nav (l.199), NCX (l.152),
-  spine-synthesis fallback (l.261), `startReadingNode` (l.71), `firstSpineIndex(afterCoverIn:)`.
+- `TOCParser.swift` (335): `TOCEntry`, `TOCNode`, `TOCParser` (`parseTOC`, `tocNodes`,
+  `startReadingNode`, `firstSpineIndex(afterCoverIn:)`); EPUB3 nav (`parseNav`), NCX (`parseNCX`),
+  spine synthesis (`synthesiseFromSpine`).
 
 ### Sidebar (`Sources/Sidebar`)
-- `TOCSidebarViewController.swift` (172): outline sidebar; `TOCSidebarDelegate`.
-- `TOCPopupViewController.swift` (108): popup TOC outline.
-- `SearchBarViewController.swift` (288): in-book search overlay; `SearchBarDelegate`.
-- `ThemePopoverViewController.swift` (185): toolbar quick theme switcher.
+- `TOCSidebarViewController.swift` (173): outline sidebar; `TOCSidebarDelegate`.
+- `TOCPopupViewController.swift` (110): popup TOC outline.
+- `SearchBarViewController.swift` (295): in-book search overlay; `SearchBarDelegate`.
+- `ThemePopoverViewController.swift` (240): toolbar quick theme switcher (`ThemeRowView`,
+  `ThemeSwatchView`).
 
 ### History (`Sources/History`)
-- `HistoryManager.swift` (196): `HistoryEntry` (Codable, security-scoped bookmark, progress,
-  spine index, char offset) and `HistoryManager.shared` (`record`, `updateProgress`,
-  `updatePosition`, `savedPosition`, `resolveURL`). Notification: `entriesDidChangeNotification`. Load decodes per element; unreadable elements are re-emitted after the decoded ones on save and count toward the cap (dropped first); a non-array blob is preserved via `StorageQuarantine` before the first overwrite.
-- `ReadingBookmark.swift`: `ReadingBookmark`, `BookmarkManager` (versioned envelope; per-element decode, unreadable elements re-emitted on save, newer version or corrupt blob preserved via `StorageQuarantine` before the first overwrite).
-- `StorageQuarantine.swift`: bounded (3) raw copies under `<key>.quarantine.<unix-seconds>`; shared by bookmark and history storage.
-- `HistoryViewController.swift` (326): recents popover, `HistoryEntryOpener`, `HistoryRowView`.
+- `HistoryManager.swift` (268): `HistoryEntry` (Codable, security-scoped bookmark, progress, spine
+  index, char offset, `anchorLayout`) and `HistoryManager.shared` (`record`, `updateProgress`,
+  `updatePosition`, `savedPosition`, `resolveURL`, `clearAll`; `maxEntries` default 100).
+  Notification: `entriesDidChangeNotification`. Load decodes per element; unreadable elements are
+  re-emitted after the decoded ones on save and count toward the cap (dropped first); a non-array
+  blob is preserved via `StorageQuarantine` before the first overwrite.
+- `ReadingBookmark.swift` (172): `ReadingBookmark`, `BookmarkManager` (versioned envelope;
+  per-element decode, unreadable elements re-emitted on save, newer version or corrupt blob preserved
+  via `StorageQuarantine` before the first overwrite).
+- `StorageQuarantine.swift` (55): bounded (3) raw copies under `<key>.quarantine.<unix-seconds>`;
+  shared by bookmark and history storage.
+- `HistoryViewController.swift` (331): recents popover, `HistoryEntryOpener`, `HistoryRowView`.
 
 ### Settings (`Sources/Settings`)
-- `SettingsManager.swift` (769): see section map below.
-- `SettingsWindowController.swift` (1998): see section map below.
-- `KeyBinding.swift` (143): `RebindableAction` (openFile, searchInBook, showTOC, toggleFloat,
-  toggleReadingMode) with defaults, `KeyBinding`, storage extension on `SettingsManager` (l.72),
-  `.keyBindingsChanged` (l.142).
+- `SettingsManager.swift` (841): see section map below.
+- `SettingsWindowController.swift` (2107): see section map below.
+- `KeyBinding.swift` (144): `RebindableAction` (openFile, searchInBook, showTOC, toggleFloat,
+  toggleReadingMode) with defaults, `KeyBinding`, storage extension on `SettingsManager`,
+  `.keyBindingsChanged`.
 - `ShortcutsSettingsViewController.swift` (176): key-capture rows for the Shortcuts tab.
-- `ReaderContrast.swift`: pure luminance and contrast math, and `hitColors(background:text:)`, the search-hit palette (yellow with black on light pages, deep amber with white on dark; active hit keeps system selection colors plus an outline). Feeds `ReaderCosmeticSettings.hit*` and the `--reader-hit-*` variables in `readerVarsCSS`.
-- `ReaderCSSSanitizer.swift`: pure validation of values interpolated into `readerVarsCSS` (hex colors normalized to `#rrggbb`, font stacks limited to quoted or bare names, numeric clamps matching the `SettingsManager` setters). Invalid input returns the fallback, never a partial value. Applied in `ReaderCosmeticSettings.current(from:)`.
+- `ReaderContrast.swift` (76): pure luminance and contrast math, and `hitColors(background:text:)`,
+  the search-hit palette (yellow with black on light pages, deep amber with white on dark; active
+  hit keeps system selection colors plus an outline). Feeds `ReaderCosmeticSettings.hit*` and the
+  `--reader-hit-*` variables in `readerVarsCSS`.
+- `ReaderCSSSanitizer.swift` (113): pure validation of values interpolated into `readerVarsCSS` (hex
+  colors normalized to `#rrggbb`, font stacks limited to quoted or bare names, numeric clamps
+  matching the `SettingsManager` setters). Invalid input returns the fallback, never a partial
+  value. Applied in `ReaderCosmeticSettings.current(from:)`.
 
 ## Large-file section maps
 
 ### `Reader/ReaderViewController.swift`
 | Lines | Content |
 |---|---|
-| 25-157 | State, pagination state, page-count state, child VCs, layout, toolbar properties |
-| 159-334 | `loadView`: WKWebView config, message handlers registered at l.176-180 |
-| 334-397 | `viewDidLoad`, KVO, appear/disappear, `beginSecurityAccess` (l.391) |
-| 399-482 | `loadEPUB`: security scope, background unpack/parse, history record, mode choice |
-| 483-600 | `renderCurrentContent`, `renderScrollContent`, `scrollRestoreBootstrapJS` (l.526), `loadSpineItem` (l.550) |
-| 600-735 | Chapter and bookmark navigation, `startReading`, `goToBeginning`, chapter begin/end |
-| 737-830 | Auto-scroll (l.737-770), speech (l.772-825, `AVSpeechSynthesizer`) |
-| 831-910 | `navigateSpine`, scrollbar visibility, `toggleReadingMode` (l.868) |
-| 910-1010 | Toolbar title, TOC sidebar host, search host |
-| 1010-1127 | Context menu, display settings: `applyDynamicSettings`, `applyCosmeticCSSUpdate` (l.1048), `scheduleStructuralReload` (l.1096), `adjustFontSize` |
-| 1127-1270 | Progress and position save/restore: `didReceive*` handlers, save timer, `flushPositionSave` (l.1161), `reportPaginatedProgress`, `didReceiveScrollPageInfo` |
-| 1270-1460 | Key handling (`handleKeyDown` l.1285), scroll-wheel and key monitors, resize (paginated mode) |
-| 1460-1544 | Toolbar updates, `showLoading`/`showError` (l.1474-1480), toolbar actions |
-| 1544-1730 | Delegate extensions: TOC sidebar, search bar, split view, window, speech, `WKNavigationDelegate` (l.1683) |
-| 1727-1888 | `NSToolbarDelegate`: items (l.1745), `makeToolbarButton` (l.1869) |
-| 1888-1970 | Private `WKScriptMessageHandler` classes (5, one per handler name) |
-| 1970-2047 | `ReaderWebView` (key and context menu), toolbar identifier constants (l.2035) |
+| 27-167 | Class, state, pagination state (Patch 0007), page-count state, child VCs, layout, toolbar properties |
+| 168-405 | View lifecycle: `loadView` (WKWebView config, `allowsContentJavaScript = true`, five message handlers), `viewDidLoad` |
+| 406-413 | `beginSecurityAccess` |
+| 414-1005 | Mislabeled `MARK: EPUB Loading`; holds far more: `loadEPUB`, `renderCurrentContent`, `renderScrollContent`, `scrollRestoreBootstrapJS`, `loadSpineItem`, `navigate(to:)`, `readPageLocation`; bookmarks (`toggleBookmarkAtCurrentPosition`, `navigate(to bookmark)`); `startReading`, chapter navigation; auto-scroll; speech (`speakCurrentLocation`, rate, voice); `navigateSpine`; scrollbar visibility; `toggleReadingMode` |
+| 1006-1022 | Toolbar title (`setToolbarTitle`) |
+| 1023-1087 | TOC sidebar host |
+| 1088-1111 | Search host |
+| 1112-1134 | Context menu |
+| 1135-1216 | Display settings: `applyDynamicSettings`, `applyCosmeticCSSUpdate`, `scheduleStructuralReload`, `adjustFontSize` |
+| 1217-1367 | Progress reporting and position save and restore: `flushPositionSave`, `reportPaginatedProgress`, `didReceiveScrollPageInfo` |
+| 1368-1415 | Navigation and key handling (`handleKeyDown`) |
+| 1416-1562 | Scroll-wheel, key monitor and resize (paginated mode only) |
+| 1563-1650 | Toolbar updates, helpers (`showLoading`, `showError`), toolbar actions (`showThemePopover`) |
+| 1651-1800 | Delegate extensions: TOC sidebar, search bar, split view, window, `AVSpeechSynthesizerDelegate` |
+| 1801-1849 | `WKNavigationDelegate` (link policy) |
+| 1850-2042 | `NSToolbarDelegate`: `itemForItemIdentifier`, `makeToolbarButton` |
+| 2043-2125 | Five private `WKScriptMessageHandler` classes (progress, position, page action, position update, page info) |
+| 2126-2204 | `ReaderWebView` (key and context menu), toolbar identifier constants |
 
 ### `Parsing/EPUBParser.swift`
 | Lines | Content |
 |---|---|
-| 8-104 | `EPUBPackage`, `EPUBManifestItem`, `EPUBSpineItem`, `EPUBLandmark`, `BookSearchResult`, `ReaderCosmeticSettings` (`current(from:)` l.77), `EPUBParseError` (incl. `.drmProtected`) |
-| 106-328 | `EPUBParser`: `javaScriptStringLiteral` (l.108), `unpackEPUB` (l.113), `parsePackage` (l.129), `searchResults` (l.163), `speechText` (l.191), `parseOPF` (l.222), `parseLandmarks` (l.296) |
-| 329-603 | HTML building: `buildScrollHTML` (l.337), `buildPageHTML` (l.385), `paginatedColumnCSS` (l.463), `extractedChapterBody` (l.553), `rewriteResourceURLs` (l.631) |
-| 604-654 | First-chapter formatting quirk (`applyFirstChapterFormatting`) |
-| 655-1037 | `readerJS` string: progress, position, page info, chapter navigation, auto-scroll, search |
-| 1038-1143 | CSS: `readerVarsCSS` (l.1051) turns `ReaderCosmeticSettings` into CSS variables |
+| 9-130 | `EPUBPackage`, `EPUBManifestItem`, `EPUBSpineItem`, `EPUBLandmark`, `BookSearchResult`, `ReaderCosmeticSettings` (`current(from:)`), `EPUBParseError` (incl. `.drmProtected`) |
+| 131-413 | `EPUBParser`: `javaScriptStringLiteral`, `unpackEPUB`, `isDRMProtected(extractedRoot:)`, `parsePackage`, `searchResults`, `speechText`, `searchableText`, `parseOPF`, `parseLandmarks` |
+| 414-721 | HTML building: `buildScrollHTML`, `buildPageHTML`, `paginatedColumnCSS`, `extractedChapterBody`, `strippingEmbeddedStyles` (uncommitted), `stripLeadingIndentWhitespace`, `stripPrefaceHeading` |
+| 722-772 | `MARK: First Chapter Formatting Quirk` (`applyFirstChapterFormatting`), then `extractBody` and `rewriteResourceURLs` (regex URL rewriting) |
+| 773-1225 | `readerJS` string: progress, position, page info, chapter navigation, auto-scroll, search |
+| 1226-1356 | CSS: `readerVarsCSS` turns `ReaderCosmeticSettings` into CSS variables; `readerCSS` |
 
 ### `Settings/SettingsManager.swift`
 | Lines | Content |
 |---|---|
-| 14-170 | `AppearanceMode`, `FontPreset(s)`, `ThemeColorSet`, `Theme`, `ReadingMode`, `NewBookOpensIn`, legacy theme enum |
-| 175-186 | Notification names and `SettingsManager.shared` |
-| 190-420 | Font, theme storage, legacy migrations (inline at read time), `updateTheme`/`addTheme`/`deleteTheme` |
-| 421-604 | Line height, font size, behaviour flags, pagination, reading-column geometry, `mutateCurrentTheme` (l.558), `applyAppearanceOverride` (l.597) |
-| 605-730 | `resetReaderToDefaults` (l.668), `resetAllToDefaults` (l.713) |
-| 731-769 | `notifyChange`, `notifyCosmeticChange`, `notifyStructuralChange`, color helpers |
+| 15-185 | `AppearanceMode`, `FontPreset(s)`, `ThemeColorSet`, `Theme`, `ReadingMode`, `NewBookOpensIn` |
+| 186-208 | Notification names, `SettingsManager.shared` |
+| 209-238 | Font |
+| 239-475 | Themes: seed backfill, `themes` getter with legacy migrations, `currentThemeID`, `currentTheme`, `effectiveColorSet`, `updateTheme`, `addTheme`, `deleteTheme` |
+| 476-525 | Line height, font size, behaviour flags |
+| 526-674 | Pagination; reading-column geometry (incl. `useThemeFontForCode`, `mutateCurrentTheme`, `applyAppearanceOverride`) |
+| 675-800 | Reset to defaults: `resetReaderToDefaults`, `resetAllToDefaults` |
+| 801-841 | `notifyChange`, `notifyCosmeticChange`, `notifyStructuralChange`, color helpers |
 
 ### `Settings/SettingsWindowController.swift`
 | Lines | Content |
 |---|---|
-| 35-160 | `SettingsPaneSizing`, `SettingsPaneMetrics` (fixed pane size), `SettingsWindowController`, `SettingsPanelWindow` |
-| 161-281 | `SettingsTabViewController`: five tabs built from `tabSpecs` (General, Reading, Appearance, History, Shortcuts) |
-| 292-568 | `GeneralSettingsViewController` |
-| 569-692 | `ReaderSettingsViewController` (the "Reading" tab) |
-| 726-1795 | `AppearanceSettingsViewController`: control factories (l.922), visibility (l.1264), actions (l.1310), theme add/edit/duplicate/delete (l.1459); `ThemeBigSwatchButton` (l.1708) |
-| 1798-1950 | `HistorySettingsViewController` and cell view |
-| 1951-1998 | `CustomFontStore`, `CustomFont` |
+| 36-160 | `SettingsPaneSizing`, `SettingsPaneMetrics` (fixed pane size), `SettingsWindowController`, `SettingsPanelWindow` |
+| 161-289 | `SettingsTabViewController`: five tabs built from `tabSpecs` (General, Reading, Appearance, History, Shortcuts) |
+| 290-722 | `GeneralSettingsViewController`, `ReaderSettingsViewController` (the Reading tab) |
+| 723-1899 | `AppearanceSettingsViewController`: control factories (l.957), visibility (l.1316), actions (l.1364), theme add, edit, duplicate, delete (l.1532); field and control identity helpers (l.1769); `ThemeBigSwatchButton` (l.1797) |
+| 1900-2058 | `HistorySettingsViewController`, table delegate, `HistorySettingsCellView` |
+| 2059-2107 | `CustomFontStore`, `CustomFont` |
 
 ## Runtime wiring
 
 | Mechanism | Names | Where |
 |---|---|---|
-| JS to Swift handlers | `progressHandler`, `positionHandler`, `pageInfoHandler` (from `readerJS`); `pageAction`, `positionUpdate` (from `PaginationJS`) | registered `ReaderViewController` l.176-180 |
+| JS to Swift handlers | `progressHandler`, `positionHandler`, `pageInfoHandler` (from `readerJS`); `pageAction`, `positionUpdate` (from `PaginationJS`) | registered in `ReaderViewController.loadView`; handler classes at l.2043-2125 |
 | Notifications | `readerCosmeticSettingsChanged`, `readerStructuralSettingsChanged`, `ReaderSettingsChanged` (`settingsChangedNotification`), `keyBindingsChanged`, `ReadingHistoryEntriesDidChange` | `SettingsManager`, `KeyBinding`, `HistoryManager` |
 | UserDefaults keys | `reader*` settings keys, `appearanceMode`, `readerThemes`, `readerCurrentThemeID`, `readerKeyBindings`, `customSelectedFontID`, `HoneycrispReadingBookmarks.v1`, `EPUBReaderHistory` | `SettingsManager`, `KeyBinding`, `ReadingBookmark`, `HistoryManager`, `SettingsWindowController` |
 | Open-book flow | `AppDelegate`/`ReaderWindowController` -> `ReaderViewController.loadEPUB` -> `EPUBParser.unpackEPUB`, `parsePackage` -> `TOCParser.parseTOC` -> `HistoryManager.record` -> `buildScrollHTML` or `buildPageHTML` -> `loadFileURL` | see `ARCHITECTURE.md` section 4 |
@@ -135,22 +168,23 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
 
 | Task | Start here |
 |---|---|
-| Add or change a menu item | `AppDelegate.setupMenus` (l.127); action near l.372-484; validation l.562 |
+| Add or change a menu item | `AppDelegate.setupMenus`; action in the Actions region; `validateMenuItem` |
 | Add a rebindable shortcut | `RebindableAction` in `KeyBinding.swift`; `AppDelegate.syncMenuShortcuts`; `ShortcutsSettingsViewController` |
-| Add a user setting | Property in `SettingsManager` (call `notifyCosmeticChange` or `notifyStructuralChange`); include in reset functions (l.668, l.713); control in the right pane in `SettingsWindowController`; if it affects rendering, extend `ReaderCosmeticSettings` and `readerVarsCSS` |
-| Change reader typography or CSS | `EPUBParser` CSS section (l.1038+), `paginatedColumnCSS`, `Theme` model |
-| Change how a chapter's HTML is cleaned | `extractedChapterBody`, `rewriteResourceURLs`, `applyFirstChapterFormatting` |
-| Page turning or column layout | `PaginationEngine`, `PaginationJS`, `ReaderViewController` l.1172-1250 and l.1285-1460 |
-| Saved position and progress | `HistoryManager`, `RestorePosition`, `ReaderViewController` l.1127-1270, `scrollRestoreBootstrapJS` |
-| Table of contents or Start Reading | `TOCParser`, `Sidebar/TOC*`, `ReaderViewController` l.925-986 |
-| In-book search | `EPUBParser.searchResults`, `SearchBarViewController`, `ReaderViewController` l.1569 |
-| Bookmarks | `BookmarkManager`, `ReaderViewController` l.623-690, `AppDelegate` l.423-455 |
+| Add a user setting | Property in `SettingsManager` (call `notifyCosmeticChange` or `notifyStructuralChange`); include in `resetReaderToDefaults` and `resetAllToDefaults`; control in the right pane in `SettingsWindowController`; if it affects rendering, extend `ReaderCosmeticSettings` and `readerVarsCSS` |
+| Change reader typography or CSS | `EPUBParser` CSS region (`readerVarsCSS`, `readerCSS`), `paginatedColumnCSS`, `Theme` model |
+| Change how a chapter's HTML is cleaned | `extractedChapterBody`, `extractBody`, `rewriteResourceURLs`, `applyFirstChapterFormatting` (any change shifts offsets: see CLAUDE.md invariants) |
+| Page turning or column layout | `PaginationEngine`, `PaginationJS`, `ReaderViewController` scroll-wheel, key monitor and resize regions |
+| Saved position and progress | `HistoryManager`, `RestorePosition`, `ReaderViewController` position save and restore region, `scrollRestoreBootstrapJS` |
+| Table of contents or Start Reading | `TOCParser`, `Sidebar/TOC*`, `ReaderViewController` TOC sidebar host region |
+| In-book search | `EPUBParser.searchResults`, `SearchBarViewController`, `ReaderViewController` `SearchBarDelegate` extension |
+| Bookmarks | `BookmarkManager`, `ReaderViewController` bookmark functions (inside the EPUB Loading region), `AppDelegate` bookmark menu actions |
 | Reading history UI | `HistoryViewController`, `HistoryEntryOpener`, `HistorySettingsViewController` |
-| Toolbar buttons | `ReaderViewController.toolbar(_:itemForItemIdentifier:)` (l.1745), `makeToolbarButton` (l.1869), identifiers (l.2035) |
-| Auto-scroll or speech | `ReaderViewController` l.737-830; speech delegate l.1645; menu actions in `AppDelegate` |
-| New DRM or parse error | `EPUBParseError` (l.92), `EPUBParser.isDRMProtected(extractedRoot:)` (DRM rules, called first by `parsePackage`; line numbers after l.126 have shifted), `parsePackage`; error surfaces via `showError` |
+| Toolbar buttons | `ReaderViewController` `NSToolbarDelegate` extension (`itemForItemIdentifier`, `makeToolbarButton`), identifier constants at end of file |
+| Auto-scroll or speech | `ReaderViewController` auto-scroll and speech functions (inside the EPUB Loading region), `AVSpeechSynthesizerDelegate` extension; menu actions in `AppDelegate` |
+| New DRM or parse error | `EPUBParseError`, `EPUBParser.isDRMProtected(extractedRoot:)` (called first by `parsePackage`); error surfaces via `showError` |
 | Window behavior, float on top | `ReaderWindowController` (`setupWindow`, `toggleFloat`) |
 | Themes | `Theme` and storage in `SettingsManager`, `AppearanceSettingsViewController`, `ThemePopoverViewController` |
+| Link policy, script and URL restrictions | `ReaderViewController` `WKNavigationDelegate` extension, `loadView` WKWebView config (restrictions are not enforced yet; roadmap M3) |
 | File type registration | `Honeycrisp/Info.plist`, `project.yml` settings |
 | Signing, sandbox, version | `project.yml` base settings; workflows for release |
 
@@ -160,21 +194,26 @@ lives in `ARCHITECTURE.md`. About 9,300 lines of Swift in `Sources/`.
 |---|---|
 | `EPUBParserTests.swift` | package and spine parsing, landmarks, search offsets, JS string escaping, DRM rules (LCP file, LCP and ADEPT markers, unknown algorithm; font-obfuscation-only and empty manifests open), missing container, unpack |
 | `TOCParserTests.swift` | NCX, EPUB3 nav, nested hierarchy, Start Reading, missing-TOC fallback |
-| `HistoryManagerTests.swift` | record/progress/position persistence, clamping, cap, clear, reload, bad-element survival, whole-blob quarantine, unreadable elements and the cap |
+| `HistoryManagerTests.swift` | record, progress and position persistence, clamping, cap, clear, reload, bad-element survival, whole-blob quarantine, unreadable elements and the cap |
 | `HistoryEntryTests.swift` | legacy decode defaults (including `anchorLayout`), round-trip of restore position and layout |
-| `BookmarkManagerTests.swift` | per-book persistence, rename/remove, corrupt data isolation, bad-element survival, newer version and whole-blob quarantine, quarantine pruning, legacy bookmark decode, anchor layout round trip |
+| `BookmarkManagerTests.swift` | per-book persistence, rename and remove, corrupt data isolation, bad-element survival, newer version and whole-blob quarantine, quarantine pruning, legacy bookmark decode, anchor layout round trip |
 | `RestorePositionTests.swift` | fraction clamping, bootstrap call generation |
+| `ReaderCSSSanitizerTests.swift` | hex normalization and injection rejection, preset and custom font stacks, length limits, numeric clamps, non-finite fallback |
 | `ReaderContrastTests.swift` | contrast math, hit palette per page luminance, 4.5:1 floor for every seed theme, `--reader-hit-*` variables, no fixed yellow in `readerCSS` |
+| `ReaderStyleTests.swift` (uncommitted) | in-body `<style>` and stylesheet-link stripping (dropped at M0), `--reader-code-font-family` var and `readerCSS` rule, `useThemeFontForCode` default, persistence, reset |
+| `SettingsManagerThemeTests.swift` (uncommitted) | seed keys, Codable round trip, seed-key migration, reset and customized check by identity, delete protection (isolated `UserDefaults` suite) |
 
-Not covered: `SettingsManager`, `KeyBinding`, `PaginationEngine` navigation, `ReaderViewController`,
-search UI, all Settings panes, `AppDelegate`.
+Not covered: `SettingsManager` beyond themes, `KeyBinding`, `PaginationEngine` navigation,
+`ReaderViewController`, search UI, all Settings panes, `AppDelegate`. No `WKWebView` harness exists
+yet (roadmap M1).
 
 ## Docs map
 
 | Doc | Use for | Caveat |
 |---|---|---|
-| `ARCHITECTURE.md` | Design, data flow, decisions | Says four Settings tabs; code has five |
+| `CLAUDE.md` | Rules, workflows (planning and implementation passes), invariants | Keep short; design lives in FRAMEWORK |
+| `docs/FRAMEWORK.md` | Target design: layers, contracts (Locator, offsets, style cascade, trust), admission rules | Design, not implemented |
+| `docs/ROADMAP.md` | The only plan: decisions R1 to R18, milestones M0 to M10 with status, verify list | Plan; nothing built in review |
+| `ARCHITECTURE.md` | What the code does today, data flow, historical decisions | Says four Settings tabs in places; code has five |
 | `README.md` | Features, install, build | Architecture table is partial |
-| `docs/implementation-roadmap.md` | Phases (PDF, MOBI, format dispatch, Quick Look, AO3 series), architecture rules | Phases 2 to 9 not implemented; Phase 0 gated on sample review |
 | `docs/compatibility-corpus.md` | Synthetic fixture to test mapping, real-file validation table | All real-sample rows pending |
-| `docs/honeycrisp-settings-window-plan.md` | Settings window status and follow-ups | Follow-ups: reset refresh in Appearance, swatch accessibility |

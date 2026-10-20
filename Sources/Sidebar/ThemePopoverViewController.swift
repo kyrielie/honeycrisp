@@ -1,26 +1,30 @@
 // ThemePopoverViewController.swift
-// Quick Apple-Books-style theme switcher shown from the toolbar gear button.
+// Quick Apple-Books-style theme switcher shown from the toolbar theme button.
 //
 // This is a fast path onto the same SettingsManager.shared.currentTheme
 // property that AppDelegate's "Reading > Theme" menu already writes to
 // (see AppDelegate.selectTheme(_:)), so the two stay in sync automatically —
-// there's no separate state to reconcile. The full Settings window's General
-// tab still owns everything else (fonts, columns, custom colors, shortcuts);
-// this popover intentionally exposes only theme selection, mirroring how
-// Apple Books' toolbar theme control is scoped to appearance alone.
+// there's no separate state to reconcile. The Settings window's Appearance
+// tab still owns editing (colors, fonts, margins). This popover exposes theme
+// selection plus the System/Light/Dark mode, both of which write through
+// SettingsManager.
 
 import AppKit
 
 final class ThemePopoverViewController: NSViewController {
 
     private var rows: [ThemeRowView] = []
+    private var modeControl: NSSegmentedControl?
 
     override func loadView() {
         let themes = SettingsManager.shared.themes
         let rowHeight: CGFloat = 36
         let headerHeight: CGFloat = 34
+        let modeBlockHeight: CGFloat = 52
         let container = NSView(
-            frame: NSRect(x: 0, y: 0, width: 220, height: headerHeight + CGFloat(themes.count) * rowHeight + 8))
+            frame: NSRect(
+                x: 0, y: 0, width: 220,
+                height: headerHeight + CGFloat(themes.count) * rowHeight + 8 + modeBlockHeight))
         container.translatesAutoresizingMaskIntoConstraints = false
 
         let headerLabel = NSTextField(labelWithString: "Theme")
@@ -60,7 +64,32 @@ final class ThemePopoverViewController: NSViewController {
             rows.append(row)
         }
 
-        container.bottomAnchor.constraint(equalTo: previousAnchor, constant: 8).isActive = true
+        let modeSeparator = NSBox()
+        modeSeparator.boxType = .separator
+        modeSeparator.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(modeSeparator)
+
+        let modes = AppearanceMode.allCases
+        let modeControl = NSSegmentedControl(
+            labels: modes.map(\.displayName), trackingMode: .selectOne,
+            target: self, action: #selector(modeChanged(_:)))
+        modeControl.controlSize = .small
+        modeControl.selectedSegment = modes.firstIndex(of: SettingsManager.shared.appearanceMode) ?? 0
+        modeControl.setAccessibilityLabel("Appearance")
+        modeControl.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(modeControl)
+        self.modeControl = modeControl
+
+        NSLayoutConstraint.activate([
+            modeSeparator.topAnchor.constraint(equalTo: previousAnchor, constant: 6),
+            modeSeparator.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            modeSeparator.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+            modeControl.topAnchor.constraint(equalTo: modeSeparator.bottomAnchor, constant: 10),
+            modeControl.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+            modeControl.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
+            container.bottomAnchor.constraint(equalTo: modeControl.bottomAnchor, constant: 10),
+        ])
 
         self.view = container
         refreshCheckmarks()
@@ -69,6 +98,15 @@ final class ThemePopoverViewController: NSViewController {
     override func viewWillAppear() {
         super.viewWillAppear()
         refreshCheckmarks()
+        if let index = AppearanceMode.allCases.firstIndex(of: SettingsManager.shared.appearanceMode) {
+            modeControl?.selectedSegment = index
+        }
+    }
+
+    @objc private func modeChanged(_ sender: NSSegmentedControl) {
+        let modes = AppearanceMode.allCases
+        guard sender.selectedSegment >= 0, sender.selectedSegment < modes.count else { return }
+        SettingsManager.shared.appearanceMode = modes[sender.selectedSegment]
     }
 
     private func select(_ theme: Theme) {
@@ -91,7 +129,7 @@ private final class ThemeRowView: NSView {
     let theme: Theme
     private let onSelect: (Theme) -> Void
 
-    private let swatch = NSView()
+    private let swatch = ThemeSwatchView()
     private let label = NSTextField(labelWithString: "")
     private let checkmark = NSImageView()
     private let button = NSButton()
@@ -106,11 +144,7 @@ private final class ThemeRowView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     private func setup() {
-        swatch.wantsLayer = true
-        swatch.layer?.cornerRadius = 8
-        swatch.layer?.borderWidth = 1
-        swatch.layer?.borderColor = NSColor.separatorColor.cgColor
-        swatch.layer?.backgroundColor = swatchColor(for: theme).cgColor
+        swatch.theme = theme
         swatch.translatesAutoresizingMaskIntoConstraints = false
         addSubview(swatch)
 
@@ -153,21 +187,41 @@ private final class ThemeRowView: NSView {
         ])
     }
 
-    /// Every theme is now user-editable and carries its own background for both
-    /// system appearances, so the swatch just reads whichever one is currently
-    /// active -- no more per-fixed-case switch.
-    private func swatchColor(for theme: Theme) -> NSColor {
-        let isDark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let css = isDark ? theme.dark.background : theme.light.background
-        return NSColor(hexString: css) ?? .windowBackgroundColor
-    }
-
     func setSelected(_ selected: Bool) {
         checkmark.isHidden = !selected
     }
 
     @objc private func tapped() {
         onSelect(theme)
+    }
+}
+
+// MARK: - ThemeSwatchView
+
+/// 16pt rounded chip split diagonally into the theme's light and dark backgrounds. Drawn in
+/// `draw(_:)`, so the border color re-resolves when the effective appearance changes.
+private final class ThemeSwatchView: NSView {
+    var theme: Theme? { didSet { needsDisplay = true } }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let theme else { return }
+        let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
+        NSGraphicsContext.saveGraphicsState()
+        path.addClip()
+        (NSColor(hexString: theme.light.background) ?? .windowBackgroundColor).setFill()
+        rect.fill()
+        let darkHalf = NSBezierPath()
+        darkHalf.move(to: NSPoint(x: rect.maxX, y: rect.maxY))
+        darkHalf.line(to: NSPoint(x: rect.maxX, y: rect.minY))
+        darkHalf.line(to: NSPoint(x: rect.minX, y: rect.minY))
+        darkHalf.close()
+        (NSColor(hexString: theme.dark.background) ?? .windowBackgroundColor).setFill()
+        darkHalf.fill()
+        NSGraphicsContext.restoreGraphicsState()
+        NSColor.separatorColor.setStroke()
+        path.lineWidth = 1
+        path.stroke()
     }
 }
 

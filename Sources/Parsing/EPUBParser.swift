@@ -84,6 +84,8 @@ struct ReaderCosmeticSettings: Equatable {
     var maxWidth: Int
     var paddingH: Int
     var allowLinkClicks: Bool
+    /// When true, `code` and `pre` use the theme font instead of the monospace stack.
+    var overrideMonospace: Bool = true
 
     /// Every value passes through `ReaderCSSSanitizer`, so the initial render and the live patch both
     /// get valid CSS no matter what is persisted. Hit colors derive from the sanitized page colors.
@@ -105,7 +107,8 @@ struct ReaderCosmeticSettings: Equatable {
             lineHeight: ReaderCSSSanitizer.lineHeight(settings.lineHeight),
             maxWidth: ReaderCSSSanitizer.maxWidth(settings.maxWidth),
             paddingH: ReaderCSSSanitizer.paddingH(settings.paddingH),
-            allowLinkClicks: settings.allowReaderLinkClicks
+            allowLinkClicks: settings.allowReaderLinkClicks,
+            overrideMonospace: settings.useThemeFontForCode
         )
     }
 }
@@ -1191,6 +1194,9 @@ final class EPUBParser: NSObject {
 
     // MARK: - CSS
 
+    /// Font stack for `code` and `pre` when the theme font does not override them.
+    static let monospaceStack = "ui-monospace, \"SF Mono\", SFMono-Regular, Menlo, monospace"
+
     /// The `:root` CSS custom properties, emitted into their own `<style id="honeycrisp-vars">`
     /// element so `applyCosmeticCSSUpdate` (in ReaderViewController) can replace just this
     /// element's textContent on a settings change, without touching the rest of the stylesheet.
@@ -1208,6 +1214,7 @@ final class EPUBParser: NSObject {
             color-scheme: light dark;
             --reader-font-size: \(cosmetics.fontSizePercent)%;
             --reader-font-family: \(cosmetics.fontFamily);
+            --reader-code-font-family: \(cosmetics.overrideMonospace ? cosmetics.fontFamily : Self.monospaceStack);
             --reader-bg: \(cosmetics.backgroundCSS);
             --reader-text: \(cosmetics.textCSS);
             --reader-link: \(cosmetics.linkCSS);
@@ -1283,7 +1290,7 @@ final class EPUBParser: NSObject {
     }
 
     code, pre {
-        font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace !important;
+        font-family: var(--reader-code-font-family) !important;
         white-space: pre-wrap;
         word-break: break-all;
     }

@@ -1134,12 +1134,12 @@ final class ReaderViewController: NSViewController {
 
     // MARK: - Display Settings
 
-    /// Full initial apply on load — sets every CSS var and the window appearance.
+    /// Full initial apply on load: sets every CSS var. Window appearance is owned by
+    /// `SettingsManager.appearanceMode` (applied at launch and on change), not here.
     /// Subsequent changes go through `applyCosmeticCSSUpdate` or
     /// `scheduleStructuralReload` instead, not this.
     @objc func applyDynamicSettings() {
         applyCosmeticCSSUpdate()
-        applyWindowAppearance()
     }
 
     /// JS-only live patch of the `#honeycrisp-vars` `<style>` element's textContent —
@@ -1163,13 +1163,6 @@ final class ReaderViewController: NSViewController {
             // scroll listener won't fire on its own here, so recompute explicitly.
             webView.evaluateJavaScript("window.reportPageInfo && window.reportPageInfo();", completionHandler: nil)
         }
-        // applyWindowAppearance() is NOT called here. It sets NSApp.appearance,
-        // which is itself observed via KVO on effectiveAppearance (see viewDidLoad)
-        // and routes back into this method -- calling it from this hot path is an
-        // infinite recursion (NSApp.appearance = nil -> KVO fires even though the
-        // value didn't change -> observeValue -> applyCosmeticCSSUpdate -> ...).
-        // Every theme now supplies both light and dark colors, so the window's
-        // appearance only ever needs to be set once, from applyDynamicSettings.
     }
 
     /// Encodes a Swift string as a safe JS string literal (JSON string syntax is
@@ -1182,14 +1175,6 @@ final class ReaderViewController: NSViewController {
         else { return "''" }
         // json is `["value"]` — strip the surrounding array brackets to get `"value"`
         return String(json.dropFirst().dropLast())
-    }
-
-    private func applyWindowAppearance() {
-        // Every theme now supplies both a light and a dark ThemeColorSet (see
-        // SettingsManager.effectiveColorSet), so the window always follows the
-        // system appearance rather than forcing aqua/darkAqua per theme the way
-        // the old fixed-case System/Light/Dark/Sepia/Custom model needed to.
-        NSApp.appearance = nil
     }
 
     /// Debounced (~0.15s) full reload for structural settings changes (formatting
@@ -1873,9 +1858,12 @@ extension ReaderViewController: WKNavigationDelegate {
 extension ReaderViewController: NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        // Reading-first default: navigation on the left, title centered, the controls
+        // used mid-read on the right. Open (Cmd-O), History, Float and Page Count stay
+        // available through Customize Toolbar. Existing windows keep their saved layout
+        // because the toolbar identifier carries a version (see ReaderWindowController).
         [
-            .openFile, .flexibleSpace, .titleLabel, .flexibleSpace, .search, .toc, .pageCount, .bookmark, .fontSize,
-            .themePopover, .history, .floatToggle,
+            .toc, .flexibleSpace, .titleLabel, .flexibleSpace, .search, .bookmark, .fontSize, .themePopover,
         ]
     }
 
@@ -1990,6 +1978,8 @@ extension ReaderViewController: NSToolbarDelegate {
             // an empty label made it a blank, effectively unfindable palette entry.
             item.label = "Page Count"
             item.paletteLabel = "Page Count"
+            // First to collapse into the overflow menu when the window gets narrow.
+            item.visibilityPriority = .low
             return item
 
         case .themePopover:

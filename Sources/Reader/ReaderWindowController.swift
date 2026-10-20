@@ -45,7 +45,9 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
 
         window.setContentSize(NSSize(width: 980, height: 960))  // wider to accommodate sidebar
 
-        let toolbar = NSToolbar(identifier: "HoneycrispReaderToolbar")
+        // The identifier keys the autosaved toolbar layout. Bump the suffix whenever the default
+        // item set changes, otherwise existing installs keep the old layout and never see it.
+        let toolbar = NSToolbar(identifier: "HoneycrispReaderToolbar.v2")
         toolbar.delegate = readerViewController
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true

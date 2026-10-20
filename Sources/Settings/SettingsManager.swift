@@ -104,6 +104,10 @@ struct Theme: Codable, Identifiable, Equatable {
     // all user-created by definition, since the seed themes are re-tagged
     // by id below -- decode as non-default.
     var isDefault: Bool
+    // Stable identity of a seeded theme ("original", "quiet", "paper"); nil for
+    // user-created themes. Reset and the customized check match seeds by this key,
+    // not by name, so renaming a default theme cannot detach it from its seed.
+    var seedKey: String?
 
     init(
         id: UUID = UUID(), name: String, light: ThemeColorSet, dark: ThemeColorSet,
@@ -113,7 +117,8 @@ struct Theme: Codable, Identifiable, Equatable {
         maxWidth: Int = 700,
         paddingH: Int = 24,
         paddingV: Int = 24,
-        isDefault: Bool = false
+        isDefault: Bool = false,
+        seedKey: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -126,10 +131,11 @@ struct Theme: Codable, Identifiable, Equatable {
         self.paddingH = paddingH
         self.paddingV = paddingV
         self.isDefault = isDefault
+        self.seedKey = seedKey
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, light, dark, fontFamily, fontSizePercent, lineHeight, maxWidth, paddingH, paddingV, isDefault
+        case id, name, light, dark, fontFamily, fontSizePercent, lineHeight, maxWidth, paddingH, paddingV, isDefault, seedKey
     }
 
     init(from decoder: Decoder) throws {
@@ -145,6 +151,7 @@ struct Theme: Codable, Identifiable, Equatable {
         paddingH = try values.decodeIfPresent(Int.self, forKey: .paddingH) ?? 24
         paddingV = try values.decodeIfPresent(Int.self, forKey: .paddingV) ?? 24
         isDefault = try values.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+        seedKey = try values.decodeIfPresent(String.self, forKey: .seedKey)
     }
 }
 
@@ -192,7 +199,12 @@ final class SettingsManager {
     static let shared = SettingsManager()
     static let settingsChangedNotification = Notification.Name("ReaderSettingsChanged")
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
+
+    /// `defaults` is injectable so tests can use an isolated suite instead of the app's domain.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
 
     // MARK: Font
 
@@ -237,19 +249,19 @@ final class SettingsManager {
             light: ThemeColorSet(background: "#ffffff", text: "#000000", link: "#0068da"),
             dark: ThemeColorSet(background: "#1c1c1e", text: "#e8e0d4", link: "#5aa9ff"),
             fontFamily: FontPresets.all.first { $0.id == "system" }!.cssStack,
-            isDefault: true),
+            isDefault: true, seedKey: "original"),
         Theme(
             name: "Quiet",
             light: ThemeColorSet(background: "#2c2c2c", text: "#8a8a8a", link: "#7fb2e8"),
             dark: ThemeColorSet(background: "#1c1c1e", text: "#8a8a8a", link: "#7fb2e8"),
             fontFamily: FontPresets.all.first { $0.id == "iowan" }!.cssStack,
-            isDefault: true),
+            isDefault: true, seedKey: "quiet"),
         Theme(
             name: "Paper",
             light: ThemeColorSet(background: "#f4ecd8", text: "#433422", link: "#8a5a2b"),
             dark: ThemeColorSet(background: "#2b2216", text: "#d8c9a8", link: "#c99a55"),
             fontFamily: FontPresets.all.first { $0.id == "georgia" }!.cssStack,
-            isDefault: true),
+            isDefault: true, seedKey: "paper"),
     ]
 
     /// One-time migration for installs that persisted themes before `isDefault`
@@ -263,6 +275,24 @@ final class SettingsManager {
         return themes.map { theme in
             var updatedTheme = theme
             if seedNames.contains(theme.name) { updatedTheme.isDefault = true }
+            return updatedTheme
+        }
+    }
+
+    /// One-time migration for themes persisted before `seedKey` existed. A default theme
+    /// still carrying its seed name gets that seed's key. A default theme that was renamed
+    /// before this migration cannot be matched to a seed any more, so it is demoted to an
+    /// ordinary (deletable) theme rather than left as a default with no seed to reset to.
+    /// Idempotent: after it runs, no theme is `isDefault` with a nil `seedKey`.
+    static func backfillSeedKeys(_ themes: [Theme]) -> [Theme] {
+        themes.map { theme in
+            guard theme.isDefault, theme.seedKey == nil else { return theme }
+            var updatedTheme = theme
+            if let seed = seedThemes.first(where: { $0.name == theme.name }) {
+                updatedTheme.seedKey = seed.seedKey
+            } else {
+                updatedTheme.isDefault = false
+            }
             return updatedTheme
         }
     }
@@ -311,7 +341,14 @@ final class SettingsManager {
                     return migrated
                 }
                 if !Self.dataHasIsDefaultFlag(data) {
-                    let migrated = Self.backfillIsDefault(decoded)
+                    let migrated = Self.backfillSeedKeys(Self.backfillIsDefault(decoded))
+                    if let data = try? JSONEncoder().encode(migrated) {
+                        defaults.set(data, forKey: "readerThemes")
+                    }
+                    return migrated
+                }
+                if decoded.contains(where: { $0.isDefault && $0.seedKey == nil }) {
+                    let migrated = Self.backfillSeedKeys(decoded)
                     if let data = try? JSONEncoder().encode(migrated) {
                         defaults.set(data, forKey: "readerThemes")
                     }
@@ -599,6 +636,17 @@ final class SettingsManager {
         set { defaults.set(newValue, forKey: "readerAllowLinkClicks"); notifyCosmeticChange() }
     }
 
+    /// Whether `code` and `pre` text uses the theme font (true, the default) or the monospace
+    /// stack (false). Global rather than per-theme, like `allowReaderLinkClicks`. Purely a CSS
+    /// variable, so cosmetic.
+    var useThemeFontForCode: Bool {
+        get {
+            defaults.object(forKey: "readerUseThemeFontForCode") == nil
+                ? true : defaults.bool(forKey: "readerUseThemeFontForCode")
+        }
+        set { defaults.set(newValue, forKey: "readerUseThemeFontForCode"); notifyCosmeticChange() }
+    }
+
     /// Whether the app follows the system's light/dark setting or overrides
     /// it. Setting this both persists the choice and immediately re-applies
     /// it to NSApp -- `systemIsDark`/`effectiveColorSet` above don't need any
@@ -648,12 +696,13 @@ final class SettingsManager {
     var isReaderCustomized: Bool {
         let list = themes
         if allowReaderLinkClicks != true { return true }
-        let existingDefaultNames = Set(list.filter(\.isDefault).map(\.name))
-        if Self.seedThemes.contains(where: { !existingDefaultNames.contains($0.name) }) { return true }
+        if useThemeFontForCode != true { return true }
+        let existingSeedKeys = Set(list.compactMap(\.seedKey))
+        if Self.seedThemes.contains(where: { !existingSeedKeys.contains($0.seedKey ?? "") }) { return true }
         for theme in list {
             if theme.isDefault {
-                guard let seed = Self.seedThemes.first(where: { $0.name == theme.name }) else { return true }
-                if theme.light != seed.light || theme.dark != seed.dark
+                guard let seed = Self.seedThemes.first(where: { $0.seedKey == theme.seedKey }) else { return true }
+                if theme.name != seed.name || theme.light != seed.light || theme.dark != seed.dark
                     || theme.fontFamily != seed.fontFamily
                     || theme.fontSizePercent != 100
                     || theme.lineHeight != 1.6
@@ -697,8 +746,8 @@ final class SettingsManager {
         // copies, in seed order, ahead of whatever's already there. Existing
         // custom themes are left alone, whether or not they're also missing
         // one of their own.
-        let existingDefaultNames = Set(list.filter(\.isDefault).map(\.name))
-        let missingSeeds = Self.seedThemes.filter { !existingDefaultNames.contains($0.name) }
+        let existingSeedKeys = Set(list.compactMap(\.seedKey))
+        let missingSeeds = Self.seedThemes.filter { !existingSeedKeys.contains($0.seedKey ?? "") }
         if !missingSeeds.isEmpty {
             list.insert(contentsOf: missingSeeds, at: 0)
         }
@@ -706,11 +755,10 @@ final class SettingsManager {
         let resetList: [Theme] = list.map { theme in
             var updatedTheme = theme
             if theme.isDefault {
-                // Matched by name, not position: defaultThemesInOrder[i] <->
-                // seedThemes[i] silently mismatched colors whenever one
-                // default had been deleted, since the remaining defaults
-                // would shift positions relative to seedThemes.
-                if let seed = Self.seedThemes.first(where: { $0.name == theme.name }) {
+                // Matched by seedKey, not by position or name: position broke when a
+                // default was deleted, and name broke when the user renamed one.
+                if let seed = Self.seedThemes.first(where: { $0.seedKey == theme.seedKey }) {
+                    updatedTheme.name = seed.name
                     updatedTheme.light = seed.light
                     updatedTheme.dark = seed.dark
                     updatedTheme.fontFamily = seed.fontFamily
@@ -727,6 +775,7 @@ final class SettingsManager {
         }
         themes = resetList
         allowReaderLinkClicks = true
+        useThemeFontForCode = true
     }
 
     /// Resets every settings tab, not just Appearance's themes: General's
