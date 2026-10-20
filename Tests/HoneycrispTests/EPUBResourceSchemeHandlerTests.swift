@@ -48,4 +48,33 @@ final class EPUBResourceSchemeHandlerTests: XCTestCase {
 
         XCTAssertEqual(handler.rootFolder.path, root.resolvingSymlinksInPath().standardizedFileURL.path)
     }
+
+    func testAppResourceKeyOnlyForAppPrefix() {
+        let key = { EPUBResourceSchemeHandler.appResourceKey(for: URL(string: $0)!) }
+        XCTAssertEqual(key("honeycrisp-epub://book/__app/reader.css"), ServedChapter.readerStylesheetPath)
+        XCTAssertEqual(key("honeycrisp-epub://book/__app/shell.html"), "__app/shell.html")
+        XCTAssertNil(key("honeycrisp-epub://book/Text/chapter.xhtml"))
+        XCTAssertNil(key("honeycrisp-epub://book/__app/"), "the bare prefix names no resource")
+        XCTAssertNil(key("honeycrisp-epub://book/__apple/reader.css"))
+        XCTAssertNil(key("honeycrisp-epub://book/x/__app/reader.css"))
+    }
+
+    func testAppResourceKeyRejectsTraversalForeignHostAndQuery() {
+        let key = { EPUBResourceSchemeHandler.appResourceKey(for: URL(string: $0)!) }
+        XCTAssertNil(key("honeycrisp-epub://book/__app/%2e%2e/secret.css"))
+        XCTAssertNil(key("honeycrisp-epub://book/__app/../secret.css"))
+        XCTAssertNil(key("honeycrisp-epub://other/__app/reader.css"))
+        XCTAssertNil(key("https://book/__app/reader.css"))
+        XCTAssertNil(key("honeycrisp-epub://book/__app/reader.css?x=1"))
+    }
+
+    func testShouldTransformOnlyMarkupExtensions() {
+        let transforms = { EPUBResourceSchemeHandler.shouldTransform(URL(fileURLWithPath: $0)) }
+        XCTAssertTrue(transforms("Text/chapter.xhtml"))
+        XCTAssertTrue(transforms("Text/Chapter.HTML"))
+        XCTAssertTrue(transforms("Text/old.htm"))
+        XCTAssertFalse(transforms("Styles/book.css"))
+        XCTAssertFalse(transforms("Images/pic.png"))
+        XCTAssertFalse(transforms("Fonts/book.woff2"))
+    }
 }

@@ -33,7 +33,7 @@ product change and must go through the admission checklist in section 6, not sli
 
 ```
  L5  Shell        windows, menus, toolbar, sidebar, settings, popovers          AppKit
- L4  State        Locator, history, bookmarks, navigation history, settings    pure Swift + UserDefaults
+ L4  State        Locator, history, bookmarks, navigation history, settings    pure Swift + UserDefaults, theme files
  L3  Surface      FlowingSurface (WKWebView host) | PagedSurface (PDFKit/images) WebKit, PDFKit
  L2  Content      sanitize, transform, style layers, text extraction            pure Swift (+ SwiftSoup)
  L1  Publication  format-neutral model: metadata, resources, reading order, TOC pure Swift
@@ -161,7 +161,10 @@ contract above is what the rest of the code depends on, so the construction can 
 
 ### C7. Persistence
 
-- `UserDefaults` only. No database. Keys are owned by exactly one type.
+- `UserDefaults` only, except themes (roadmap R19): one JSON file per theme in `Application Support/Honeycrisp/Themes`
+  inside the app container, owned by `ThemeStore`. No database. Keys and files are owned by exactly one type.
+- Theme files use the versioned `ThemeExport` shape. A file that is unreadable, corrupt or from a newer version is
+  skipped and never rewritten. Reads come from an in-memory cache; writes are debounced and flushed on quit.
 - Every stored record is versioned and decoded per element. A record that fails to decode is
   preserved and written back; a newer version than the app knows is never overwritten
   (`StorageQuarantine`).
@@ -173,7 +176,7 @@ contract above is what the rest of the code depends on, so the construction can 
 
 ### C8. Settings
 
-- `SettingsManager` is the only writer of `reader*` keys. Setters notify.
+- `SettingsManager` is the only writer of `reader*` keys and the only caller of `ThemeStore`. Setters notify.
 - A change is either cosmetic or structural. Cosmetic: patch CSS variables in all mounted chapters,
   no reload. Structural: re-render the mounted window and restore the `Locator`.
 - Appearance (system, light, dark) is a setting, not a theme. A theme holds light and dark color

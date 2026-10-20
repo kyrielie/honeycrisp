@@ -18,6 +18,7 @@
 	<link rel="icon" href="favicon.png" type="image/png">
 	<link rel="apple-touch-icon" href="apple-touch-icon.png">
 	<link rel="stylesheet" href="css/site.css">
+	<script src="js/site.js" defer></script>
 </head>
 <body>
 
@@ -52,14 +53,20 @@
 			<figure><img src="img/screenshots/03.png" alt="Settings, Appearance tab" loading="lazy"><figcaption>Settings: Appearance</figcaption></figure>
 			<figure><img src="img/screenshots/04.png" alt="Settings, additional tab" loading="lazy"><figcaption>Settings: more</figcaption></figure>
 		</div>
+		<div class="dots" hidden>
+			<button type="button" aria-label="Show screenshot 1"></button>
+			<button type="button" aria-label="Show screenshot 2"></button>
+			<button type="button" aria-label="Show screenshot 3"></button>
+			<button type="button" aria-label="Show screenshot 4"></button>
+		</div>
 	</section>
 
-	<p id="lead">quiet, native, and out of the way</p>
+	<p id="lead">a quiet, native reader, inspired by <a href="https://coteditor.com">CotEditor</a></p>
 
 	<section id="highlights">
 		<section>
-			<h3>Just for macOS</h3>
-			<p>Built with AppKit and WebKit. Multiple windows or tabs, one book each, and light or dark appearance that follows the system.</p>
+			<h3>Runs on macOS 13 and later</h3>
+			<p>Built with AppKit and WebKit, with light and dark appearance that follows the system. Supporting macOS 13 is a goal, not an afterthought.</p>
 		</section>
 		<section>
 			<h3>Two reading modes</h3>
@@ -129,11 +136,6 @@
 				<p>Choose what it shows, including the title and the page counter.</p>
 			</section>
 		</div>
-	</section>
-
-	<section id="scope">
-		<h2>What it does not do</h2>
-		<p>Honeycrisp reads one book per window. There is no library view and no cross-library search. For library management see <a href="https://github.com/kyrielie/ambrosia">ambrosia</a>; for iOS see <a href="https://github.com/kyrielie/nectar">nectar</a>.</p>
 	</section>
 </main>
 

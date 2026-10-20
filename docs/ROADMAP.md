@@ -2,7 +2,7 @@
 
 This is the only plan document. It replaces `roadmap-unified.md`, `implementation-roadmap.md`,
 `implementation-plan-tranche-1.md`, `terminal-readers-survey-and-plan.md`,
-`theme-and-typography-plan.md`, `reference-survey.md` and `honeycrisp-settings-window-plan.md`.
+`theme-and-typography-plan.md`, `reference-survey.md`, `honeycrisp-settings-window-plan.md` and `plan-theme-folder-storage.md`.
 Design rules and contracts live in `docs/FRAMEWORK.md`; this file covers decisions, order and gates.
 
 Status: active implementation. Local macOS build and tests are available; milestones below reflect
@@ -54,6 +54,7 @@ Resolved here as recommendations; reverse any by editing this table and the affe
 | R16 | Deployment floor stays macOS 13 for now. Liquid Glass is a later chrome milestone (M10) behind `#available`, written only when it can be tested on macOS 26. Rede is the model. | The reviewer's machine is on macOS 15, so macOS 26 code cannot be tested yet. |
 | R17 | ZIP entry-count and size limits: skip. DRM rule and search-hit contrast: already implemented. Closes old D17, D20, D5. | Containment is handled by ZIPFoundation; the rest is done. |
 | R18 | Platform chrome work (M8) is independent of the reader pipeline (M3 to M6) and may run in parallel. | No shared files except `ReaderViewController`; coordinate there. |
+| R19 | Themes become one JSON file per theme in a folder, replacing the `readerThemes` blob in `UserDefaults`. Folder: `Application Support/Honeycrisp/Themes` inside the app container (the app is sandboxed). File: the `ThemeExport` shape `{version, theme}` with a stable `id`. `readerCurrentThemeID` stays in `UserDefaults`. Amends FRAMEWORK C7. Folder location is confirmed before pass 2 of M2.1. | The folder is a user-visible source of truth (open, copy, back up, hand-edit) and the export format already exists. Costs: a persisted-format change, the end of "`UserDefaults` only" for themes, and an in-memory cache plus debounced writes, because live slider updates would otherwise write files. |
 
 ## 3. Milestones
 
@@ -114,10 +115,73 @@ are handled by the user layer, not by stripping.
 Exit: settings round-trip, existing stored themes still decode, hyphenation does nothing safely when
 the language is unknown (help text "Needs book language").
 
+### M2.1. Theme files (M, parallel track, after the M0 keep-set commit)
+
+Status: not started. Decision R19. Build on the committed M0 keep set (theme and popover work). Theme fields,
+Settings controls and reader CSS do not change.
+
+Design (not yet built):
+- One file per theme, `<slug>.honeycrisp-theme.json`, in the `ThemeExport` shape (`{version: 1, theme}`),
+  pretty printed with sorted keys. Identity is the `id` inside the file, never the name. Slug: strip `/ : \` and
+  control characters and leading dots, trim, cap at about 80 characters, empty becomes "Theme"; collisions are
+  compared case-insensitively and numbered. Writes are atomic; write the new file before removing the old one.
+- `ThemeFileCodec` (pure) shares sanitizing with `ThemeExport.decode`. Folder loading keeps `id` and honors
+  `isDefault` and `seedKey` only when `seedKey` matches a seed; Import still issues a new id. `ThemeStore` is the
+  only type that does file I/O and owns an in-memory cache; its directory is injectable for tests.
+- `SettingsManager.themes` returns the cache. The setter updates the cache, writes the changed files, then
+  notifies, so the existing mutation call sites do not change.
+- One-time migration behind the `UserDefaults` flag `readerThemesMigratedToFiles`: run the existing migration chain,
+  ensure all three seeds, write every file, set the flag only after all writes succeed. `readerThemes` stays
+  untouched as a rollback copy; a corrupt blob goes through `StorageQuarantine` first.
+- Seeds: missing seed files are regenerated, existing ones are never overwritten, seeds cannot be deleted.
+  Order: seeds first, then custom themes by creation date, then name.
+- External edits: rescan on app activation and when Appearance opens, no file watcher; own writes must not look
+  like changes (compare decoded values). Unreadable, corrupt or unknown-version files are skipped, logged and never
+  rewritten. Duplicate ids: the first wins, the later file is skipped and logged. Hand-edited values pass
+  `ReaderCSSSanitizer`. If the folder is not writable, work from memory for the session and show one warning line
+  in Appearance.
+- UI: "Open Themes Folder" in the Appearance theme actions row and "Show Themes in Finder" in the Theme menu.
+
+Constraints (Verified in code):
+- The app is sandboxed (`project.yml`: `ENABLE_APP_SANDBOX: YES`, `ENABLE_USER_SELECTED_FILES: readonly`), so the
+  folder lives in the container. A visible location such as `~/Documents` needs an entitlement change and a
+  bookmark: a separate decision.
+- Numeric Appearance rows fire `onChange` while dragging unless `commitsOnRelease` (`ValueSliderControl`), so
+  disk writes must be debounced in the same pass that wires them.
+- `AppDelegate` has no will-terminate or resign-active hook (only `applicationShouldTerminateAfterLastWindowClosed`);
+  the flush needs one.
+
+Passes:
+1. Codec and store, not wired. Tests: codec round trip keeps `id`, `isDefault`, `seedKey`; a non-seed `seedKey` is
+   demoted; the Import path still issues a new id; unknown version rejected; non-finite and out-of-range values
+   clamped. Store, in a temp directory: write and reload equality, rename moves the file, delete removes it,
+   case-insensitive collision, slug sanitizing, corrupt file skipped and byte-identical, duplicate id, missing seed
+   regenerated, edited seed kept, unrelated files ignored, ordering.
+2. Wire, migrate and debounce. Cache and injectable directory in `SettingsManager`, diff writes, trailing debounce
+   of about 250 ms with a flush on will-terminate and resign-active, one-time migration, seed repair.
+   `SettingsManagerThemeTests` and `ReaderStyleTests` inject a temp directory. Migration tests: each legacy
+   generation, corrupt blob quarantined first, flag set only after all writes, `readerThemes` untouched, flag set
+   with the folder deleted gives fresh seeds. Manager tests: no disk access after the first load, only changed
+   files written. Docs in this pass: `CLAUDE.md` persistence invariant, `ARCHITECTURE.md` persistence sentence and
+   `SettingsManager` row, `INDEX.md`.
+3. Folder access and external changes: the Open Themes Folder button and menu item, rescan on activation, grid
+   and Theme menu refresh on external change.
+
+Decisions: blocking before pass 2: folder location (default: container `Application Support/Honeycrisp/Themes`).
+Non-blocking, defaults apply: keep `readerThemes` indefinitely and delete nothing in this change; the order rule
+above rather than a stored order list; the non-writable and duplicate-id behavior above.
+
+Exit, all measured: editing a theme file in a text editor repaints the reader after the app activates; deleting a
+custom theme file removes it from the grid; deleting a seed file regenerates it; an exported theme file dropped
+in the folder loads; repeated `themes` reads do no disk access; a slider drag does not write a file per tick;
+existing users keep their themes after migration.
+
 ### M3. Spike: chapter host, scheme handler, user layer (L, behind a flag)
 
 Status: in progress (a contained EPUB resource scheme handler and MIME mapping are implemented and
-unit covered; production chapter hosting, wrapper/style injection, and JavaScript isolation remain).
+unit covered; the handler also serves `/__app/` app resources and applies a markup transform, and
+`ServedChapter.prepare` inserts the stylesheet link and root `lang`, pure and unwired; the host stylesheet,
+production chapter hosting behind a flag, and JavaScript isolation remain).
 
 Baseline of the current merged-document reader: `ReaderBaselineTests` generates synthetic books of 250 and
 2,000 nominal pages (a page is 1,800 characters; 20 pages per chapter) and times the path
@@ -205,7 +269,7 @@ Status: not started.
    package); none is assumed. Supported-types registry shared by Open panel, drag-and-drop, Finder
    events and Open Recent, with content validation.
 2. PDF: PDFKit view as `PagedSurface`, `Locator.page`, native outline, PDFKit search, capabilities
-   exclude themes and speech. Format-discriminated persistence audit lands here (C7).
+   exclude themes and speech. Format-discriminated persistence audit lands here (C7); it also covers theme files (R19).
 3. CBZ: ZIPFoundation plus an image page view. Natural sort of entries; paged capabilities.
 4. MOBI/AZW3: gate on a macOS build of libmobi-swift (its manifest declares iOS only; verify), then
    temporary EPUB conversion with reliable cleanup and history keyed to the original path.
@@ -222,7 +286,7 @@ Model: Rede's UI, adapted to AppKit and macOS 13. Items in priority order:
    light, dark), two quick swatches, reset that disables at defaults. Full theme editor stays in
    Settings.
 3. Settings theme editor: pin the preview above the scroll area; "Preview as Light/Dark" toggle;
-   coalesce color-well writes.
+   coalesce color-well writes (UI side; the disk-write debounce belongs to M2.1).
 4. Decide: overlay Contents drawer versus the existing sidebar; small page caption.
 5. Dark and light follow the system by default (the setting exists); verify every surface.
 All chrome reads from the chrome tokens (C10).
@@ -270,11 +334,11 @@ the new platform style.
 
 ```
 M0 -> M1 -> M3 -> M4 -> M5 -> M6 -> M7 (1, 2, 3, 4) -> M9
-        \-> M2 (parallel, after M0)
+        \-> M2, M2.1 (parallel, after M0; M2.1 needs the keep-set commit)
         \-> M8 (parallel, after M0)   M10 later
 ```
 
-M1 gates M3 (the harness is how the spike is judged). M3's outcome gates M4 to M6. M2 and M8 touch
+M1 gates M3 (the harness is how the spike is judged). M3's outcome gates M4 to M6. M2, M2.1 and M8 touch
 settings and chrome, not the pipeline, so they can fill gaps.
 
 ## 5. Not planned
@@ -302,6 +366,9 @@ be reopened by editing this file.
 - ZIPFoundation single-entry read API (needed only for lazy zip serving).
 - `AVSpeechSynthesizerDelegate` range callback on macOS 13.
 - Which of `NSToolbar` title and subtitle APIs are available at the deployment floor.
+- M2.1: whether the Theme menu rebuilds on `settingsChangedNotification`; whether any Settings UI reorders
+  themes (grep `SettingsWindowController`); that theme Export through the save panel works under
+  `ENABLE_USER_SELECTED_FILES: readonly`.
 - Whether the uncommitted diff contains anything beyond what the plan documents describe; it was
   listed by file, not audited line by line.
 

@@ -34,7 +34,7 @@ not audited line by line.
 | `scripts/build-site.sh` | Assembles `_site/` (site plus screenshots and icon); used by `pages.yml` and for local preview |
 | `scripts/make-diff.sh` | Builds a `git apply`-ready diff of a work tree against a base tree |
 | `.github/workflows/` | `tests.yml` (push/PR), `build-dmg.yml`, `release.yml` (manual), `pages.yml` (push to main touching `site/`, `screenshots/`, the app icon or the build script; or manual) |
-| `site/` | Static landing page source for GitHub Pages (`index.html`, `404.html`, `css/site.css`). Images are not stored here: `scripts/build-site.sh` copies `screenshots/01-04.png` and the app icon (512 px page icon, favicon, touch icon) into `_site/` |
+| `site/` | Static landing page source for GitHub Pages (`index.html`, `404.html`, `css/site.css`, `js/site.js`). Images are not stored here: `scripts/build-site.sh` copies `screenshots/01-04.png` and the app icon (512 px page icon, favicon, touch icon) into `_site/` |
 | `docs/` | `ROADMAP.md`, `FRAMEWORK.md`, `compatibility-corpus.md` (see Docs map) |
 
 ## Source map
@@ -58,7 +58,8 @@ not audited line by line.
 - `PaginationJS.swift` (313): JS for paginated mode: column snap, boundaries, char-offset seek.
   Posts `pageAction` and `positionUpdate`.
 - `EPUBDropTargetView.swift` (43): drag and drop of `.epub` files.
-- `EPUBResourceSchemeHandler.swift` (~100): `honeycrisp-epub://book/...` scheme handler (containment, MIME, optional response headers, `ActiveTaskSet`). Not wired into the reader yet (roadmap M3).
+- `EPUBResourceSchemeHandler.swift` (~150): `honeycrisp-epub://book/...` scheme handler (containment, MIME, optional response headers, `ActiveTaskSet`, `/__app/` app resources via `appResources`, markup `transform` hook). Not wired into the reader yet (roadmap M3).
+- `ServedChapter.swift` (~100): pure `ServedChapter.prepare`: inserts the host stylesheet link last in `<head>` and a missing root `lang`; never edits the body (C2). Not wired yet (roadmap M3, pass 3).
 
 ### Parsing (`Sources/Parsing`)
 - `EPUBParser.swift` (1356): models, unzip, OPF, DRM, search, HTML and CSS building, `readerJS`.
@@ -208,7 +209,8 @@ not audited line by line.
 | `SettingsValueFormatTests.swift` | em, px and line-height labels, typed-number parsing, line-height range shared with the sanitizer, slider snap and clamp math |
 | `ReaderStyleTests.swift` (uncommitted) | in-body `<style>` and stylesheet-link stripping (dropped at M0), `--reader-code-font-family` var and `readerCSS` rule, `useThemeFontForCode` default, persistence, reset |
 | `LocatorTests.swift` | restore by offset when `layout` matches, by clamped fraction otherwise, Codable round trip, progress from text lengths or byte sizes, nil for paged or unknown resource |
-| `EPUBResourceSchemeHandlerTests.swift` | scheme handler path containment (traversal and foreign schemes rejected), MIME mapping, `ActiveTaskSet` bookkeeping, root normalization |
+| `EPUBResourceSchemeHandlerTests.swift` | scheme handler path containment (traversal and foreign schemes rejected), MIME mapping, `ActiveTaskSet` bookkeeping, root normalization, `/__app/` key rules (prefix, traversal, host, query), markup-only transform |
+| `ServedChapterTests.swift` | `ServedChapter.prepare`: link before `</head>` (case-insensitive), head created when missing, self-closed head left alone, no `<html>` or non-UTF-8 unchanged, `lang` only when absent and only when safe, idempotent, body bytes unchanged, XML declaration and doctype stay first |
 | `ChapterHostSpikeTests.swift` (spike, roadmap M3) | `WKWebView` through the scheme handler: self-closed anchors, nested relative images, class-only italic from book CSS, author script positive control and with content JS off, client-world scripts and message handlers, CSP header, `.html` served as XML, stopping a load mid-flight; outcomes are attachments to record in the roadmap |
 | `WebKitOffsetParityTests.swift` | real `WKWebView` harness: offset parity (`XCTExpectFailure`, merged-document wrapper whitespace), known resource and link rewrite bugs (`XCTExpectFailure`), publisher class styles survive |
 | `ReaderBaselineTests.swift` (baseline, roadmap M3) | generated synthetic books (250 and 2,000 nominal pages, 20 pages per chapter, nested `Text/` and `Styles/`, relative images): times `parsePackage`, `buildScrollHTML`, file write and `loadFileURL` plus forced layout over 3 runs; best-effort app and WebContent memory; asserts only fixture sanity (chapter count, layout height); numbers are attachments and `BASELINE` stdout lines |
@@ -226,7 +228,7 @@ Not covered: `SettingsManager` beyond themes, `KeyBinding`, `PaginationEngine` n
 |---|---|---|
 | `CLAUDE.md` | Rules, workflows (planning and implementation passes), invariants | Keep short; design lives in FRAMEWORK |
 | `docs/FRAMEWORK.md` | Target design: layers, contracts (Locator, offsets, style cascade, trust), admission rules | Design, not implemented |
-| `docs/ROADMAP.md` | The only plan: decisions R1 to R18, milestones M0 to M10 with status, verify list | Plan; nothing built in review |
+| `docs/ROADMAP.md` | The only plan: decisions R1 to R19, milestones M0 to M10 with status, verify list | Plan; nothing built in review |
 | `ARCHITECTURE.md` | What the code does today, data flow, historical decisions | Says four Settings tabs in places; code has five |
 | `README.md` | Features, install, build | Architecture table is partial |
 | `docs/compatibility-corpus.md` | Synthetic fixture to test mapping, real-file validation table | All real-sample rows pending |
