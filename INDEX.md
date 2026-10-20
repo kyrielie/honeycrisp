@@ -31,8 +31,10 @@ not audited line by line.
 | `swiftlint.yml` | Stale 292-byte duplicate of the above, without the dot; delete it (roadmap M0) |
 | `make_upload_zip.sh` | Builds the review zip: tracked files plus `.git-meta/` |
 | `scripts/index-anchors.sh` | Prints line counts, MARKs and type declarations for refreshing this index |
+| `scripts/build-site.sh` | Assembles `_site/` (site plus screenshots and icon); used by `pages.yml` and for local preview |
 | `scripts/make-diff.sh` | Builds a `git apply`-ready diff of a work tree against a base tree |
-| `.github/workflows/` | `tests.yml` (push/PR), `build-dmg.yml`, `release.yml` (manual) |
+| `.github/workflows/` | `tests.yml` (push/PR), `build-dmg.yml`, `release.yml` (manual), `pages.yml` (push to main touching `site/`, `screenshots/`, the app icon or the build script; or manual) |
+| `site/` | Static landing page source for GitHub Pages (`index.html`, `404.html`, `css/site.css`). Images are not stored here: `scripts/build-site.sh` copies `screenshots/01-04.png` and the app icon (512 px page icon, favicon, touch icon) into `_site/` |
 | `docs/` | `ROADMAP.md`, `FRAMEWORK.md`, `compatibility-corpus.md` (see Docs map) |
 
 ## Source map

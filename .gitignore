@@ -13,6 +13,9 @@ Honeycrisp.xcodeproj/
 build/
 DerivedData/
 
+## Generated site (scripts/build-site.sh)
+_site/
+
 ## Various settings
 *.pbxuser
 !default.pbxuser

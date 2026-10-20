@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Honeycrisp Reader: a native EPUB reader for macOS</title>
+	<meta name="description" content="Honeycrisp Reader is a native macOS EPUB reader with paginated and scroll modes, themes, search, bookmarks and text to speech.">
+	<link rel="canonical" href="https://kyrielie.github.io/honeycrisp/">
+	<meta name="theme-color" content="#fffdf8" media="(prefers-color-scheme: light)">
+	<meta name="theme-color" content="#211f1c" media="(prefers-color-scheme: dark)">
+	<meta property="og:type" content="website">
+	<meta property="og:url" content="https://kyrielie.github.io/honeycrisp/">
+	<meta property="og:title" content="Honeycrisp Reader">
+	<meta property="og:description" content="A native EPUB reader for macOS.">
+	<meta property="og:image" content="https://kyrielie.github.io/honeycrisp/img/icon.png">
+	<meta property="og:image:alt" content="Honeycrisp Reader app icon">
+	<meta name="twitter:card" content="summary">
+	<link rel="icon" href="favicon.png" type="image/png">
+	<link rel="apple-touch-icon" href="apple-touch-icon.png">
+	<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header>
+	<nav>
+		<ul>
+			<li><a href="#install">Install</a></li>
+			<li><a href="#features">Features</a></li>
+			<li><a href="https://github.com/kyrielie/honeycrisp">GitHub</a></li>
+		</ul>
+	</nav>
+</header>
+
+<main id="main">
+	<section id="top">
+		<img src="img/icon.png" width="256" height="256" alt="Honeycrisp Reader app icon">
+		<h1>Honeycrisp</h1>
+		<p>A native EPUB reader for macOS</p>
+		<p class="actions">
+			<a class="button" href="https://github.com/kyrielie/honeycrisp/releases/latest">Download</a>
+			<a class="button secondary" href="#install">Install with Homebrew</a>
+		</p>
+		<p class="note">Free and open source. Requires macOS 13 or later. Releases are not notarized, so see <a href="#first-launch">first launch</a>.</p>
+	</section>
+
+	<section id="screenshots">
+		<div class="strip" tabindex="0" role="region" aria-label="Screenshots">
+			<figure><img src="img/screenshots/01.png" alt="Honeycrisp Reader main reading view"><figcaption>Reading view</figcaption></figure>
+			<figure><img src="img/screenshots/02.png" alt="Settings, General tab" loading="lazy"><figcaption>Settings: General</figcaption></figure>
+			<figure><img src="img/screenshots/03.png" alt="Settings, Appearance tab" loading="lazy"><figcaption>Settings: Appearance</figcaption></figure>
+			<figure><img src="img/screenshots/04.png" alt="Settings, additional tab" loading="lazy"><figcaption>Settings: more</figcaption></figure>
+		</div>
+	</section>
+
+	<p id="lead">quiet, native, and out of the way</p>
+
+	<section id="highlights">
+		<section>
+			<h3>Just for macOS</h3>
+			<p>Built with AppKit and WebKit. Multiple windows or tabs, one book each, and light or dark appearance that follows the system.</p>
+		</section>
+		<section>
+			<h3>Two reading modes</h3>
+			<p>Paginated pages with configurable columns per screen, or one continuous scroll with auto-scroll. Pick the default in Settings.</p>
+		</section>
+		<section>
+			<h3>Open source</h3>
+			<p>MIT licensed. Report bugs and request features on the issue tracker.</p>
+		</section>
+	</section>
+
+	<section id="install">
+		<h2>Install</h2>
+
+		<h3>Homebrew</h3>
+		<pre><code>brew install --cask kyrielie/yggdrasil/honeycrisp</code></pre>
+
+		<h3>Manual download</h3>
+		<p>Get the latest build from <a href="https://github.com/kyrielie/honeycrisp/releases/latest">Releases</a> and move it to Applications.</p>
+
+		<h3 id="first-launch">First launch</h3>
+		<p>Releases are ad-hoc signed and not notarized, so Gatekeeper blocks the first launch. Open <strong>System Settings &gt; Privacy &amp; Security</strong> and choose <strong>Open Anyway</strong>, or run:</p>
+		<pre><code>xattr -d com.apple.quarantine /Applications/Honeycrisp.app</code></pre>
+	</section>
+
+	<section id="features">
+		<h2>Features</h2>
+		<div>
+			<section>
+				<h3>Themes</h3>
+				<p>Save your preferred typography and colors as a named theme.</p>
+			</section>
+			<section>
+				<h3>Text to speech</h3>
+				<p>Read aloud from the current reading position.</p>
+			</section>
+			<section>
+				<h3>Search in book</h3>
+				<p>Results with excerpts and chapter locations.</p>
+			</section>
+			<section>
+				<h3>Table of contents</h3>
+				<p>A sidebar and a popup. Start Reading follows EPUB landmarks when the book provides them.</p>
+			</section>
+			<section>
+				<h3>Bookmarks</h3>
+				<p>Toggle one per page, rename it, and return from the Bookmarks menu.</p>
+			</section>
+			<section>
+				<h3>Reading history</h3>
+				<p>File &gt; Open Recent and a History popover remember your place.</p>
+			</section>
+			<section>
+				<h3>Float on top</h3>
+				<p>Pin any window above all others.</p>
+			</section>
+			<section>
+				<h3>Drag and drop</h3>
+				<p>Drop an EPUB onto an empty reader window or an open book.</p>
+			</section>
+			<section>
+				<h3>Custom shortcuts</h3>
+				<p>Rebind the main commands in Settings &gt; Shortcuts.</p>
+			</section>
+			<section>
+				<h3>Customizable toolbar</h3>
+				<p>Choose what it shows, including the title and the page counter.</p>
+			</section>
+		</div>
+	</section>
+
+	<section id="scope">
+		<h2>What it does not do</h2>
+		<p>Honeycrisp reads one book per window. There is no library view and no cross-library search. For library management see <a href="https://github.com/kyrielie/ambrosia">ambrosia</a>; for iOS see <a href="https://github.com/kyrielie/nectar">nectar</a>.</p>
+	</section>
+</main>
+
+<footer>
+	<p><a href="https://github.com/kyrielie/honeycrisp/issues">Issues</a> &middot; <a href="https://github.com/kyrielie/honeycrisp">Source on GitHub</a></p>
+	<p class="copyright"><a href="https://github.com/kyrielie/honeycrisp/blob/main/LICENSE">MIT License</a></p>
+</footer>
+
+</body>
+</html>
