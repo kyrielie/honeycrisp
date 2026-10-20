@@ -6,7 +6,7 @@ This is the only plan document. It replaces `roadmap-unified.md`, `implementatio
 Design rules and contracts live in `docs/FRAMEWORK.md`; this file covers decisions, order and gates.
 
 Status: active implementation. Local macOS build and tests are available; milestones below reflect
-the current working tree and remain uncommitted. Items marked "verify" are unchecked.
+`main` at 3f033bc. Items marked "verify" are unchecked.
 
 ## 1. Baseline
 
@@ -16,19 +16,19 @@ Present in code (read, not run):
 - `ReaderCSSSanitizer` on values interpolated into CSS; `ReaderContrast` search-hit palette.
 - Editable themes with light and dark sets, five Settings tabs, hide images, skip cover, AO3
   formatting, remove-indents, scroll and paginated modes, history, bookmarks, search, speech (basic).
-- 16 parser tests, plus tests for history, bookmarks, TOC, sanitizer, contrast, restore position.
-
-Uncommitted work in the tree (changes to `EPUBParser`, `PaginationEngine`, `ReaderViewController`,
-`ReaderWindowController`, `SettingsManager`, `SettingsWindowController`, `ThemePopoverViewController`,
-plus `ReaderStyleTests` and `SettingsManagerThemeTests`). Its keep or drop split is decided in M0.
+- Parser tests, plus tests for history, bookmarks, TOC, sanitizer, contrast, restore position, `Locator`, the scheme handler, themes and a WebKit parity harness.
 
 Known gaps in code today:
-- `anchorLayout` is stored but never read, so a layout change restores offsets blindly.
 - Chapter bodies keep `<script>`, event attributes and `javascript:` hrefs; `allowsContentJavaScript`
   is `true`; resource URLs are rewritten by regex (single-quoted, unquoted and `%20` cases fail).
 - The merged scroll document concatenates every chapter, so book class names collide and cost grows
   with book size.
-- Offsets are defined in JS and recomputed in Swift with no parity test.
+- Offsets are defined in JS and recomputed in Swift. `WebKitOffsetParityTests` covers them; its merged-document case is an expected
+  failure (wrapper whitespace shifts offsets by three UTF-16 units) until M3.
+- Publisher CSS is dropped: `EPUBParser.extractBody` keeps only the `<body>`, so stylesheet `<link>` tags never load and books whose
+  markup depends on their CSS render wrongly. Seen with a Project Gutenberg "advanced" EPUB (`span.sidenote`, `span.pagenum`,
+  `span.stpagenum`, `div.footnote`): margin notes and page markers show as inline text. Verified in code; WebKit output and the
+  book's own CSS rules were not inspected. M3 fixes it through the host stylesheet (R1); no interim style hack.
 
 ## 2. Decisions
 
@@ -63,8 +63,10 @@ milestone is done when its exit criteria hold and the affected docs are updated.
 
 ### M0. Baseline and truth (S)
 
-Status: in progress (keep/drop decision and listed cleanup applied; local build and tests pass; the
-keep set still needs its separate commit).
+Status: in progress (keep/drop decision, keep-set commit and listed cleanup are in the tree at 3f033bc: no stripping code,
+`currentLayout` is 1, `swiftlint.yml` is gone, no uncommitted Swift changes; remaining: confirm `./test.sh` passes at that
+commit, refresh the "Doc drift" paragraph in `CLAUDE.md`, and fix the Linting section of `README.md`, which names swift-format and a
+`.swift-format` file the repo does not have).
 
 - Review the uncommitted diff file by file. Keep: code-font toggle, theme and popover work, new
   theme tests. Drop: `strippingEmbeddedStyles`, its tests, and the `currentLayout` bump to 2 (R1).
@@ -213,6 +215,8 @@ world (verify API), content isolation checks.
 
 Exit criteria, all measured:
 - class-only italics and bold survive; user font, size, color and line height win.
+- a synthetic Gutenberg-style chapter (`span.sidenote`, `span.pagenum`, `span.stpagenum` styled by a linked stylesheet) renders as
+  the stylesheet directs, not as inline text in the paragraph.
 - relative images resolve in nested `Text/Images` layouts with no string rewriting.
 - self-closed anchors do not swallow content.
 - cosmetic changes patch all mounted chapters without reload.
@@ -369,8 +373,6 @@ be reopened by editing this file.
 - M2.1: whether the Theme menu rebuilds on `settingsChangedNotification`; whether any Settings UI reorders
   themes (grep `SettingsWindowController`); that theme Export through the save panel works under
   `ENABLE_USER_SELECTED_FILES: readonly`.
-- Whether the uncommitted diff contains anything beyond what the plan documents describe; it was
-  listed by file, not audited line by line.
 
 ## 6a. Old identifiers
 
