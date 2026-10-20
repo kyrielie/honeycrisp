@@ -333,7 +333,7 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         stack.addArrangedSubview(hint)
 
         let indentCheckbox = NSButton(
-            checkboxWithTitle: "Remove paragraph indents",
+            checkboxWithTitle: "Strip leading whitespace used as indents",
             target: self,
             action: #selector(toggleRemoveParagraphIndents(_:))
         )
@@ -343,7 +343,7 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
 
         let indentHint = NSTextField(
             wrappingLabelWithString:
-                "Strips leading whitespace used to fake first-line indentation in some books."
+                "Removes literal spaces some books use for indentation. Set a reader first-line indent in Appearance; that setting is independent."
         )
         indentHint.font = NSFont.systemFont(ofSize: 11)
         indentHint.textColor = .secondaryLabelColor
@@ -777,6 +777,9 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     private var hyphenationCheckbox: NSButton!
     private var paragraphSpacingStepper: NSStepper!
     private var paragraphSpacingLabel: NSTextField!
+    private var paragraphIndentCheckbox: NSButton!
+    private var paragraphIndentStepper: NSStepper!
+    private var paragraphIndentLabel: NSTextField!
     private var boldWeightPopup: NSPopUpButton!
     private var contrastWarningLabels: [UUID: NSTextField] = [:]
     private var fontSizeStepper: NSStepper!
@@ -851,6 +854,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         grid.addRow(with: [label("Text Alignment:"), makeTextAlignmentPopup()])
         grid.addRow(with: [label("Hyphenation:"), makeHyphenationCheckbox()])
         grid.addRow(with: [label("Paragraph Spacing:"), makeParagraphSpacingRow()])
+        grid.addRow(with: [label("First-line Indent:"), makeParagraphIndentRow()])
         grid.addRow(with: [label("Bold Text:"), makeBoldWeightPopup()])
 
         // Layout, no header.
@@ -1014,25 +1018,43 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     @objc private func exportThemeClicked(_ sender: Any?) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "\(SettingsManager.shared.currentTheme.name).honeycrisp-theme.json"
-        guard panel.runModal() == .OK, let url = panel.url,
-            let data = try? ThemeExport.encode(SettingsManager.shared.currentTheme)
-        else { return }
-        try? data.write(to: url, options: .atomic)
+        panel.canCreateDirectories = true
+        let safeName = SettingsManager.shared.currentTheme.name
+            .components(separatedBy: CharacterSet(charactersIn: "/:")).joined(separator: "-")
+        panel.nameFieldStringValue = "\(safeName).honeycrisp-theme.json"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let hasAccess = url.startAccessingSecurityScopedResource()
+        defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
+        do {
+            try ThemeExport.encode(SettingsManager.shared.currentTheme).write(to: url, options: .atomic)
+        } catch { showThemeTransferError(error) }
     }
 
     @objc private func importThemeClicked(_ sender: Any?) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url,
-            let data = try? Data(contentsOf: url), let theme = try? ThemeExport.decode(data)
-        else { return }
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let hasAccess = url.startAccessingSecurityScopedResource()
+        defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
+        let theme: Theme
+        do { theme = try ThemeExport.decode(Data(contentsOf: url)) }
+        catch { showThemeTransferError(error); return }
         SettingsManager.shared.addTheme(theme)
         expandedThemeID = theme.id
         refreshAllTypographyControls()
         rebuildThemeGrid()
         refreshPreview()
+    }
+
+    private func showThemeTransferError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Theme File Could Not Be Accessed"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 
     private func makeCodeFontCheckbox() -> NSButton {
@@ -1300,6 +1322,29 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         return row
     }
 
+    private func makeParagraphIndentRow() -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 8
+        let bookDefault = NSButton(
+            checkboxWithTitle: "Book Default", target: self, action: #selector(paragraphIndentDefaultChanged(_:)))
+        let stepper = NSStepper()
+        stepper.minValue = 0
+        stepper.maxValue = 4
+        stepper.increment = 0.25
+        stepper.target = self
+        stepper.action = #selector(paragraphIndentChanged(_:))
+        let value = NSTextField(labelWithString: "Book")
+        value.widthAnchor.constraint(equalToConstant: 60).isActive = true
+        paragraphIndentCheckbox = bookDefault
+        paragraphIndentStepper = stepper
+        paragraphIndentLabel = value
+        row.addArrangedSubview(bookDefault)
+        row.addArrangedSubview(stepper)
+        row.addArrangedSubview(value)
+        return row
+    }
+
     private func makeBoldWeightPopup() -> NSView {
         let popup = NSPopUpButton()
         let labels = ["Book Default", "Normal", "Medium", "Bold"]
@@ -1449,6 +1494,11 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
 
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineHeightMultiple = SettingsManager.shared.lineHeight
+        let previewEm = CGFloat(px)
+        paragraphStyle.paragraphSpacing = previewEm * CGFloat(SettingsManager.shared.paragraphSpacing)
+        paragraphStyle.firstLineHeadIndent = SettingsManager.shared.paragraphIndent.map {
+            previewEm * CGFloat($0)
+        } ?? 0
         switch SettingsManager.shared.textAlignment {
         case .book: paragraphStyle.alignment = .natural
         case .left: paragraphStyle.alignment = .left
@@ -1579,6 +1629,21 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         refreshPreview()
     }
 
+    @objc private func paragraphIndentDefaultChanged(_ sender: NSButton) {
+        let useBookIndent = sender.state == .on
+        paragraphIndentStepper.isEnabled = !useBookIndent
+        SettingsManager.shared.paragraphIndent = useBookIndent ? nil : paragraphIndentStepper.doubleValue
+        paragraphIndentLabel.stringValue = useBookIndent
+            ? "Book" : String(format: "%.2g em", paragraphIndentStepper.doubleValue)
+        refreshPreview()
+    }
+
+    @objc private func paragraphIndentChanged(_ sender: NSStepper) {
+        SettingsManager.shared.paragraphIndent = sender.doubleValue
+        paragraphIndentLabel.stringValue = String(format: "%.2g em", sender.doubleValue)
+        refreshPreview()
+    }
+
     @objc private func boldWeightChanged(_ sender: NSPopUpButton) {
         guard let raw = sender.selectedItem?.representedObject as? String,
             let weight = ThemeBoldWeight(rawValue: raw) else { return }
@@ -1656,6 +1721,11 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         hyphenationCheckbox.state = SettingsManager.shared.hyphenate ? .on : .off
         paragraphSpacingStepper.doubleValue = SettingsManager.shared.paragraphSpacing
         paragraphSpacingLabel.stringValue = String(format: "%.2g em", SettingsManager.shared.paragraphSpacing)
+        let indent = SettingsManager.shared.paragraphIndent
+        paragraphIndentCheckbox.state = indent == nil ? .on : .off
+        paragraphIndentStepper.isEnabled = indent != nil
+        paragraphIndentStepper.doubleValue = indent ?? 0
+        paragraphIndentLabel.stringValue = indent.map { String(format: "%.2g em", $0) } ?? "Book"
         if let item = boldWeightPopup.itemArray.first(where: {
             $0.representedObject as? String == SettingsManager.shared.boldWeight.rawValue
         }) { boldWeightPopup.select(item) }
@@ -1696,6 +1766,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             newTheme.textAlignment = base.textAlignment
             newTheme.hyphenate = base.hyphenate
             newTheme.paragraphSpacing = base.paragraphSpacing
+            newTheme.paragraphIndent = base.paragraphIndent
             newTheme.boldWeight = base.boldWeight
         }
         SettingsManager.shared.addTheme(newTheme)
@@ -1727,6 +1798,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         copy.textAlignment = original.textAlignment
         copy.hyphenate = original.hyphenate
         copy.paragraphSpacing = original.paragraphSpacing
+        copy.paragraphIndent = original.paragraphIndent
         copy.boldWeight = original.boldWeight
         SettingsManager.shared.addTheme(copy)
         expandedThemeID = copy.id

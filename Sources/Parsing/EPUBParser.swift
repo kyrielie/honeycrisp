@@ -92,6 +92,7 @@ struct ReaderCosmeticSettings: Equatable {
     var hyphenate: Bool = false
     var language: String?
     var paragraphSpacing: Double = 1.0
+    var paragraphIndent: Double?
     var boldWeight: ThemeBoldWeight = .book
 
     /// Every value passes through `ReaderCSSSanitizer`, so the initial render and the live patch both
@@ -120,6 +121,7 @@ struct ReaderCosmeticSettings: Equatable {
             hyphenate: settings.hyphenate,
             language: language,
             paragraphSpacing: settings.paragraphSpacing,
+            paragraphIndent: settings.paragraphIndent,
             boldWeight: settings.boldWeight
         )
     }
@@ -1277,7 +1279,10 @@ final class EPUBParser: NSObject {
     /// values in from the start also means there is no longer a static/default
     /// frame to flash before the real ones land -- see ReaderCosmeticSettings.
     static func readerVarsCSS(_ cosmetics: ReaderCosmeticSettings) -> String {
-        """
+        let paragraphIndentVariable = cosmetics.paragraphIndent.map {
+            "--reader-paragraph-indent: \(ReaderCSSSanitizer.paragraphIndent($0))em;"
+        } ?? ""
+        return """
         :root {
             color-scheme: light dark;
             --reader-font-size: \(cosmetics.fontSizePercent)%;
@@ -1286,6 +1291,7 @@ final class EPUBParser: NSObject {
             --reader-text-align: \(cosmetics.textAlignment.cssValue);
             --reader-hyphens: \(cosmetics.hyphenate && sanitizedLanguageTag(cosmetics.language) != nil ? "auto" : "manual");
             --reader-paragraph-spacing: \(ReaderCSSSanitizer.paragraphSpacing(cosmetics.paragraphSpacing))em;
+            \(paragraphIndentVariable)
             --reader-bold-weight: \(cosmetics.boldWeight.cssValue);
             --reader-bg: \(cosmetics.backgroundCSS);
             --reader-text: \(cosmetics.textCSS);
@@ -1342,7 +1348,9 @@ final class EPUBParser: NSObject {
         text-align: var(--reader-text-align);
         hyphens: var(--reader-hyphens);
         -webkit-hyphens: var(--reader-hyphens);
-        margin-block-end: var(--reader-paragraph-spacing);
+        margin-block-start: 0 !important;
+        margin-block-end: var(--reader-paragraph-spacing) !important;
+        text-indent: var(--reader-paragraph-indent);
     }
 
     b, strong { font-weight: var(--reader-bold-weight); }

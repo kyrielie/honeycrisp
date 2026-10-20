@@ -98,8 +98,9 @@ resolved before the M3 host can adopt the parity contract.
 
 ### M2. Typography and themes (M, parallel track, independent of M3 to M6)
 
-Status: complete (alignment, language-aware hyphenation, paragraph spacing, bold weight, versioned
-theme transfer, and non-blocking contrast warnings are implemented; local test script passes).
+Status: complete (alignment, language-aware hyphenation, paragraph spacing and optional first-line
+indent, bold weight, versioned theme transfer, and non-blocking contrast warnings are implemented;
+theme file access uses the selected security-scoped URL; local test script passes).
 
 Order: text alignment and hyphenation per theme (`Theme.textAlign`, `Theme.hyphenate`, vars, reset,
 customized check, tests); `EPUBPackage.language` from `dc:language`, sanitized to BCP 47, emitted as

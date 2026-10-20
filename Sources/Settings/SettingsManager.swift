@@ -132,6 +132,7 @@ struct Theme: Codable, Identifiable, Equatable {
     var textAlignment: ThemeTextAlignment
     var hyphenate: Bool
     var paragraphSpacing: Double
+    var paragraphIndent: Double?
     var boldWeight: ThemeBoldWeight
     // True only for the three seeded themes (Original/Quiet/Paper). Drives
     // two things: deleteTheme(_:) refuses to remove these regardless of how
@@ -157,6 +158,7 @@ struct Theme: Codable, Identifiable, Equatable {
         textAlignment: ThemeTextAlignment = .book,
         hyphenate: Bool = false,
         paragraphSpacing: Double = 1.0,
+        paragraphIndent: Double? = nil,
         boldWeight: ThemeBoldWeight = .book,
         isDefault: Bool = false,
         seedKey: String? = nil
@@ -174,6 +176,7 @@ struct Theme: Codable, Identifiable, Equatable {
         self.textAlignment = textAlignment
         self.hyphenate = hyphenate
         self.paragraphSpacing = paragraphSpacing
+        self.paragraphIndent = paragraphIndent
         self.boldWeight = boldWeight
         self.isDefault = isDefault
         self.seedKey = seedKey
@@ -181,7 +184,7 @@ struct Theme: Codable, Identifiable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, light, dark, fontFamily, fontSizePercent, lineHeight, maxWidth, paddingH, paddingV,
-            textAlignment, hyphenate, paragraphSpacing, boldWeight, isDefault, seedKey
+            textAlignment, hyphenate, paragraphSpacing, paragraphIndent, boldWeight, isDefault, seedKey
     }
 
     init(from decoder: Decoder) throws {
@@ -199,6 +202,7 @@ struct Theme: Codable, Identifiable, Equatable {
         textAlignment = try values.decodeIfPresent(ThemeTextAlignment.self, forKey: .textAlignment) ?? .book
         hyphenate = try values.decodeIfPresent(Bool.self, forKey: .hyphenate) ?? false
         paragraphSpacing = try values.decodeIfPresent(Double.self, forKey: .paragraphSpacing) ?? 1.0
+        paragraphIndent = try values.decodeIfPresent(Double.self, forKey: .paragraphIndent)
         boldWeight = try values.decodeIfPresent(ThemeBoldWeight.self, forKey: .boldWeight) ?? .book
         isDefault = try values.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
         seedKey = try values.decodeIfPresent(String.self, forKey: .seedKey)
@@ -237,6 +241,7 @@ struct ThemeExport: Codable {
             textAlignment: theme.textAlignment,
             hyphenate: theme.hyphenate,
             paragraphSpacing: ReaderCSSSanitizer.paragraphSpacing(theme.paragraphSpacing),
+            paragraphIndent: theme.paragraphIndent.map(ReaderCSSSanitizer.paragraphIndent),
             boldWeight: theme.boldWeight
         )
         return theme
@@ -592,6 +597,16 @@ final class SettingsManager {
         set { mutateCurrentTheme { $0.paragraphSpacing = min(3, max(0, newValue)) }; notifyCosmeticChange() }
     }
 
+    /// `nil` preserves the book's own `text-indent`; a number applies a
+    /// reader-owned first-line indent in ems.
+    var paragraphIndent: Double? {
+        get { currentTheme.paragraphIndent }
+        set {
+            mutateCurrentTheme { $0.paragraphIndent = newValue.map(ReaderCSSSanitizer.paragraphIndent) }
+            notifyCosmeticChange()
+        }
+    }
+
     var boldWeight: ThemeBoldWeight {
         get { currentTheme.boldWeight }
         set { mutateCurrentTheme { $0.boldWeight = newValue }; notifyCosmeticChange() }
@@ -819,7 +834,7 @@ final class SettingsManager {
                     || theme.paddingV != 24
                     || theme.textAlignment != .book
                     || theme.hyphenate
-                    || theme.paragraphSpacing != 1.0 || theme.boldWeight != .book
+                    || theme.paragraphSpacing != 1.0 || theme.paragraphIndent != nil || theme.boldWeight != .book
                 {
                     return true
                 }
@@ -832,7 +847,7 @@ final class SettingsManager {
                     || theme.paddingV != Self.customThemeDefaultPaddingV
                     || theme.textAlignment != .book
                     || theme.hyphenate
-                    || theme.paragraphSpacing != 1.0 || theme.boldWeight != .book
+                    || theme.paragraphSpacing != 1.0 || theme.paragraphIndent != nil || theme.boldWeight != .book
                 {
                     return true
                 }
@@ -888,6 +903,7 @@ final class SettingsManager {
             updatedTheme.textAlignment = .book
             updatedTheme.hyphenate = false
             updatedTheme.paragraphSpacing = 1.0
+            updatedTheme.paragraphIndent = nil
             updatedTheme.boldWeight = .book
             return updatedTheme
         }

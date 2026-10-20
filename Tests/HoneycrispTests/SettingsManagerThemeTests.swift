@@ -57,12 +57,14 @@ final class SettingsManagerThemeTests: XCTestCase {
         manager.textAlignment = .justify
         manager.hyphenate = true
         manager.paragraphSpacing = 2.25
+        manager.paragraphIndent = 1.5
         manager.boldWeight = .medium
         let theme = try XCTUnwrap(manager.themes.first)
         let decoded = try JSONDecoder().decode(Theme.self, from: JSONEncoder().encode(theme))
         XCTAssertEqual(decoded.textAlignment, .justify)
         XCTAssertTrue(decoded.hyphenate)
         XCTAssertEqual(decoded.paragraphSpacing, 2.25)
+        XCTAssertEqual(decoded.paragraphIndent, 1.5)
         XCTAssertEqual(decoded.boldWeight, .medium)
         XCTAssertTrue(manager.isReaderCustomized)
 
@@ -70,6 +72,7 @@ final class SettingsManagerThemeTests: XCTestCase {
         XCTAssertEqual(manager.textAlignment, .book)
         XCTAssertFalse(manager.hyphenate)
         XCTAssertEqual(manager.paragraphSpacing, 1.0)
+        XCTAssertNil(manager.paragraphIndent)
         XCTAssertEqual(manager.boldWeight, .book)
         XCTAssertFalse(manager.isReaderCustomized)
     }
@@ -79,6 +82,7 @@ final class SettingsManagerThemeTests: XCTestCase {
         source.fontFamily = "bad); color:red"
         source.light.text = "url(javascript:bad)"
         source.paragraphSpacing = 99
+        source.paragraphIndent = 99
         let imported = try ThemeExport.decode(ThemeExport.encode(source))
         XCTAssertNotEqual(imported.id, source.id)
         XCTAssertFalse(imported.isDefault)
@@ -86,6 +90,7 @@ final class SettingsManagerThemeTests: XCTestCase {
         XCTAssertEqual(imported.fontFamily, FontPresets.defaultStack)
         XCTAssertEqual(imported.light.text, ReaderCSSSanitizer.fallbackText)
         XCTAssertEqual(imported.paragraphSpacing, 3.0)
+        XCTAssertEqual(imported.paragraphIndent, 4.0)
     }
 
     // MARK: Reset by identity, not name

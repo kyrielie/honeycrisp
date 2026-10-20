@@ -50,8 +50,16 @@ final class ReaderStyleTests: XCTestCase {
         let vars = EPUBParser.readerVarsCSS(makeCosmetics(paragraphSpacing: 1.5, boldWeight: .medium))
         XCTAssertTrue(vars.contains("--reader-paragraph-spacing: 1.5em;"))
         XCTAssertTrue(vars.contains("--reader-bold-weight: 600;"))
-        XCTAssertTrue(EPUBParser.readerCSS.contains("margin-block-end: var(--reader-paragraph-spacing);"))
+        XCTAssertTrue(EPUBParser.readerCSS.contains("margin-block-end: var(--reader-paragraph-spacing) !important;"))
         XCTAssertTrue(EPUBParser.readerCSS.contains("b, strong { font-weight: var(--reader-bold-weight); }"))
+    }
+
+    func testFirstLineIndentIsOptionalAndSanitized() {
+        let bookDefault = EPUBParser.readerVarsCSS(makeCosmetics())
+        let custom = EPUBParser.readerVarsCSS(makeCosmetics(paragraphIndent: 2.5))
+        XCTAssertFalse(bookDefault.contains("--reader-paragraph-indent:"))
+        XCTAssertTrue(custom.contains("--reader-paragraph-indent: 2.5em;"))
+        XCTAssertTrue(EPUBParser.readerCSS.contains("text-indent: var(--reader-paragraph-indent);"))
     }
 
     // MARK: Setting
@@ -82,6 +90,7 @@ final class ReaderStyleTests: XCTestCase {
         hyphenate: Bool = false,
         language: String? = nil,
         paragraphSpacing: Double = 1.0,
+        paragraphIndent: Double? = nil,
         boldWeight: ThemeBoldWeight = .book
     ) -> ReaderCosmeticSettings {
         ReaderCosmeticSettings(
@@ -103,6 +112,7 @@ final class ReaderStyleTests: XCTestCase {
             hyphenate: hyphenate,
             language: language,
             paragraphSpacing: paragraphSpacing,
+            paragraphIndent: paragraphIndent,
             boldWeight: boldWeight
         )
     }

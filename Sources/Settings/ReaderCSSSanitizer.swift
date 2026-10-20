@@ -115,4 +115,9 @@ enum ReaderCSSSanitizer {
         guard value.isFinite else { return 1.0 }
         return min(3, max(0, value))
     }
+
+    static func paragraphIndent(_ value: Double) -> Double {
+        guard value.isFinite else { return 0 }
+        return min(4, max(0, value))
+    }
 }
