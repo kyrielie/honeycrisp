@@ -63,25 +63,16 @@ enum ChapterHostScript {
     static let source = #"""
         (function () {
           if (window.honeycrispHost) { return; }
-          // TEMPORARY (frame-fit investigation): one entry per fit call, read by ChapterHostFrameFitProbeTests.
-          var fitLog = [];
-          function fit(frame, trigger) {
+          function fit(frame) {
             try {
               var doc = frame.contentDocument;
               if (!doc || !doc.documentElement) { return; }
               var root = doc.documentElement;
               var overflow = Math.max(root.scrollHeight, doc.body ? doc.body.scrollHeight : 0);
-              var client = frame.clientHeight;
               // scrollHeight never drops below the frame's own height, so a chapter that became shorter
               // would keep the old height. Without overflow the html box is the content height.
-              var height = overflow > client ? overflow : root.offsetHeight;
-              var apply = height > 0 && frame.getAttribute('data-hc-height') !== String(height);
-              if (fitLog.length < 200) {
-                fitLog.push({ t: Math.round(performance.now()), trigger: trigger, resource: frame.getAttribute('data-resource'),
-                  ready: doc.readyState, sheets: doc.styleSheets.length, client: client, rootScroll: root.scrollHeight,
-                  bodyScroll: doc.body ? doc.body.scrollHeight : -1, rootOffset: root.offsetHeight, height: height, applied: apply });
-              }
-              if (apply) {
+              var height = overflow > frame.clientHeight ? overflow : root.offsetHeight;
+              if (height > 0 && frame.getAttribute('data-hc-height') !== String(height)) {
                 frame.style.height = height + 'px';
                 frame.setAttribute('data-hc-height', String(height));
               }
@@ -92,9 +83,7 @@ enum ChapterHostScript {
           function frames() {
             return Array.prototype.slice.call(document.querySelectorAll('iframe.hc-frame'));
           }
-          function fitAll(trigger) {
-            frames().forEach(function (frame) { fit(frame, typeof trigger === 'string' ? trigger : 'api'); });
-          }
+          function fitAll() { frames().forEach(fit); }
           // Offset contract (C2), same as the merged-document script (`EPUBParser.readerJS`): UTF-16 code
           // units, counted with a TreeWalker(SHOW_TEXT) over the body of ONE chapter document.
           function bodyWalker(doc) { return doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null); }
@@ -184,19 +173,20 @@ enum ChapterHostScript {
             fitAll();
             return patched;
           }
-          // A frame can be measured before its styles have been applied, and nothing would resize it again.
-          // Re-measure once the load handlers have run, and again when the whole shell has finished loading.
+          // A frame can be measured before its styles have been applied (the first measurement of the second
+          // and third frame was about 500 px short, and nothing resized them again). Re-measure once the load
+          // handlers have run, and again when the whole shell has finished loading.
           frames().forEach(function (frame) {
             frame.addEventListener('load', function () {
-              fit(frame, 'load');
-              setTimeout(function () { fit(frame, 'load+0'); }, 0);
+              fit(frame);
+              setTimeout(function () { fit(frame); }, 0);
             });
-            fit(frame, 'init');
+            fit(frame);
           });
-          window.addEventListener('load', function () { fitAll('window-load'); });
-          window.addEventListener('resize', function () { setTimeout(function () { fitAll('resize'); }, 50); });
+          window.addEventListener('load', fitAll);
+          window.addEventListener('resize', function () { setTimeout(fitAll, 50); });
           window.honeycrispHost = {
-            fitLog: fitLog, fitAll: fitAll, applyUserCSS: applyUserCSS,
+            fitAll: fitAll, applyUserCSS: applyUserCSS,
             offsetOfFirstVisibleText: offsetOfFirstVisibleText, scrollTo: scrollTo
           };
         })();

@@ -186,7 +186,7 @@ unit covered; the handler also serves `/__app/` app resources and applies a mark
 stylesheet plus settings-dependent user block, pure and unwired) and `ChapterHostCascadeTests` prove the
 cascade in WebKit; `ChapterHostSurface` shows a three-chapter window in the reader behind `HONEYCRISP_CHAPTER_HOST=1` with author
 JavaScript off and a client-world sizing script (read-only; see ARCHITECTURE 4a; assumption A1 is tested by
-`ChapterHostShellTests`); `ReaderBaselineTests` also measures the host (`testHostOpen...`, numbers in `build/diagnostics/host-<pages>-pages.txt`, not yet recorded here); the live cosmetic patch is `ChapterHostSurface.applyCosmetics`, covered by `ChapterHostCosmeticPatchTests`; per-chapter offsets and position scroll/read are `honeycrispHost.offsetOfFirstVisibleText` and `scrollTo`, covered by `ChapterHostOffsetParityTests`; recording the measurements and the decision remains).
+`ChapterHostShellTests`); `ReaderBaselineTests` also measures the host (`testHostOpen...`, numbers in `build/diagnostics/host-<pages>-pages.txt`, recorded below); the live cosmetic patch is `ChapterHostSurface.applyCosmetics`, covered by `ChapterHostCosmeticPatchTests`; per-chapter offsets and position scroll/read are `honeycrispHost.offsetOfFirstVisibleText` and `scrollTo`, covered by `ChapterHostOffsetParityTests`; frames are re-fitted right after load and when the shell finishes loading, because the first measurement of later frames could be short and was never corrected (`ChapterHostShellTests`); the adopt or fall-back decision remains).
 
 Baseline of the current merged-document reader: `ReaderBaselineTests` generates synthetic books of 250 and
 2,000 nominal pages (a page is 1,800 characters; 20 pages per chapter) and times the path
@@ -210,6 +210,24 @@ M3 budgets, from this baseline (edit here to change them): for the same 2,000-pa
 that budget but at or below today's 2,000-page figures (820 ms, 125 MB) is not a pass; record it and
 weigh it in the adopt or fall-back decision. A result above today's figures rejects the host. The host
 is measured with the same generator, run count and median, by extending `ReaderBaselineTests`.
+
+Host measurement (`ReaderBaselineTests.testHostOpen...`), recorded 2026-10-21 on macOS 15.8.1, Xcode 26.3, arm64, medians of
+3 runs, window of three chapters, same generator as the baseline, with the frame re-fit in place:
+
+| Pages | Chapters | parsePackage | Host open | Open total | WebContent memory | Budget (2,000 pages) |
+|---|---|---|---|---|---|---|
+| 250 | 13 | 2.5 ms | 160.5 ms | 162.9 ms | 17.9 MB | n/a |
+| 2,000 | 100 | 12.1 ms | 153.6 ms | 165.7 ms | 17.7 MB | at most 200 ms, 30 MB: met |
+
+Reading: host open and memory are flat in book size (the window is three chapters), where the merged document grew 4.3x in
+open time and 4.9x in memory. At 2,000 pages the host opens in about 20% of the merged-document time (166 ms against about
+820 ms) with about 14% of its WebContent memory (17.7 MB against about 124 MB). A run taken before the frame re-fit fix gave
+a host open of 143.6 ms (250 pages, runs 122.6 to 169.2) and 121.4 ms (2,000 pages, runs 116.8 to 136.4). At 250 pages the
+run ranges overlap the figures above, so the difference is within noise. At 2,000 pages they do not (137.8 to 162.3 now),
+a rise of about 32 ms in the median; the cause is unverified (one run of each, the re-fit or machine variance). The margin to the 200 ms
+budget is now about 34 ms. Limits of these numbers: "Host open" ends when the main frame has finished loading and
+`scrollHeight` has been read in every mounted chapter, so it excludes the deferred re-fit and first paint; the fixture
+chapters are equal in size (20 pages each); one machine. This meets the budgets but is not itself the adopt decision.
 
 Build for one chapter, then a window of three, in the existing book window. Components: scheme
 handler (path containment, MIME from manifest, style and `lang` injection), chapter document per

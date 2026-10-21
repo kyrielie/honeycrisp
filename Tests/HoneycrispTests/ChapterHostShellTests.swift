@@ -161,6 +161,60 @@ final class ChapterHostShellTests: XCTestCase {
         }
     }
 
+    /// Resources of the mounted frames whose last paragraph lies below the frame's bottom edge.
+    private func clippedFrames(_ webView: WKWebView) async throws -> [Int] {
+        let json = try await string(
+            webView,
+            """
+            JSON.stringify(Array.prototype.map.call(document.querySelectorAll('iframe.hc-frame'), function (f) {
+              var ps = f.contentDocument.getElementsByTagName('p'), last = ps[ps.length - 1];
+              return { resource: Number(f.getAttribute('data-resource')), frame: f.clientHeight,
+                       lastBottom: Math.round(last.getBoundingClientRect().bottom + f.contentWindow.scrollY) };
+            }))
+            """)
+        let frames = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]])
+        XCTAssertEqual(frames.count, 3)
+        return frames.compactMap { frame in
+            let height = (frame["frame"] as? Double) ?? 0
+            let bottom = (frame["lastBottom"] as? Double) ?? .infinity
+            return bottom > height + 1 ? (frame["resource"] as? Int) ?? -1 : nil
+        }
+    }
+
+    /// Regression: the first measurement of the second and third frame was about 500 px short and was never
+    /// corrected, so their last paragraphs lay below the frame and `scrollTo` landed in the next chapter.
+    func testNoMountedChapterIsClippedByItsFrameOnceTheWindowHasLoaded() async throws {
+        let webView = try await loadWindow(around: 2)
+        let clipped = try await clippedFrames(webView)
+        XCTAssertEqual(clipped, [], "frames that clip their last paragraph")
+    }
+
+    /// The resize path (`resize` event, then `fitAll` after 50 ms) re-fits in both directions: a narrow window
+    /// rewraps the text so every frame grows and none clips; widening again restores the original heights.
+    func testFramesRefitWhenTheWindowIsResizedNarrowerAndWiderAgain() async throws {
+        let webView = try await loadWindow(around: 2)
+        let original = try await frameReport(webView).map(\.height)
+        XCTAssertTrue(original.allSatisfy { $0 > 0 })
+
+        webView.setFrameSize(NSSize(width: 160, height: 600))
+        var narrow = original
+        for _ in 0..<60 where zip(original, narrow).contains(where: { $0.1 <= $0.0 }) {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            narrow = try await frameReport(webView).map(\.height)
+        }
+        for (old, new) in zip(original, narrow) { XCTAssertGreaterThan(new, old, "narrower text wraps, so the frame grows") }
+        let clippedNarrow = try await clippedFrames(webView)
+        XCTAssertEqual(clippedNarrow, [], "no frame clips its content after narrowing")
+
+        webView.setFrameSize(NSSize(width: 800, height: 600))
+        var wide = narrow
+        for _ in 0..<60 where zip(original, wide).contains(where: { abs($0.1 - $0.0) > 2 }) {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            wide = try await frameReport(webView).map(\.height)
+        }
+        for (old, new) in zip(original, wide) { XCTAssertEqual(new, old, accuracy: 2, "widening shrinks the frame again") }
+    }
+
     private func loadWindow(around index: Int) async throws -> WKWebView {
         let package = try makePackage(chapters: 5)
         let surface = ChapterHostSurface()
