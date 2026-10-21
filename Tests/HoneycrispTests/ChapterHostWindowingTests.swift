@@ -62,8 +62,9 @@ final class ChapterHostWindowingTests: XCTestCase {
         let none = ChapterHostShell.html(
             slots: slots(count: 1, mounted: [0]), restore: .init(resource: 0, offset: nil, fraction: .nan))
         XCTAssertFalse(none.contains("data-hc-restore-fraction"), "a non-finite fraction is dropped")
-        // The stylesheet always names the attribute in a selector, so look at the <body> tag, not the whole document.
-        XCTAssertTrue(ChapterHostShell.html(slots: slots(count: 1, mounted: [0]), restore: nil).contains("<body>"))
+        XCTAssertFalse(
+            ChapterHostShell.html(slots: slots(count: 1, mounted: [0]), restore: nil).contains("data-hc-restore-resource=\""),
+            "the stylesheet names the attribute, so only an attribute with a value counts")
     }
 
     // MARK: WebKit
@@ -167,14 +168,9 @@ final class ChapterHostWindowingTests: XCTestCase {
     func testReconcileSettlesWithinThreePasses() async throws {
         let harness = try await mount(chapters: 40, around: 20)
         try await scroll(harness, toSlot: 24, offset: 100)
-        // Newly mounted frames load and are measured asynchronously, and each measurement can move the slots
-        // below it. Forced passes taken while frames are still loading chase that layout, not the hysteresis
-        // this test is about, so every pass starts from a quiescent page.
-        try await waitUntilQuiescent(harness)
         var seen: [[Int]] = []
         for _ in 0..<3 {
             _ = try await host(harness, "return window.honeycrispHost.reconcile();")
-            try await waitUntilQuiescent(harness)
             seen.append(try await mounted(harness))
         }
         XCTAssertEqual(seen[1], seen[2], "the mounted set is stable after the first forced passes: \(seen)")
@@ -192,27 +188,6 @@ final class ChapterHostWindowingTests: XCTestCase {
             try await pause(100)
         }
         XCTFail("timed out waiting for \(condition)", file: file, line: line)
-    }
-
-    /// Waits until every mounted frame is ready and the document height has not changed for 300 ms.
-    private func waitUntilQuiescent(_ harness: ChapterHostWindowHarness, file: StaticString = #filePath, line: UInt = #line) async throws {
-        var stableSince = 0
-        var lastHeight = ""
-        for _ in 0..<100 {
-            let state = try await harness.evaluate(
-                """
-                (function () {
-                  var frames = document.querySelectorAll('iframe.hc-frame'), ready = true;
-                  Array.prototype.forEach.call(frames, function (f) { if (f.getAttribute('data-hc-ready') !== '1') { ready = false; } });
-                  return (ready ? 'ready:' : 'loading:') + document.documentElement.scrollHeight + ':' + Math.round(window.scrollY);
-                })()
-                """)
-            if state.hasPrefix("ready:"), state == lastHeight { stableSince += 1 } else { stableSince = 0 }
-            lastHeight = state
-            if stableSince >= 3 { return }
-            try await pause(100)
-        }
-        XCTFail("the page never became quiescent", file: file, line: line)
     }
 
     private func probeTop(_ harness: ChapterHostWindowHarness, resource: Int) async throws -> Double {

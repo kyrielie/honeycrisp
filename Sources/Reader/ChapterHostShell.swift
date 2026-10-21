@@ -123,54 +123,46 @@ enum ChapterHostScript {
           // between the height change and the compensation (`overflow-anchor: none` keeps WebKit from also
           // adjusting). `ratio` is the running px per byte of measured chapters, applied to unmeasured slots.
           var measuredBytes = 0, measuredPx = 0, reestimating = false;
-          // A restore lands on a position, a fraction or the chapter start. Chapter heights above or at the target
-          // can still change after the landing (deferred fits and neighbour loads), so the landing is repeated
-          // whenever any slot is re-fitted, until the reader scrolls or 2 s have passed.
-          var landing = null, landingTimer = null;
           function slotOf(frame) {
             var node = frame.parentNode;
             return node && node.classList && node.classList.contains('hc-slot') ? node : null;
           }
           function ratio() { return measuredBytes > 0 ? measuredPx / measuredBytes : 0; }
-          // Sets the slot height and keeps the text on screen stationary when the slot lies above the viewport.
+          // A slot is above the reading position when its bottom edge is at or above the reference line (a third of the way
+          // down the window, where the position is read). Until the first position has been established (`emptyHeld`) a
+          // slot with no height yet is not counted: on open it is the first mounted chapter sitting at the window top and
+          // its growth must push the text below it down, and during a restore the explicit placement follows.
+          var emptyHeld = true, restoring = false;
+          function isAbove(rect) {
+            return rect.bottom <= Math.round(window.innerHeight / 3) && (rect.height > 0 || !emptyHeld);
+          }
+          // Sets the slot height and keeps the text on screen stationary when the slot lies above the reading position.
           // `before` is the slot's rect taken before anything about it changed.
           function setSlotHeight(slot, height, before) {
             var rect = before || slot.getBoundingClientRect();
             var delta = height - rect.height;
             slot.style.height = height + 'px';
-            if (delta !== 0 && rect.bottom <= 0 && rect.top < 0) {
-              suppressScrolls += 1;
-              window.scrollBy(0, delta);
-            }
+            if (delta !== 0 && isAbove(rect)) { window.scrollBy(0, delta); }
           }
           function reestimate() {
             if (reestimating || ratio() <= 0) { return; }
             reestimating = true;
-            // Snapshot viewport positions before modifying any heights so all slots evaluate their position
-            // relative to the viewport from the same initial layout.
-            var slotList = slots();
-            var snapped = slotList.map(function (s) { return s.getBoundingClientRect(); });
-            var scrollDelta = 0;
-            for (var si = 0; si < slotList.length; si++) {
-              var slot = slotList[si];
-              if (slot.hasAttribute('data-hc-measured') || frameOf(slot)) { continue; }
+            slots().forEach(function (slot) {
+              if (slot.hasAttribute('data-hc-measured') || frameOf(slot)) { return; }
               var bytes = Number(slot.getAttribute('data-bytes')) || 0;
-              if (bytes <= 0) { continue; }
+              if (bytes <= 0) { return; }
               var height = Math.round(Math.max(window.innerHeight, bytes * ratio()));
-              var oldHeight = Math.round(snapped[si].height);
-              if (oldHeight !== height) {
-                slot.style.height = height + 'px';
-                if (snapped[si].bottom <= 0 && snapped[si].top < 0) { scrollDelta += height - oldHeight; }
-              }
-            }
-            // Apply all compensation as one scrollBy to avoid firing multiple onScroll events.
-            if (scrollDelta !== 0) { suppressScrolls += 1; window.scrollBy(0, scrollDelta); }
+              if (Math.round(slot.getBoundingClientRect().height) !== height) { setSlotHeight(slot, height); }
+            });
             reestimating = false;
           }
           function fit(frame) {
             try {
               var doc = frame.contentDocument;
-              if (!doc || !doc.documentElement || doc.location.href === 'about:blank') { return; }
+              if (!doc || !doc.documentElement) { return; }
+              // A frame that was just mounted still shows its initial about:blank document. Its height is not the
+              // chapter's: recording it would shrink the slot to a few px and corrupt the running ratio.
+              if (doc.location.href === 'about:blank') { return; }
               var root = doc.documentElement;
               var overflow = Math.max(root.scrollHeight, doc.body ? doc.body.scrollHeight : 0);
               // scrollHeight never drops below the frame's own height, so a chapter that became shorter
@@ -189,8 +181,9 @@ enum ChapterHostScript {
                   slot.setAttribute('data-hc-measured', String(bytes > 0 ? height : 0));
                   setSlotHeight(slot, height, before);
                   reestimate();
-                  if (landing) { land(landing); }
                 }
+                // Without a restore the first measured chapter is the one at the window top: the position is set.
+                if (!restoring) { emptyHeld = false; }
               }
             } catch (error) {
               frame.setAttribute('data-hc-error', String(error));
@@ -264,14 +257,11 @@ enum ChapterHostScript {
               var r = range.getBoundingClientRect();
               var rtop = r && r.height > 0 ? r.top : 0;
               if (rtop === 0) {
+                // A collapsed range in unrendered whitespace has no box: use the nearest element instead.
                 var el = found.nodeType === 1 ? found : found.parentElement;
-                if (el && el !== doc.body && el !== doc.documentElement) {
-                  rtop = el.getBoundingClientRect().top;
-                } else if (found.previousElementSibling) {
-                  rtop = found.previousElementSibling.getBoundingClientRect().bottom;
-                } else if (found.nextElementSibling) {
-                  rtop = found.nextElementSibling.getBoundingClientRect().top;
-                }
+                if (el && el !== doc.body && el !== doc.documentElement) { rtop = el.getBoundingClientRect().top; }
+                else if (found.previousElementSibling) { rtop = found.previousElementSibling.getBoundingClientRect().bottom; }
+                else if (found.nextElementSibling) { rtop = found.nextElementSibling.getBoundingClientRect().top; }
               }
               var top = frame.getBoundingClientRect().top + rtop;
               window.scrollTo(0, Math.max(0, window.scrollY + top - referenceY()));
@@ -314,8 +304,6 @@ enum ChapterHostScript {
           // handlers have run, and again when the whole shell has finished loading.
           function wire(frame) {
             frame.addEventListener('load', function () {
-              var doc = frame.contentDocument;
-              if (!doc || doc.location.href === 'about:blank') { return; }
               fit(frame);
               setTimeout(function () {
                 fit(frame);
@@ -412,36 +400,47 @@ enum ChapterHostScript {
           function slotFor(resource) { return document.querySelector('div.hc-slot[data-resource="' + Number(resource) + '"]'); }
           function reveal() { if (document.body) { document.body.style.visibility = 'visible'; } }
           function loaded(frame) {
-            return frame ? frame.getAttribute('data-hc-ready') === '1' : false;
+            if (frame.getAttribute('data-hc-ready') === '1') { return true; }
+            try {
+              var doc = frame.contentDocument;
+              if (doc && doc.readyState === 'complete' && doc.location.href !== 'about:blank') {
+                fit(frame);
+                frame.setAttribute('data-hc-ready', '1');
+                return true;
+              }
+            } catch (error) { frame.setAttribute('data-hc-error', String(error)); }
+            return false;
           }
-          function clearLanding() {
-            landing = null;
-            if (landingTimer !== null) { clearTimeout(landingTimer); landingTimer = null; }
-          }
-          function land(target) {
-            if (!target) { return; }
+          // Puts the restore target on the reference line (or the chapter top for a bare chapter).
+          function place(target) {
             var slot = slotFor(target.resource);
             if (!slot) { return; }
-            if (target.offset !== null) {
-              scrollTo(target.resource, target.offset);
-            } else if (target.fraction !== null) {
-              var rect = slot.getBoundingClientRect();
-              window.scrollTo(0, Math.max(0, Math.round(rect.top + window.scrollY + target.fraction * rect.height - referenceY())));
-            } else {
-              var top = slot.getBoundingClientRect().top + window.scrollY;
-              window.scrollTo(0, Math.max(0, Math.round(top)));
-            }
+            var top = slot.getBoundingClientRect().top + window.scrollY;
+            if (target.offset !== null) { scrollTo(target.resource, target.offset); }
+            else if (target.fraction !== null) {
+              var height = slot.getBoundingClientRect().height;
+              window.scrollTo(0, Math.max(0, Math.round(top + target.fraction * height - referenceY())));
+            } else { window.scrollTo(0, Math.max(0, Math.round(top))); }
           }
+          // While the shell is still loading, chapters measured late (or short at first) can change heights after the
+          // placement. The target is placed once more when the shell has loaded, and the reveal waits for that.
+          var settling = null;
           function performRestore() {
             var target = pending;
             pending = null;
             if (!target) { return; }
-            var slot = slotFor(target.resource);
-            if (slot) {
-              landing = target;
-              land(landing);
-              landingTimer = setTimeout(clearLanding, 2000);
-            }
+            place(target);
+            emptyHeld = false;
+            reconcile();
+            if (document.readyState !== 'complete') { settling = target; } else { reveal(); }
+            setTimeout(reportPosition, 0);
+          }
+          function settle() {
+            fitAll();
+            if (!settling) { return; }
+            var target = settling;
+            settling = null;
+            place(target);
             reconcile();
             reveal();
             setTimeout(reportPosition, 0);
@@ -449,6 +448,7 @@ enum ChapterHostScript {
           function restoreTo(resource, offset, fraction) {
             var slot = slotFor(resource);
             if (!slot) { reveal(); return false; }
+            emptyHeld = true;
             pending = { resource: Number(resource), offset: offset === undefined ? null : offset, fraction: fraction === undefined ? null : fraction };
             mount(slot);
             window.scrollTo(0, Math.max(0, Math.round(slot.getBoundingClientRect().top + window.scrollY)));
@@ -459,8 +459,9 @@ enum ChapterHostScript {
             var raw = document.body.getAttribute(name);
             return raw === null || isNaN(Number(raw)) ? null : Number(raw);
           }
+          restoring = document.body.hasAttribute('data-hc-restore-resource');
           frames().forEach(wire);
-          if (document.body.hasAttribute('data-hc-restore-resource')) {
+          if (restoring) {
             restoreTo(numberAttribute('data-hc-restore-resource'), numberAttribute('data-hc-restore-offset'),
               numberAttribute('data-hc-restore-fraction'));
           } else {
@@ -472,8 +473,7 @@ enum ChapterHostScript {
               if (firstTop > 0) { suppressScrolls = 1; window.scrollTo(0, firstTop); }
             }
           }
-          ['wheel', 'keydown', 'mousedown', 'touchstart'].forEach(function (name) { window.addEventListener(name, clearLanding); });
-          window.addEventListener('load', fitAll);
+          window.addEventListener('load', settle);
           window.addEventListener('scroll', onScroll);
           window.addEventListener('resize', function () { setTimeout(function () { fitAll(); schedule(); }, 50); });
           window.honeycrispHost = {
