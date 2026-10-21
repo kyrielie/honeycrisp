@@ -12,10 +12,17 @@ enum ServedChapter {
     /// Absolute path so it resolves under `honeycrisp-epub://book/` from a chapter at any depth.
     static let readerStylesheetLink = "<link rel=\"stylesheet\" type=\"text/css\" href=\"/\(readerStylesheetPath)\"/>"
 
+    /// Id of the inline `<style>` that carries the settings-dependent CSS (`ChapterHostCSS.userBlock`).
+    /// A cosmetic patch replaces this one element's text, so conditional rules can appear and disappear
+    /// without a reload.
+    static let userStyleID = "honeycrisp-user"
+
     /// Returns `data` with the host stylesheet link as the last child of `<head>` (so it is last in the
-    /// cascade) and `lang` on the root element when the book has none. Unchanged when the bytes are not
-    /// UTF-8, when there is no `<html>` element, or when nothing needs inserting.
-    static func prepare(_ data: Data, language: String?) -> Data {
+    /// cascade), followed by an inline `<style id="honeycrisp-user">` when `userCSS` is given, and `lang`
+    /// on the root element when the book has none. Unchanged when the bytes are not UTF-8, when there is
+    /// no `<html>` element, or when nothing needs inserting. `userCSS` is app-generated; it is refused
+    /// (the link is still inserted) when it contains `<` or `]]>`, since it is written into markup.
+    static func prepare(_ data: Data, language: String?, userCSS: String? = nil) -> Data {
         guard let text = String(data: data, encoding: .utf8),
             let rootTag = rootStartTag(in: text)
         else { return data }
@@ -27,12 +34,13 @@ enum ServedChapter {
             insertions.append((closing, " lang=\"\(language)\""))
         }
         if !text.contains("/\(readerStylesheetPath)\"") {
+            let head = readerStylesheetLink + userStyleElement(userCSS)
             if let headEnd = text.range(
                 of: "</head>", options: .caseInsensitive, range: rootTag.upperBound..<text.endIndex)
             {
-                insertions.append((headEnd.lowerBound, readerStylesheetLink))
+                insertions.append((headEnd.lowerBound, head))
             } else if !hasHeadStartTag(in: text, after: rootTag.upperBound) {
-                insertions.append((rootTag.upperBound, "<head>\(readerStylesheetLink)</head>"))
+                insertions.append((rootTag.upperBound, "<head>\(head)</head>"))
             }
         }
         guard !insertions.isEmpty else { return data }
@@ -46,6 +54,12 @@ enum ServedChapter {
         }
         result += text[cursor...]
         return Data(result.utf8)
+    }
+
+    /// The comment markers keep the CSS valid whether the document is parsed as XML (CDATA) or HTML.
+    private static func userStyleElement(_ css: String?) -> String {
+        guard let css, !css.isEmpty, !css.contains("<"), !css.contains("]]>") else { return "" }
+        return "<style id=\"\(userStyleID)\">/*<![CDATA[*/\n\(css)\n/*]]>*/</style>"
     }
 
     /// Range of the root `<html ...>` start tag, found by `<html` followed by whitespace, `>` or `/`.

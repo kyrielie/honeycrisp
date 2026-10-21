@@ -36,6 +36,9 @@ final class ReaderViewController: NSViewController {
 
     private var currentPackage: EPUBPackage?
     private var currentEPUBURL: URL?
+    /// Non-nil only while the chapter host spike is enabled (`ChapterHostFlag`); every branch on it is
+    /// flag-mode only and the merged-document path is untouched when it is nil.
+    private var chapterHost: ChapterHostSurface?
     private var extractionWorkDirectories: [URL] = []
 
     // MARK: - Pagination state (Patch 0007)
@@ -180,6 +183,12 @@ final class ReaderViewController: NSViewController {
 
         let msgController = WKUserContentController()
         cfg.userContentController = msgController
+        // After the controller above is in place: the surface adds its sizing script to it.
+        if ChapterHostFlag.isEnabled {
+            let host = ChapterHostSurface()
+            host.install(into: cfg)
+            chapterHost = host
+        }
 
         // Registered before the WKWebView is constructed — Ambrosia's invariant 6
         // requires this ordering. WebKit usually tolerates late registration
@@ -536,11 +545,34 @@ final class ReaderViewController: NSViewController {
         case .scroll:
             renderScrollContent(pkg: pkg)
         case .paginated:
+            if chapterHost != nil {
+                showError(ChapterHostSurface.SpikeError.pagedModeUnsupported)
+                return
+            }
             loadSpineItem(index: currentSpineIndex, restorePosition: pendingPaginatedRestorePosition, pkg: pkg)
         }
     }
 
+    /// Flag mode (chapter host spike): the current chapter and its neighbours as isolated documents in a
+    /// shell page. Nothing is written to `HistoryManager`; the spike has no position, progress or
+    /// bookmark support.
+    private func renderHostedChapter(_ host: ChapterHostSurface, pkg: EPUBPackage) {
+        let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, language: pkg.language)
+        lastBuiltCosmetics = cosmetics
+        host.attach(package: pkg, cosmetics: cosmetics)
+        let index = min(max(activeScrollSpineIndex, 0), max(0, pkg.spineURLs.count - 1))
+        do {
+            try host.loadWindow(around: index, in: pkg, into: webView)
+        } catch {
+            showError(error)
+        }
+    }
+
     private func renderScrollContent(pkg: EPUBPackage) {
+        if let host = chapterHost {
+            renderHostedChapter(host, pkg: pkg)
+            return
+        }
         do {
             let parser = EPUBParser()
             // "Format for AO3" maps to the same formatFirstChapter flag in SettingsManager
@@ -745,7 +777,8 @@ final class ReaderViewController: NSViewController {
 
     /// Adds a bookmark for the visible page, or removes the one that is already there.
     func toggleBookmarkAtCurrentPosition() {
-        guard let url = currentEPUBURL else { return }
+        // Flag mode has no page script to read a location from; it would store offset 0.
+        guard chapterHost == nil, let url = currentEPUBURL else { return }
         let spineIndex = currentBookmarkSpineIndex
         readPageLocation(spineIndex: spineIndex) { [weak self] location in
             guard let self else { return }
@@ -1185,6 +1218,15 @@ final class ReaderViewController: NSViewController {
     /// initial paint, so this can't drift from what a fresh load would produce.
     @objc private func applyCosmeticCSSUpdate() {
         let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, language: currentPackage?.language)
+        if let host = chapterHost {
+            // Flag mode: the page script and `#honeycrisp-vars` do not exist; patch every mounted chapter.
+            lastBuiltCosmetics = cosmetics
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do { try await host.applyCosmetics(cosmetics, to: self.webView) } catch { self.showError(error) }
+            }
+            return
+        }
         let cssLiteral = Self.jsStringLiteral(EPUBParser.readerVarsCSS(cosmetics))
         let js = """
             (function() {
@@ -1219,6 +1261,11 @@ final class ReaderViewController: NSViewController {
     @objc private func scheduleStructuralReload() {
         structuralSettingsDebounceTimer?.invalidate()
         structuralSettingsDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+            // Flag mode: the position query below falls back to offset 0 and would overwrite the saved position.
+            if let self, self.chapterHost != nil {
+                self.renderCurrentContent()
+                return
+            }
             guard let self, let url = self.currentEPUBURL else { self?.renderCurrentContent(); return }
             // Capture current position first so the reload's baked-in restore
             // (scrollRestoreBootstrapJS in scroll mode, pendingPaginatedRestorePosition
@@ -1301,7 +1348,9 @@ final class ReaderViewController: NSViewController {
     /// (via didReceivePositionUpdate), since PaginationJS's own scroll events don't
     /// drive readerJS's debounced-scroll save path the way scroll mode's do.
     func flushPositionSave() {
-        guard let url = currentEPUBURL else { return }
+        // Flag mode: the query below falls back to offset 0 when the page script is absent, which would
+        // overwrite the saved position every few seconds.
+        guard chapterHost == nil, let url = currentEPUBURL else { return }
         let spineIndex = currentMode == .scroll ? 0 : currentSpineIndex
         webView.evaluateJavaScript(
             "window.honeycrispCurrentPosition ? window.honeycrispCurrentPosition() : {offset: 0, fraction: 0}"
@@ -1869,10 +1918,18 @@ extension ReaderViewController: WKNavigationDelegate {
             decisionHandler(.cancel)
             return
         }
+        if chapterHost != nil, !ChapterHostSurface.allowsNavigation(to: action.request.url) {
+            decisionHandler(.cancel)
+            return
+        }
         decisionHandler(.allow)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if chapterHost != nil {
+            refreshBookmarkButton()
+            return
+        }
         // The initial HTML already bakes real settings in via ReaderCosmeticSettings
         // (see buildScrollHTML/buildPageHTML). Re-applying unconditionally here was
         // itself a source of a visible flash on every load -- even when values match,

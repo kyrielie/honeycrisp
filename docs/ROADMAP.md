@@ -182,8 +182,11 @@ existing users keep their themes after migration.
 
 Status: in progress (a contained EPUB resource scheme handler and MIME mapping are implemented and
 unit covered; the handler also serves `/__app/` app resources and applies a markup transform, and
-`ServedChapter.prepare` inserts the stylesheet link and root `lang`, pure and unwired; the host stylesheet,
-production chapter hosting behind a flag, and JavaScript isolation remain).
+`ServedChapter.prepare` inserts the stylesheet link and root `lang`, pure and unwired; `ChapterHostCSS` (static
+stylesheet plus settings-dependent user block, pure and unwired) and `ChapterHostCascadeTests` prove the
+cascade in WebKit; `ChapterHostSurface` shows a three-chapter window in the reader behind `HONEYCRISP_CHAPTER_HOST=1` with author
+JavaScript off and a client-world sizing script (read-only; see ARCHITECTURE 4a; assumption A1 is tested by
+`ChapterHostShellTests`); `ReaderBaselineTests` also measures the host (`testHostOpen...`, numbers in `build/diagnostics/host-<pages>-pages.txt`, not yet recorded here); the live cosmetic patch is `ChapterHostSurface.applyCosmetics`, covered by `ChapterHostCosmeticPatchTests`; per-chapter offsets and position scroll/read are `honeycrispHost.offsetOfFirstVisibleText` and `scrollTo`, covered by `ChapterHostOffsetParityTests`; recording the measurements and the decision remains).
 
 Baseline of the current merged-document reader: `ReaderBaselineTests` generates synthetic books of 250 and
 2,000 nominal pages (a page is 1,800 characters; 20 pages per chapter) and times the path

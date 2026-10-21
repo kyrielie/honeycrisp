@@ -115,3 +115,8 @@ honeycrisp.xml
 # terms are documented and the file is intentionally moved into test resources.
 samples/*
 features.txt
+
+# Local test-result tooling (results.sh and its output; the zip is covered by *.zip)
+results.sh
+testresults.txt
+testresults-out/

@@ -6,8 +6,8 @@ final class ServedChapterTests: XCTestCase {
     private let link = ServedChapter.readerStylesheetLink
     private let xhtmlNamespace = "xmlns=\"http://www.w3.org/1999/xhtml\""
 
-    private func prepared(_ source: String, language: String? = nil) -> String {
-        String(decoding: ServedChapter.prepare(Data(source.utf8), language: language), as: UTF8.self)
+    private func prepared(_ source: String, language: String? = nil, userCSS: String? = nil) -> String {
+        String(decoding: ServedChapter.prepare(Data(source.utf8), language: language, userCSS: userCSS), as: UTF8.self)
     }
 
     func testLinkInsertedBeforeClosingHead() {
@@ -89,5 +89,31 @@ final class ServedChapterTests: XCTestCase {
         let doctypeRange = try XCTUnwrap(output.range(of: "<!DOCTYPE"))
         let linkRange = try XCTUnwrap(output.range(of: link))
         XCTAssertLessThan(doctypeRange.lowerBound, linkRange.lowerBound)
+    }
+
+    func testUserCSSIsInsertedAsStyleElementAfterTheLink() {
+        let source = "<html><head><title>t</title></head><body><p>x</p></body></html>"
+        let style = "<style id=\"honeycrisp-user\">/*<![CDATA[*/\n:root { --a: 1; }\n/*]]>*/</style>"
+        XCTAssertEqual(
+            prepared(source, userCSS: ":root { --a: 1; }"),
+            "<html><head><title>t</title>" + link + style + "</head><body><p>x</p></body></html>")
+    }
+
+    func testUserCSSWithoutHeadCreatesHeadWithBothElements() {
+        let output = prepared("<html><body></body></html>", userCSS: "p { color: red; }")
+        XCTAssertTrue(output.hasPrefix("<html><head>" + link + "<style id=\"honeycrisp-user\">"))
+        XCTAssertTrue(output.hasSuffix("</style></head><body></body></html>"))
+    }
+
+    func testUserCSSWithMarkupCharactersIsRefusedButTheLinkIsStillInserted() {
+        for hostile in ["a {}</style><script>alert(1)</script>", "a {} ]]> <b>", "a { content: \"<\" }"] {
+            let output = prepared("<html><head></head><body></body></html>", userCSS: hostile)
+            XCTAssertEqual(output, "<html><head>" + link + "</head><body></body></html>", hostile)
+        }
+    }
+
+    func testEmptyUserCSSInsertsNoStyleElement() {
+        let output = prepared("<html><head></head><body></body></html>", userCSS: "")
+        XCTAssertFalse(output.contains("honeycrisp-user"))
     }
 }

@@ -36,7 +36,8 @@ Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
   (both `project.yml` and `Package.swift` use directory paths). Run `xcodegen generate` afterwards.
 - Generate project: `xcodegen generate` (needs `brew install xcodegen`).
 - Test: `./test.sh` (runs xcodegen, then `xcodebuild test`, scheme `Honeycrisp`, unsigned). Env
-  overrides: `HONEYCRISP_TEST_DESTINATION`, `HONEYCRISP_DERIVED_DATA`.
+  overrides: `HONEYCRISP_TEST_DESTINATION`, `HONEYCRISP_DERIVED_DATA`, `HONEYCRISP_RESULT_BUNDLE` (writes an
+  `.xcresult` there; used by the local, gitignored `results.sh`).
 - Lint: `swiftlint` from the repo root (`brew install swiftlint`; config in `.swiftlint.yml`, line length 160,
   trailing commas required). Fix warnings only in files you touch; no repo-wide reformatting diffs. CI does not
   run it.
@@ -141,6 +142,9 @@ Trigger: "implement the plan across multiple passes". Work from the plan; do not
 - XCTest with small synthetic fixtures generated in temp directories. Never add real EPUBs;
   `samples/` is local, untracked, and must not be copied from or into the repo.
 - Add a focused test for any parser, persistence, or position-restore change.
+- A test passes or fails. Do not write tests that only record. Measurements and other diagnostics go to a
+  file through `TestDiagnostics.write` (`build/diagnostics/`, gitignored, cleared by `test.sh`), never only
+  to stdout or an Xcode attachment, so results can be read from the repo.
 - No tests exist for `SettingsManager`, `KeyBinding`, `PaginationEngine` (beyond `RestorePosition`),
   `ReaderViewController`, or search UI. Say so when a change touches them.
 

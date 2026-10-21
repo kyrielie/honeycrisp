@@ -13,9 +13,17 @@ import XCTest
 /// `WKWebView.loadFileURL`. The web view here is a plain default one: the production view also has
 /// script message handlers and user scripts, so absolute times are a floor, not the app's real number.
 ///
-/// Nothing here asserts a budget. Each test asserts only that the fixture is real (chapter count,
-/// non-zero layout height) and records its measurements as kept attachments and as `BASELINE` lines on
-/// stdout. Copy them into docs/ROADMAP.md M3 together with the macOS and Xcode versions.
+/// The chapter host is measured with the same generator, run count, median and footprint helpers
+/// (`testHostOpen...`): `ChapterHostSurface.attach` plus `loadWindow` (the shell and three chapters as
+/// iframes) until the main frame finishes, then `scrollHeight` forced on every mounted chapter document.
+/// The host runs in a web view configured as `ReaderViewController.loadView` does for the flag: own
+/// content controller, `ChapterHostSurface.install`.
+///
+/// Nothing here asserts a budget. Each test asserts only that the fixture is real (merged: chapter count
+/// and non-zero layout height; host: the right three chapters mounted, sized, error free) and writes its
+/// measurements to `build/diagnostics/` through `TestDiagnostics` (`baseline-<pages>-pages.txt`,
+/// `host-<pages>-pages.txt`, `BASELINE` lines). Copy them into docs/ROADMAP.md M3 together with
+/// `build/diagnostics/environment.txt`.
 ///
 /// "Page" is a nominal unit of 1,800 characters of body text; the roadmap's "2,000-page book" does not
 /// define it. Timings on a shared CI runner are noisy; take the numbers from a local run.
@@ -45,6 +53,14 @@ final class ReaderBaselineTests: XCTestCase {
 
     func testBaselineOpenOfTwoThousandPageBook() async throws {
         try await runBaseline(pages: 2_000)
+    }
+
+    func testHostOpenOfQuarterThousandPageBook() async throws {
+        try await runHostBaseline(pages: 250)
+    }
+
+    func testHostOpenOfTwoThousandPageBook() async throws {
+        try await runHostBaseline(pages: 2_000)
     }
 
     // MARK: Measurement
@@ -79,7 +95,7 @@ final class ReaderBaselineTests: XCTestCase {
             XCTAssertEqual(sample.chapterElements, book.chapterCount)
             XCTAssertGreaterThan(sample.scrollHeight, 0)
         }
-        report(pages: pages, book: book, parseMs: parseMs, samples: samples)
+        try report(pages: pages, book: book, parseMs: parseMs, samples: samples)
     }
 
     private func openOnce(package: EPUBPackage, parser: EPUBParser) async throws -> OpenSample {
@@ -134,9 +150,113 @@ final class ReaderBaselineTests: XCTestCase {
         return (try XCTUnwrap(object["height"]), try XCTUnwrap(object["chapters"]))
     }
 
+    // MARK: Host measurement
+
+    private struct HostSample {
+        var openMs: Double
+        var frames: [HostFrame]
+        var appFootprintDeltaBytes: Int64?
+        var webContentFootprintBytes: UInt64?
+    }
+
+    private struct HostFrame {
+        var resource: Int
+        var heading: String
+        var documentHeight: Int
+        var paragraphs: Int
+        var error: String?
+    }
+
+    private func runHostBaseline(pages: Int) async throws {
+        let book = SyntheticBook(pages: pages)
+        let root = temporaryDirectory.appendingPathComponent("host-book-\(pages)", isDirectory: true)
+        try book.write(to: root)
+
+        let parser = EPUBParser()
+        let parseStart = ContinuousClock.now
+        let package = try parser.parsePackage(at: root)
+        let parseMs = Self.milliseconds(since: parseStart)
+        XCTAssertEqual(package.spineURLs.count, book.chapterCount)
+
+        // A window of three needs a chapter with a neighbour on each side.
+        let center = book.chapterCount / 2
+        XCTAssertGreaterThan(book.chapterCount, 2)
+        var samples: [HostSample] = []
+        for _ in 0..<Self.iterations {
+            samples.append(try await openHostOnce(package: package, center: center))
+        }
+        for sample in samples {
+            XCTAssertEqual(sample.frames.map(\.resource), [center - 1, center, center + 1])
+            for frame in sample.frames {
+                XCTAssertEqual(frame.heading, "Chapter \(frame.resource + 1)")
+                XCTAssertGreaterThan(frame.documentHeight, 0, "chapter \(frame.resource) has layout")
+                XCTAssertGreaterThan(frame.paragraphs, 0, "chapter \(frame.resource) has paragraphs")
+                XCTAssertNil(frame.error, "chapter \(frame.resource): \(frame.error ?? "")")
+            }
+        }
+        try reportHost(pages: pages, book: book, parseMs: parseMs, samples: samples)
+    }
+
+    private func openHostOnce(package: EPUBPackage, center: Int) async throws -> HostSample {
+        let footprintBefore = Self.appFootprintBytes()
+
+        let surface = ChapterHostSurface()
+        let configuration = WKWebViewConfiguration()
+        // Same order as `ReaderViewController.loadView`: own controller first, then the surface installs.
+        configuration.userContentController = WKUserContentController()
+        surface.install(into: configuration)
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+        let loaded = expectation(description: "host window loads")
+        let delegate = BaselineNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+
+        let openStart = ContinuousClock.now
+        surface.attach(package: package, cosmetics: Self.cosmetics)
+        try surface.loadWindow(around: center, in: package, into: webView)
+        await fulfillment(of: [loaded], timeout: 180)
+        XCTAssertNil(delegate.error)
+        // Reading scrollHeight forces layout of every mounted chapter document.
+        let probe = try await webView.evaluateJavaScript("""
+            JSON.stringify(Array.prototype.map.call(document.querySelectorAll('iframe.hc-frame'), function (f) {
+              var d = f.contentDocument;
+              var h = d ? d.querySelector('h2') : null;
+              return {
+                resource: Number(f.getAttribute('data-resource')),
+                heading: h ? h.textContent : '',
+                height: d && d.documentElement ? d.documentElement.scrollHeight : 0,
+                paragraphs: d ? d.querySelectorAll('p').length : 0,
+                error: f.getAttribute('data-hc-error')
+              };
+            }));
+            """)
+        let openMs = Self.milliseconds(since: openStart)
+        let frames = try Self.decodeHostProbe(probe)
+
+        let footprintAfter = Self.appFootprintBytes()
+        let webContent = Self.webContentFootprintBytes(webView)
+        webView.navigationDelegate = nil
+        webView.stopLoading()
+
+        var delta: Int64?
+        if let footprintBefore, let footprintAfter { delta = Int64(footprintAfter) - Int64(footprintBefore) }
+        return HostSample(openMs: openMs, frames: frames, appFootprintDeltaBytes: delta, webContentFootprintBytes: webContent)
+    }
+
+    private static func decodeHostProbe(_ probe: Any?) throws -> [HostFrame] {
+        let json = try XCTUnwrap(probe as? String)
+        let data = try XCTUnwrap(json.data(using: .utf8))
+        let objects = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+        return objects.map {
+            HostFrame(
+                resource: ($0["resource"] as? Int) ?? -1, heading: ($0["heading"] as? String) ?? "",
+                documentHeight: ($0["height"] as? Int) ?? 0, paragraphs: ($0["paragraphs"] as? Int) ?? 0,
+                error: $0["error"] as? String)
+        }
+    }
+
     // MARK: Reporting
 
-    private func report(pages: Int, book: SyntheticBook, parseMs: Double, samples: [OpenSample]) {
+    private func report(pages: Int, book: SyntheticBook, parseMs: Double, samples: [OpenSample]) throws {
         var lines = [
             "BASELINE pages=\(pages) chapters=\(book.chapterCount) iterations=\(samples.count)",
             "BASELINE pages=\(pages) parsePackageMs=\(Self.format(parseMs)) (once)",
@@ -152,11 +272,34 @@ final class ReaderBaselineTests: XCTestCase {
         }
         let medianLoad = Self.median(samples.map(\.loadAndLayoutMs))
         lines.append("BASELINE pages=\(pages) medianLoadAndLayoutMs=\(Self.format(medianLoad))")
-        for line in lines { print(line) }
-        let attachment = XCTAttachment(string: lines.joined(separator: "\n"))
-        attachment.name = "baseline-\(pages)-pages"
-        attachment.lifetime = .keepAlways
-        add(attachment)
+        try TestDiagnostics.write("baseline-\(pages)-pages.txt", lines: lines)
+    }
+
+    private func reportHost(pages: Int, book: SyntheticBook, parseMs: Double, samples: [HostSample]) throws {
+        var lines = [
+            "BASELINE host pages=\(pages) chapters=\(book.chapterCount) window=\(samples.first?.frames.count ?? 0) iterations=\(samples.count)",
+            "BASELINE host pages=\(pages) parsePackageMs=\(Self.format(parseMs)) (once)",
+        ]
+        for (index, sample) in samples.enumerated() {
+            let heights = sample.frames.map { String($0.documentHeight) }.joined(separator: ",")
+            lines.append(
+                "BASELINE host pages=\(pages) run=\(index + 1) openMs=\(Self.format(sample.openMs))"
+                    + " frameHeightsPx=\(heights)"
+                    + " appFootprintDeltaMB=\(sample.appFootprintDeltaBytes.map { Self.megabytes($0) } ?? "unavailable")"
+                    + " webContentFootprintMB=\(sample.webContentFootprintBytes.map { Self.megabytes($0) } ?? "unavailable")"
+            )
+        }
+        let medianOpen = Self.median(samples.map(\.openMs))
+        lines.append("BASELINE host pages=\(pages) medianOpenMs=\(Self.format(medianOpen))")
+        lines.append("BASELINE host pages=\(pages) medianOpenPlusParseMs=\(Self.format(medianOpen + parseMs))")
+        let memory = samples.compactMap(\.webContentFootprintBytes)
+        if memory.isEmpty {
+            lines.append("BASELINE host pages=\(pages) medianWebContentFootprintMB=unavailable")
+        } else {
+            let medianBytes = memory.sorted()[memory.count / 2]
+            lines.append("BASELINE host pages=\(pages) medianWebContentFootprintMB=\(Self.megabytes(medianBytes))")
+        }
+        try TestDiagnostics.write("host-\(pages)-pages.txt", lines: lines)
     }
 
     private static func milliseconds(since start: ContinuousClock.Instant) -> Double {
@@ -223,104 +366,6 @@ final class ReaderBaselineTests: XCTestCase {
             paddingH: 24,
             allowLinkClicks: true
         )
-    }
-}
-
-/// Generates a deterministic EPUB folder (EPUB 3 package, nested `Text/` and `Styles/`, one relative
-/// image per chapter, a book stylesheet with class-only italics) of a requested nominal page count.
-private struct SyntheticBook {
-    static let charactersPerPage = 1_800
-    static let pagesPerChapter = 20
-    static let paragraphCharacters = 300
-    static let imageVariants = 8
-
-    // 1x1 RGB PNG.
-    private static let png = Data(
-        base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC")!
-
-    private static let words = [
-        "the", "lantern", "burned", "low", "while", "she", "counted", "every", "step", "back", "toward", "home",
-        "and", "nobody", "answered", "when", "he", "asked", "about", "the", "river", "&amp;", "its", "long", "memory",
-    ]
-
-    let pages: Int
-
-    var chapterCount: Int { (pages + Self.pagesPerChapter - 1) / Self.pagesPerChapter }
-
-    func write(to root: URL) throws {
-        let fileManager = FileManager.default
-        let oebps = root.appendingPathComponent("OEBPS", isDirectory: true)
-        let text = oebps.appendingPathComponent("Text", isDirectory: true)
-        let images = text.appendingPathComponent("Images", isDirectory: true)
-        let styles = oebps.appendingPathComponent("Styles", isDirectory: true)
-        let metaInf = root.appendingPathComponent("META-INF", isDirectory: true)
-        for directory in [images, styles, metaInf] {
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        }
-        try Data(
-            """
-            <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
-              <rootfiles><rootfile full-path="OEBPS/package.opf" media-type="application/oebps-package+xml"/></rootfiles>
-            </container>
-            """.utf8
-        ).write(to: metaInf.appendingPathComponent("container.xml"))
-        try Data(".i { font-style: italic; } .fig { text-align: center; } .verse { text-align: center; }".utf8)
-            .write(to: styles.appendingPathComponent("book.css"))
-        for variant in 0..<Self.imageVariants {
-            try Self.png.write(to: images.appendingPathComponent("fig\(variant).png"))
-        }
-        for chapter in 0..<chapterCount {
-            try Data(chapterXHTML(index: chapter).utf8).write(to: text.appendingPathComponent("chapter\(chapter).xhtml"))
-        }
-        try Data(packageOPF().utf8).write(to: oebps.appendingPathComponent("package.opf"))
-    }
-
-    private func packageOPF() -> String {
-        let chapters = (0..<chapterCount)
-            .map { "<item id=\"c\($0)\" href=\"Text/chapter\($0).xhtml\" media-type=\"application/xhtml+xml\"/>" }
-            .joined(separator: "\n    ")
-        let spine = (0..<chapterCount).map { "<itemref idref=\"c\($0)\"/>" }.joined(separator: "\n    ")
-        return """
-            <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
-              <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-                <dc:title>Synthetic \(pages) pages</dc:title><dc:creator>Baseline</dc:creator><dc:language>en</dc:language>
-              </metadata>
-              <manifest>
-                \(chapters)
-                <item id="css" href="Styles/book.css" media-type="text/css"/>
-              </manifest>
-              <spine>
-                \(spine)
-              </spine>
-            </package>
-            """
-    }
-
-    private func chapterXHTML(index: Int) -> String {
-        let pagesHere = min(Self.pagesPerChapter, pages - index * Self.pagesPerChapter)
-        let paragraphCount = max(1, pagesHere * Self.charactersPerPage / Self.paragraphCharacters)
-        let body = (0..<paragraphCount).map { paragraph(chapter: index, number: $0) }.joined(separator: "\n")
-        return """
-            <?xml version="1.0" encoding="utf-8"?>
-            <html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>Chapter \(index)</title>
-            <link rel="stylesheet" type="text/css" href="../Styles/book.css"/></head>
-            <body><h2>Chapter \(index + 1)</h2>
-            <p class="fig"><img src="Images/fig\(index % Self.imageVariants).png" alt=""/></p>
-            \(body)
-            </body></html>
-            """
-    }
-
-    private func paragraph(chapter: Int, number: Int) -> String {
-        var text = ""
-        var cursor = chapter * 7 + number * 13
-        while text.count < Self.paragraphCharacters {
-            text += (text.isEmpty ? "" : " ") + Self.words[cursor % Self.words.count]
-            cursor += 1
-        }
-        if number % 5 == 0 { return "<p><span class=\"i\">\(text)</span></p>" }
-        if number % 11 == 0 { return "<p class=\"verse\">\(text)</p>" }
-        return "<p>\(text)</p>"
     }
 }
 
