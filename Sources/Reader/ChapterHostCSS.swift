@@ -73,4 +73,45 @@ enum ChapterHostCSS {
         }
         return css
     }
+
+    /// Paged presentation (roadmap M4, contract C4/C8): the column CSS of `EPUBParser.paginatedColumnCSS`, appended to
+    /// the user block so it follows the linked stylesheet in source order and wins its equal-importance rules (V7).
+    /// The host stylesheet pads `body` for scroll mode; columns forbid body padding, so it is zeroed here. The root is
+    /// hidden until the bootstrap has restored the column (no `!important`, so the inline reveal wins).
+    static func pagedBlock(columnCSS: String) -> String {
+        columnCSS + """
+
+            body { padding: 0 !important; }
+            html { visibility: hidden; }
+            """
+    }
+
+    /// Client-world script for a paged chapter: the shared pager (`PaginationJS`, unchanged), `qlSetup`, the
+    /// restore statement and the reveal. Numbers only reach it (`RestorePosition.bootstrapJS` writes integers and
+    /// clamped doubles), nothing from a book (contract C6).
+    ///
+    /// The script is injected at document end, which can be before the linked stylesheets have applied. Setup,
+    /// restore and reveal therefore run once the page has finished loading (at once if it already has): a column
+    /// count taken earlier is too small, and the restore would land short of the intended column.
+    static func pagerBootstrap(cols: ColsPerScreen, restore: RestorePosition) -> String {
+        PaginationJS.script + "\n(function () {\nfunction start() {\nwindow.qlSetup(\(cols.rawValue));\n" + restore.bootstrapJS
+            + "\ndocument.documentElement.style.visibility = 'visible';\n}\n"
+            + "if (document.readyState === 'complete') { start(); } else { window.addEventListener('load', start, { once: true }); }\n})();\n"
+    }
+}
+
+/// Everything `EPUBParser.paginatedColumnCSS` needs, as the reader computes it from the web view and settings.
+struct ChapterHostPagedGeometry: Equatable {
+    var viewportWidth: CGFloat
+    var viewportHeight: CGFloat
+    var colsPerScreen: ColsPerScreen
+    var paddingH: CGFloat
+    var paddingV: CGFloat
+    var maxWidth: CGFloat
+
+    var columnCSS: String {
+        EPUBParser.paginatedColumnCSS(
+            viewportWidth: viewportWidth, viewportHeight: viewportHeight, colsPerScreen: colsPerScreen,
+            marginH: paddingH, marginV: paddingV, maxWidth: maxWidth)
+    }
 }

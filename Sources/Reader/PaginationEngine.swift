@@ -131,12 +131,33 @@ final class PaginationEngine: NSObject {
     // MARK: State
 
     private weak var webView: WKWebView?
+    /// nil: the page world through `evaluateJavaScript`, as for the merged document. Non-nil (flag mode,
+    /// roadmap M4): the pager script lives in that content world, so calls go through `callAsyncJavaScript`.
+    let contentWorld: WKContentWorld?
     private var colsPerScreen: Int = 1
     private(set) var isReady = false
 
-    init(webView: WKWebView) {
+    init(webView: WKWebView, contentWorld: WKContentWorld? = nil) {
         self.webView = webView
+        self.contentWorld = contentWorld
         super.init()
+    }
+
+    /// Every JS call of this engine goes through here. Without a content world it is exactly
+    /// `evaluateJavaScript`; with one, the statement is wrapped as `return <js>` for `callAsyncJavaScript`.
+    private func run(_ js: String, completion: ((Any?, Error?) -> Void)? = nil) {
+        guard let webView else { return }
+        guard let contentWorld else {
+            if let completion { webView.evaluateJavaScript(js, completionHandler: completion) }
+            else { webView.evaluateJavaScript(js, completionHandler: nil) }
+            return
+        }
+        webView.callAsyncJavaScript("return " + js, arguments: [:], in: nil, in: contentWorld) { result in
+            switch result {
+            case .success(let value): completion?(value, nil)
+            case .failure(let error): completion?(nil, error)
+            }
+        }
     }
 
     func setColsPerScreen(_ cols: ColsPerScreen) {
@@ -151,10 +172,10 @@ final class PaginationEngine: NSObject {
     /// itself — by the time didFinish fires and this runs, restore has
     /// already happened.
     func applyLayout(restorePosition: RestorePosition) {
-        guard let webViewRef = webView else { return }
+        guard webView != nil else { return }
         isReady = false
 
-        webViewRef.evaluateJavaScript("window.qlPaginationMetrics();") { [weak self] result, error in
+        run("window.qlPaginationMetrics();") { [weak self] result, error in
             guard let self else { return }
             self.isReady = true
 
@@ -179,8 +200,8 @@ final class PaginationEngine: NSObject {
     /// reload, so the reload can request .fraction(f) as its restore position.
     /// Does NOT reapply layout itself.
     func currentFraction(completion: @escaping (Double) -> Void) {
-        guard isReady, let webViewRef = webView else { completion(0); return }
-        webViewRef.evaluateJavaScript("window.qlProgressFraction();") { result, _ in
+        guard isReady else { completion(0); return }
+        run("window.qlProgressFraction();") { result, _ in
             completion((result as? Double) ?? 0)
         }
     }
@@ -192,29 +213,29 @@ final class PaginationEngine: NSObject {
     func handleKeyDown(_ key: NavigationKey) {
         guard isReady else { return }
         switch key {
-        case .forward: webView?.evaluateJavaScript("window.qlNextPage();", completionHandler: nil)
-        case .backward: webView?.evaluateJavaScript("window.qlPrevPage();", completionHandler: nil)
+        case .forward: run("window.qlNextPage();")
+        case .backward: run("window.qlPrevPage();")
         }
     }
 
     func scrollToColumn(_ column: Int) {
         guard isReady else { return }
-        webView?.evaluateJavaScript("window.qlScrollToColumn(\(column));", completionHandler: nil)
+        run("window.qlScrollToColumn(\(column));")
     }
 
     func scrollToFraction(_ fraction: Double) {
         guard isReady else { return }
         let clamped = max(0, min(1, fraction))
-        webView?.evaluateJavaScript("window.qlScrollToFraction(\(clamped));", completionHandler: nil)
+        run("window.qlScrollToFraction(\(clamped));")
     }
 
     func scrollToOffset(_ charOffset: Int) {
         guard isReady else { return }
-        webView?.evaluateJavaScript("window.qlNavigateToOffset(\(charOffset));", completionHandler: nil)
+        run("window.qlNavigateToOffset(\(charOffset));")
     }
 
     func queryProgress(completion: @escaping (_ fraction: Double, _ column: Int, _ total: Int) -> Void) {
-        guard isReady, let webViewRef = webView else { completion(0, 0, 1); return }
+        guard isReady else { completion(0, 0, 1); return }
         let progressJS = """
             JSON.stringify({
                 f: window.qlProgressFraction(),
@@ -222,7 +243,7 @@ final class PaginationEngine: NSObject {
                 t: window.qlColumnCount()
             });
             """
-        webViewRef.evaluateJavaScript(progressJS) { result, _ in
+        run(progressJS) { result, _ in
             guard let str = result as? String,
                 let data = str.data(using: .utf8),
                 let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Double]

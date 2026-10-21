@@ -596,7 +596,7 @@ final class EPUBParser: NSObject {
     /// loadSpineItem) and passed through buildPageHTML — see the appearance-
     /// settings merge pass.
     // swiftlint:disable:next function_body_length function_parameter_count
-    private static func paginatedColumnCSS(
+    static func paginatedColumnCSS(
         viewportWidth: CGFloat, viewportHeight: CGFloat, colsPerScreen: ColsPerScreen,
         marginH: CGFloat, marginV: CGFloat, maxWidth: CGFloat
     ) -> String {

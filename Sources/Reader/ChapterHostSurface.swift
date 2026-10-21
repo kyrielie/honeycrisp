@@ -17,7 +17,8 @@ enum ChapterHostFlag {
 /// reader's web view instead of the merged document. Author JavaScript is off, resources come from
 /// `EPUBResourceSchemeHandler`, and `ChapterHostCSS` supplies the user layer. Flag mode is a read-only
 /// viewer: position, progress, search, speech, bookmarks, TOC jumps, AO3 and indent transforms, hide
-/// images, spacer collapsing and paginated mode are not ported (M4, M5, M6).
+/// images, spacer collapsing and paginated mode are not ported (M4, M5, M6). Scroll mode windows over the
+/// whole spine (M4 pass 2): see `ChapterHostShell` and `ChapterHostScript`.
 @MainActor
 final class ChapterHostSurface {
     enum SpikeError: LocalizedError {
@@ -41,6 +42,62 @@ final class ChapterHostSurface {
         schemeHandler = EPUBResourceSchemeHandler(rootFolder: FileManager.default.temporaryDirectory)
     }
 
+    /// Client-world message handler the shell script posts the reading position to (see `ChapterHostScript`).
+    static let positionHandlerName = "hostPosition"
+
+    /// Called on the main thread when scrolling settles: the chapter and offset on the reference line (C2) and
+    /// the page within that chapter (a window height is a page). Never persisted by the surface.
+    var onPositionChange: ((Position, _ chapterPage: Int, _ chapterPages: Int) -> Void)?
+
+    /// How the web view currently presents chapters: the scrolling shell with iframes, or one chapter as the
+    /// top-level document laid out in columns (roadmap M4, pass 6).
+    enum Presentation: Equatable {
+        case scroll
+        case paged(ChapterHostPagedGeometry)
+    }
+
+    private(set) var presentation: Presentation = .scroll
+
+    /// Paged chapter edge: the pager asked for the next (`true`) or previous (`false`) chapter.
+    var onPageAction: ((_ forward: Bool) -> Void)?
+
+    /// Paged chapter: column and column count after a page turn or restore (either may be missing).
+    var onPagerPosition: ((_ column: Int?, _ total: Int?) -> Void)?
+
+    fileprivate func receivePageAction(_ body: Any) {
+        guard let json = body as? String,
+            let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: String],
+            let action = object["action"]
+        else { return }
+        if action == "nextSpineItem" { onPageAction?(true) } else if action == "prevSpineItem" { onPageAction?(false) }
+    }
+
+    fileprivate func receivePagerPosition(_ body: Any) {
+        guard let json = body as? String,
+            let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+        else { onPagerPosition?(nil, nil); return }
+        onPagerPosition?((object["column"] as? NSNumber)?.intValue, (object["totalColumns"] as? NSNumber)?.intValue)
+    }
+
+    /// Where `loadWindow` lands. `start` is the top of the chapter, `position` a text offset on the reference
+    /// line, `fraction` a share of the chapter's height.
+    enum Restore: Equatable {
+        case start
+        case position(Position)
+        case fraction(resource: Int, fraction: Double)
+    }
+
+    /// Decodes one `hostPosition` message (a JSON string of four integers); anything else is ignored.
+    fileprivate func receivePosition(_ body: Any) {
+        guard let json = body as? String,
+            let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Int],
+            let resource = object["resource"], let offset = object["offset"],
+            let page = object["chapterPage"], let pages = object["chapterPages"],
+            resource >= 0, offset >= 0, pages >= 1, (1...pages).contains(page)
+        else { return }
+        onPositionChange?(Position(resource: resource, offset: offset), page, pages)
+    }
+
     /// App resource key of the shell document (see `ChapterHostShell`).
     static let shellResourcePath = "__app/shell.html"
 
@@ -49,10 +106,27 @@ final class ChapterHostSurface {
     func install(into configuration: WKWebViewConfiguration) {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.setURLSchemeHandler(schemeHandler, forURLScheme: EPUBResourceSchemeHandler.scheme)
-        configuration.userContentController.addUserScript(
-            WKUserScript(
-                source: ChapterHostScript.source, injectionTime: .atDocumentEnd, forMainFrameOnly: true,
-                in: .defaultClient))
+        Self.installScripts(into: configuration.userContentController, pager: nil)
+        let controller = configuration.userContentController
+        controller.add(
+            ChapterHostPositionHandler(surface: self), contentWorld: .defaultClient, name: Self.positionHandlerName)
+        // The paged chapter's pager (PaginationJS) posts through these two names, as in the merged document, but
+        // from the client world (assumption V1).
+        controller.add(ChapterHostPagerHandler(surface: self, kind: .pageAction), contentWorld: .defaultClient, name: "pageAction")
+        controller.add(
+            ChapterHostPagerHandler(surface: self, kind: .positionUpdate), contentWorld: .defaultClient, name: "positionUpdate")
+    }
+
+    /// `WKUserContentController` cannot remove one script, so the surface owns the whole list: the host script
+    /// and, for a paged chapter, its pager bootstrap. Re-applied before every load (assumption V2).
+    private static func installScripts(into controller: WKUserContentController, pager: String?) {
+        controller.removeAllUserScripts()
+        controller.addUserScript(
+            WKUserScript(source: ChapterHostScript.source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        if let pager {
+            controller.addUserScript(
+                WKUserScript(source: pager, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        }
     }
 
     /// Points the handler at the book and installs the stylesheet and the markup transform for the
@@ -70,9 +144,20 @@ final class ChapterHostSurface {
     /// Chapters served from now on carry `cosmetics` in their inline user block. Chapters already
     /// mounted are not touched; `applyCosmetics` patches those. Main thread only, like `attach`.
     func updateServedCosmetics(_ cosmetics: ReaderCosmeticSettings) {
+        servedCosmetics = cosmetics
         let language = servedLanguage
-        let userCSS = ChapterHostCSS.userBlock(cosmetics)
+        let userCSS = userCSS(for: cosmetics)
         schemeHandler.transform = { ServedChapter.prepare($0, language: language, userCSS: userCSS) }
+    }
+
+    private var servedCosmetics: ReaderCosmeticSettings?
+
+    /// The user block, plus the column CSS while a chapter is presented paged (C4/C8: geometry is part of the
+    /// user layer, so a cosmetic patch must not drop it).
+    private func userCSS(for cosmetics: ReaderCosmeticSettings) -> String {
+        var css = ChapterHostCSS.userBlock(cosmetics)
+        if case .paged(let geometry) = presentation { css += "\n" + ChapterHostCSS.pagedBlock(columnCSS: geometry.columnCSS) }
+        return css
     }
 
     /// Live cosmetic change (C8): no reload, no navigation. Updates what the handler serves for chapters
@@ -82,10 +167,45 @@ final class ChapterHostSurface {
     @discardableResult
     func applyCosmetics(_ cosmetics: ReaderCosmeticSettings, to webView: WKWebView) async throws -> Int {
         updateServedCosmetics(cosmetics)
+        if case .paged(let geometry) = presentation {
+            // One document, no iframes: replace its user block, recount the columns and re-seek by fraction
+            // (an exact offset would need an "offset at the current column" function; roadmap N3).
+            let patched = try await webView.callAsyncJavaScript(
+                """
+                var style = document.getElementById('honeycrisp-user');
+                if (!style || !window.qlSetup) { return 0; }
+                var before = window.qlProgressFraction();
+                style.textContent = css;
+                window.qlSetup(cols);
+                window.qlScrollToFraction(before);
+                return 1;
+                """,
+                arguments: ["css": userCSS(for: cosmetics), "cols": geometry.colsPerScreen.rawValue], in: nil,
+                contentWorld: .defaultClient)
+            return (patched as? NSNumber)?.intValue ?? 0
+        }
         let result = try await webView.callAsyncJavaScript(
             "return window.honeycrispHost ? window.honeycrispHost.applyUserCSS(css) : 0;",
             arguments: ["css": ChapterHostCSS.userBlock(cosmetics)], in: nil, contentWorld: .defaultClient)
         return (result as? NSNumber)?.intValue ?? 0
+    }
+
+    /// Loads one chapter as the top-level document, laid out in columns by the shared pager. The geometry is
+    /// stored, so cosmetic updates keep it. The pager script is added for this load only (V2): `restore` is
+    /// baked into it as numbers. The document stays hidden until the bootstrap has restored the column.
+    func loadPaged(
+        resource index: Int, in package: EPUBPackage, into webView: WKWebView, geometry: ChapterHostPagedGeometry,
+        restore: RestorePosition
+    ) throws {
+        guard package.spineURLs.indices.contains(index),
+            let url = Self.chapterURL(for: package.spineURLs[index], root: package.rootFolder)
+        else { throw SpikeError.chapterUnavailable(index) }
+        presentation = .paged(geometry)
+        if let servedCosmetics { updateServedCosmetics(servedCosmetics) }
+        Self.installScripts(
+            into: webView.configuration.userContentController,
+            pager: ChapterHostCSS.pagerBootstrap(cols: geometry.colsPerScreen, restore: restore))
+        webView.load(URLRequest(url: url))
     }
 
     func load(resource index: Int, in package: EPUBPackage, into webView: WKWebView) throws {
@@ -95,23 +215,81 @@ final class ChapterHostSurface {
         webView.load(URLRequest(url: url))
     }
 
-    /// Mounts the chapter at `index` and its neighbours as isolated iframes in the shell document.
-    /// No eviction or scroll bookkeeping yet (M4): the window is static until the next call.
-    func loadWindow(around index: Int, in package: EPUBPackage, into webView: WKWebView) throws {
-        var frames: [ChapterHostShell.Frame] = []
-        for resource in Self.windowIndices(around: index, count: package.spineURLs.count) {
-            guard let path = Self.chapterPath(for: package.spineURLs[resource], root: package.rootFolder) else {
-                throw SpikeError.chapterUnavailable(resource)
+    /// Placeholder for the first estimate of a chapter's height, in px per byte of XHTML. The client script
+    /// replaces it with a measured ratio (pass 3); tune from the first measured fixture (decision N2).
+    static var initialPixelsPerByte: Double { ChapterHostShell.initialPixelsPerByte }
+
+    /// Height in px assumed for a chapter that has not been measured: never less than the viewport, and
+    /// growing with the chapter's byte size. Pure.
+    nonisolated static func estimatedHeight(
+        byteCount: Int, viewportHeight: Double, pixelsPerByte: Double = ChapterHostShell.initialPixelsPerByte
+    ) -> Int {
+        let estimate = Double(max(0, byteCount)) * max(0, pixelsPerByte)
+        return Int(max(max(0, viewportHeight), estimate).rounded())
+    }
+
+    /// Builds the shell with one slot per spine item and mounts the chapter at `index` and its neighbours
+    /// (`windowIndices`). The client script mounts and evicts further chapters as the shell scrolls. A chapter
+    /// outside the initial window whose path cannot be resolved is left out of the shell; one inside it throws.
+    func loadWindow(
+        around index: Int, in package: EPUBPackage, into webView: WKWebView, restoring: Restore? = nil
+    ) throws {
+        let target: Int
+        let shellRestore: ChapterHostShell.Restore?
+        switch restoring {
+        case nil:
+            target = index
+            shellRestore = nil
+        case .start?:
+            target = index
+            shellRestore = .init(resource: index, offset: nil, fraction: nil)
+        case .position(let position)?:
+            target = position.resource
+            shellRestore = .init(resource: position.resource, offset: position.offset, fraction: nil)
+        case .fraction(let resource, let fraction)?:
+            target = resource
+            shellRestore = .init(resource: resource, offset: nil, fraction: fraction)
+        }
+        presentation = .scroll
+        if let servedCosmetics { updateServedCosmetics(servedCosmetics) }
+        Self.installScripts(into: webView.configuration.userContentController, pager: nil)
+        let initial = Set(Self.windowIndices(around: target, count: package.spineURLs.count))
+        let viewportHeight = Double(webView.bounds.height)
+        var slots: [ChapterHostShell.Slot] = []
+        for (resource, url) in package.spineURLs.enumerated() {
+            guard let path = Self.chapterPath(for: url, root: package.rootFolder) else {
+                if initial.contains(resource) { throw SpikeError.chapterUnavailable(resource) }
+                continue
             }
-            frames.append(ChapterHostShell.Frame(resource: resource, path: path))
+            let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            slots.append(
+                ChapterHostShell.Slot(
+                    resource: resource, path: path, byteCount: bytes,
+                    estimatedHeight: Self.estimatedHeight(byteCount: bytes, viewportHeight: viewportHeight),
+                    mounted: initial.contains(resource)))
         }
         var components = URLComponents()
         components.scheme = EPUBResourceSchemeHandler.scheme
         components.host = "book"
         components.path = "/" + Self.shellResourcePath
-        guard !frames.isEmpty, let shellURL = components.url else { throw SpikeError.chapterUnavailable(index) }
-        schemeHandler.appResources[Self.shellResourcePath] = Data(ChapterHostShell.html(frames: frames).utf8)
+        guard !initial.isEmpty, let shellURL = components.url else { throw SpikeError.chapterUnavailable(index) }
+        schemeHandler.appResources[Self.shellResourcePath] = Data(ChapterHostShell.html(slots: slots, restore: shellRestore.map { clamped($0, count: package.spineURLs.count) }).utf8)
         webView.load(URLRequest(url: shellURL))
+        if shellRestore != nil {
+            // The shell stays hidden until the script has restored. If it never reports (a chapter failed to
+            // load), show it anyway after a while.
+            Task { @MainActor [weak webView] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                _ = try? await webView?.callAsyncJavaScript(
+                    "if (window.honeycrispHost) { window.honeycrispHost.reveal(); }", arguments: [:], in: nil,
+                    contentWorld: .defaultClient)
+            }
+        }
+    }
+
+    /// Keeps the restore target inside the book, so the attribute always names an existing slot.
+    private func clamped(_ restore: ChapterHostShell.Restore, count: Int) -> ChapterHostShell.Restore {
+        .init(resource: min(max(restore.resource, 0), max(0, count - 1)), offset: restore.offset, fraction: restore.fraction)
     }
 
     /// A reading position in the host: a chapter (spine index) and a UTF-16 offset in that chapter's body
@@ -188,5 +366,38 @@ final class ChapterHostSurface {
     nonisolated static func allowsNavigation(to url: URL?) -> Bool {
         guard let url else { return false }
         return url.scheme == EPUBResourceSchemeHandler.scheme || url.absoluteString == "about:blank"
+    }
+}
+
+/// Receives the shell script's `hostPosition` posts (client world) and forwards them to the surface.
+@MainActor
+final class ChapterHostPositionHandler: NSObject, WKScriptMessageHandler {
+    private weak var surface: ChapterHostSurface?
+
+    init(surface: ChapterHostSurface) { self.surface = surface }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        surface?.receivePosition(message.body)
+    }
+}
+
+/// Receives the pager's `pageAction` and `positionUpdate` posts (client world, paged chapters).
+@MainActor
+final class ChapterHostPagerHandler: NSObject, WKScriptMessageHandler {
+    enum Kind { case pageAction, positionUpdate }
+
+    private weak var surface: ChapterHostSurface?
+    private let kind: Kind
+
+    init(surface: ChapterHostSurface, kind: Kind) {
+        self.surface = surface
+        self.kind = kind
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        switch kind {
+        case .pageAction: surface?.receivePageAction(message.body)
+        case .positionUpdate: surface?.receivePagerPosition(message.body)
+        }
     }
 }

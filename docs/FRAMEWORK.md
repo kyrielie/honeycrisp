@@ -140,8 +140,9 @@ inside it. Properties the host must provide:
 - Bounded memory on very long books (target set by the spike in roadmap M3, measured on a synthetic
   2,000-page fixture).
 
-How the host is built (iframe per chapter is the current candidate) is decided by the M3 spike. The
-contract above is what the rest of the code depends on, so the construction can change.
+How the host is built was decided by the M3 spike and is confirmed: one iframe per chapter inside a shell document, served by
+the scheme handler. From M4 the shell holds one slot per spine item and mounts the iframe only near the viewport. The
+contract above is what the rest of the code depends on, so the construction can still change.
 
 ### C6. Trust boundary
 

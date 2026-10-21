@@ -50,6 +50,9 @@ final class ReaderViewController: NSViewController {
     private var paginationEngine: PaginationEngine?
     private var currentSpineIndex: Int = 0
     private var activeScrollSpineIndex: Int = 0
+    /// Flag mode only: where the next `renderHostedChapter` lands instead of the top of `activeScrollSpineIndex`.
+    /// In-session only, never persisted (ARCHITECTURE 4a).
+    private var pendingHostRestore: ChapterHostSurface.Restore?
     private var tocEntries: [TOCEntry] = []
     private var currentChapterTitle: String?
     private var pendingSearchTerm: String?
@@ -187,6 +190,9 @@ final class ReaderViewController: NSViewController {
         if ChapterHostFlag.isEnabled {
             let host = ChapterHostSurface()
             host.install(into: cfg)
+            host.onPositionChange = { [weak self] position, page, pages in
+                self?.didReceiveHostPosition(position, chapterPage: page, chapterPages: pages)
+            }
             chapterHost = host
         }
 
@@ -562,7 +568,9 @@ final class ReaderViewController: NSViewController {
         host.attach(package: pkg, cosmetics: cosmetics)
         let index = min(max(activeScrollSpineIndex, 0), max(0, pkg.spineURLs.count - 1))
         do {
-            try host.loadWindow(around: index, in: pkg, into: webView)
+            let restore = pendingHostRestore ?? .start
+            pendingHostRestore = nil
+            try host.loadWindow(around: index, in: pkg, into: webView, restoring: restore)
         } catch {
             showError(error)
         }
@@ -1262,8 +1270,14 @@ final class ReaderViewController: NSViewController {
         structuralSettingsDebounceTimer?.invalidate()
         structuralSettingsDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
             // Flag mode: the position query below falls back to offset 0 and would overwrite the saved position.
-            if let self, self.chapterHost != nil {
-                self.renderCurrentContent()
+            if let self, let host = self.chapterHost {
+                // Reopen where the reader is, in memory only: nothing is written to `HistoryManager`.
+                Task { @MainActor in
+                    if let position = try? await host.firstVisiblePosition(in: self.webView) {
+                        self.pendingHostRestore = .position(position)
+                    }
+                    self.renderCurrentContent()
+                }
                 return
             }
             guard let self, let url = self.currentEPUBURL else { self?.renderCurrentContent(); return }
@@ -1452,6 +1466,16 @@ final class ReaderViewController: NSViewController {
             updateCurrentChapter(for: pkg.spineURLs[activeScrollSpineIndex])
         }
         setPageCountText("\(page)/\(totalPages)")
+        refreshBookmarkButton()
+    }
+
+    /// Flag mode (M4): the host reports the chapter on the reference line and the page within it. The label is
+    /// per chapter, same format as paginated mode (roadmap R11). Persists nothing.
+    func didReceiveHostPosition(_ position: ChapterHostSurface.Position, chapterPage: Int, chapterPages: Int) {
+        guard currentMode == .scroll, let pkg = currentPackage, !pkg.spineURLs.isEmpty else { return }
+        activeScrollSpineIndex = min(max(0, position.resource), pkg.spineURLs.count - 1)
+        updateCurrentChapter(for: pkg.spineURLs[activeScrollSpineIndex])
+        setPageCountText("\(chapterPage)/\(chapterPages) \(activeScrollSpineIndex + 1)/\(pkg.spineURLs.count)")
         refreshBookmarkButton()
     }
 

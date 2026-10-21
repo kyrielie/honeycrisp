@@ -36,7 +36,8 @@ final class ChapterHostWindowHarness {
     }
 
     static func make(
-        in testCase: XCTestCase, chapters: Int = 5, around index: Int = 2,
+        in testCase: XCTestCase, chapters: Int = 5, around index: Int = 2, viewportHeight: CGFloat = 600,
+        restoring: ChapterHostSurface.Restore? = nil,
         cosmetics: ReaderCosmeticSettings = .chapterHostFixture, chapterXHTML: ((Int) -> String)? = nil
     ) async throws -> ChapterHostWindowHarness {
         let root = FileManager.default.temporaryDirectory
@@ -47,11 +48,39 @@ final class ChapterHostWindowHarness {
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = WKUserContentController()
         surface.install(into: configuration)
-        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: viewportHeight), configuration: configuration)
         let finished = testCase.expectation(description: "host window loads")
         let navigation = HarnessNavigationDelegate { finished.fulfill() }
         webView.navigationDelegate = navigation
-        try surface.loadWindow(around: index, in: package, into: webView)
+        try surface.loadWindow(around: index, in: package, into: webView, restoring: restoring)
+        await testCase.fulfillment(of: [finished], timeout: 30)
+        XCTAssertNil(navigation.error)
+        return ChapterHostWindowHarness(
+            root: root, package: package, surface: surface, webView: webView, navigation: navigation)
+    }
+
+    /// Same book and web view as `make`, but one chapter is loaded as a paged top-level document
+    /// (`ChapterHostSurface.loadPaged`) instead of the scroll window.
+    static func makePaged(
+        in testCase: XCTestCase, chapters: Int = 5, resource: Int = 2, geometry: ChapterHostPagedGeometry = .harnessFixture,
+        restore: RestorePosition = .start, cosmetics: ReaderCosmeticSettings = .chapterHostFixture,
+        chapterXHTML: ((Int) -> String)? = nil
+    ) async throws -> ChapterHostWindowHarness {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HoneycrispHostHarness-\(UUID().uuidString)", isDirectory: true)
+        let package = try writeBook(chapters: chapters, to: root, chapterXHTML: chapterXHTML)
+        let surface = ChapterHostSurface()
+        surface.attach(package: package, cosmetics: cosmetics)
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = WKUserContentController()
+        surface.install(into: configuration)
+        let frame = NSRect(x: 0, y: 0, width: geometry.viewportWidth, height: geometry.viewportHeight)
+        let webView = WKWebView(frame: frame, configuration: configuration)
+        let finished = testCase.expectation(description: "paged chapter loads")
+        let navigation = HarnessNavigationDelegate { finished.fulfill() }
+        webView.navigationDelegate = navigation
+        try surface.loadPaged(
+            resource: resource, in: package, into: webView, geometry: geometry, restore: restore)
         await testCase.fulfillment(of: [finished], timeout: 30)
         XCTAssertNil(navigation.error)
         return ChapterHostWindowHarness(
@@ -102,6 +131,14 @@ final class ChapterHostWindowHarness {
             urls.append(url)
         }
         return EPUBPackage(rootFolder: root, spineURLs: urls, title: "t", author: "a", coverURL: nil, language: "en")
+    }
+}
+
+extension ChapterHostPagedGeometry {
+    /// 800 x 600, one column, 24 px side and top margins, 700 px text width: the reader's defaults.
+    static var harnessFixture: ChapterHostPagedGeometry {
+        ChapterHostPagedGeometry(
+            viewportWidth: 800, viewportHeight: 600, colsPerScreen: .one, paddingH: 24, paddingV: 24, maxWidth: 700)
     }
 }
 

@@ -46,7 +46,7 @@ Resolved here as recommendations; reverse any by editing this table and the affe
 | R8 | PDF reflow: no. | Different product; PDFKit search and selection cover the need. Closes old D6. |
 | R9 | MOBI/AZW3 via libmobi-swift converting to a temporary EPUB, only if it builds for macOS. Otherwise unsupported with a documented external conversion. No hand-written MOBI reader. Licensing is not a gate. | Only viable reading route found; a 100-line reader lacks images, navigation and KF8. |
 | R10 | Content isolation (author JS off, app scripts in their own world) is part of M3, not deferred. Closes old D2 and D14. | The scheme handler and chapter host make it cheap now; before them it was expensive. |
-| R11 | Continuous scroll position is `(resource, offset)`; progress is derived (C1). Paginated mode paginates per chapter; the displayed page count becomes per chapter or an estimate. This is a visible behavior change, to be confirmed in M4. | Global page numbers depend on laying out the whole book. |
+| R11 | Continuous scroll position is `(resource, offset)`; progress is derived (C1). Paginated mode paginates per chapter; the displayed page count becomes per chapter or an estimate. This is a visible behavior change, confirmed for flag-mode scroll in M4 (label per chapter, same format as paginated mode). | Global page numbers depend on laying out the whole book. |
 | R12 | History retains more entries than it displays (start at 300, measure `UserDefaults` size first); path normalization like bookmarks. Closes old D18 and D19. | The cap of 100 silently drops saved positions. |
 | R13 | Navigation history (Back and Forward): yes, as a pure type plus Go-menu items and rebindable shortcuts; toolbar button optional. Closes old D10. | Cheap, testable, high value for footnotes. |
 | R14 | Word-level speech highlighting: yes, off by default, after the chapter host exists. Closes old D11. | Needs offset-to-range mapping in the mounted window. |
@@ -180,13 +180,14 @@ existing users keep their themes after migration.
 
 ### M3. Spike: chapter host, scheme handler, user layer (L, behind a flag)
 
-Status: in progress (a contained EPUB resource scheme handler and MIME mapping are implemented and
+Status: complete. Outcome: adopt the chapter host (iframe per chapter, scheme handler, user layer); the merged document is
+replaced in M5. Implemented in M3: (a contained EPUB resource scheme handler and MIME mapping are implemented and
 unit covered; the handler also serves `/__app/` app resources and applies a markup transform, and
 `ServedChapter.prepare` inserts the stylesheet link and root `lang`, pure and unwired; `ChapterHostCSS` (static
 stylesheet plus settings-dependent user block, pure and unwired) and `ChapterHostCascadeTests` prove the
 cascade in WebKit; `ChapterHostSurface` shows a three-chapter window in the reader behind `HONEYCRISP_CHAPTER_HOST=1` with author
 JavaScript off and a client-world sizing script (read-only; see ARCHITECTURE 4a; assumption A1 is tested by
-`ChapterHostShellTests`); `ReaderBaselineTests` also measures the host (`testHostOpen...`, numbers in `build/diagnostics/host-<pages>-pages.txt`, recorded below); the live cosmetic patch is `ChapterHostSurface.applyCosmetics`, covered by `ChapterHostCosmeticPatchTests`; per-chapter offsets and position scroll/read are `honeycrispHost.offsetOfFirstVisibleText` and `scrollTo`, covered by `ChapterHostOffsetParityTests`; frames are re-fitted right after load and when the shell finishes loading, because the first measurement of later frames could be short and was never corrected (`ChapterHostShellTests`); the adopt or fall-back decision remains).
+`ChapterHostShellTests`); `ReaderBaselineTests` also measures the host (`testHostOpen...`, numbers in `build/diagnostics/host-<pages>-pages.txt`, recorded below); the live cosmetic patch is `ChapterHostSurface.applyCosmetics`, covered by `ChapterHostCosmeticPatchTests`; per-chapter offsets and position scroll/read are `honeycrispHost.offsetOfFirstVisibleText` and `scrollTo`, covered by `ChapterHostOffsetParityTests`; frames are re-fitted right after load and when the shell finishes loading, because the first measurement of later frames could be short and was never corrected (`ChapterHostShellTests`); see the outcome above).
 
 Baseline of the current merged-document reader: `ReaderBaselineTests` generates synthetic books of 250 and
 2,000 nominal pages (a page is 1,800 characters; 20 pages per chapter) and times the path
@@ -249,9 +250,17 @@ Exit criteria, all measured:
 Outcome recorded as a decision: adopt, or fall back to a sanitized merged document with
 per-chapter style scoping.
 
+Decision: adopt. The fall-back is not built.
+
 ### M4. Windowed continuous scroll and per-chapter pagination (L)
 
-Status: not started.
+Status: in progress (plan written; no code yet). Decisions: flag mode does not read or write saved history in M4 (saved
+scroll positions are whole-document offsets with spine index 0, so mapping them to `(resource, offset)` is a persisted-format
+decision made in M5); the scroll-mode page label in flag mode is per chapter, same format as paginated mode (R11 confirmed).
+
+Measurement (pass 5): `ReaderBaselineTests.testHostScrollAcrossTwentyBoundariesTwoThousandPageBook` scrolls the 2,000-page fixture
+through the real client script across 20 chapter boundaries (3 runs, median of each run's maximum WebContent footprint, budget 30 MB).
+Numbers are recorded here by the owner after a local run; none are recorded yet.
 
 Mount and evict neighbors near the edges; prepend without visual jump; measure memory. Paginated
 mode paginates inside each chapter with a pager hand-off at chapter edges (R11). Update
@@ -264,7 +273,8 @@ restores exact positions; memory within the M3 budget.
 
 Status: not started.
 
-Port onto the host, one per PR: position save and restore, search and highlights, auto-scroll,
+Port onto the host, one per PR: position save and restore (including the mapping from saved whole-document scroll offsets to
+`(resource, offset)`, decided here), search and highlights, auto-scroll,
 speech, bookmarks, TOC jumps, in-book links including cross-chapter links. Add navigation history
 (R13). Then delete `buildScrollHTML` merging, `rewriteResourceURLs` and the regex URL code. Split
 `EPUBParser.swift` by layer at this point (FRAMEWORK section 2).
