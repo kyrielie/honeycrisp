@@ -1036,8 +1036,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
     @objc private func exportThemeClicked(_ sender: Any?) {
         guard let window = view.window else { return }
         let data: Data
-        do { data = try ThemeExport.encode(SettingsManager.shared.currentTheme) }
-        catch { showThemeTransferError(error); return }
+        do { data = try ThemeExport.encode(SettingsManager.shared.currentTheme) } catch { showThemeTransferError(error); return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.canCreateDirectories = true
@@ -1049,8 +1048,7 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             guard response == .OK, let url = panel.url else { return }
             let hasAccess = url.startAccessingSecurityScopedResource()
             defer { if hasAccess { url.stopAccessingSecurityScopedResource() } }
-            do { try data.write(to: url, options: .atomic) }
-            catch { self?.showThemeTransferError(error) }
+            do { try data.write(to: url, options: .atomic) } catch { self?.showThemeTransferError(error) }
         }
     }
 

@@ -64,7 +64,7 @@ final class ChapterHostSurface {
     /// Paged chapter: column and column count after a page turn or restore (either may be missing).
     var onPagerPosition: ((_ column: Int?, _ total: Int?) -> Void)?
 
-    fileprivate func receivePageAction(_ body: Any) {
+    func receivePageAction(_ body: Any) {
         guard let json = body as? String,
             let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: String],
             let action = object["action"]
@@ -72,7 +72,7 @@ final class ChapterHostSurface {
         if action == "nextSpineItem" { onPageAction?(true) } else if action == "prevSpineItem" { onPageAction?(false) }
     }
 
-    fileprivate func receivePagerPosition(_ body: Any) {
+    func receivePagerPosition(_ body: Any) {
         guard let json = body as? String,
             let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
         else { onPagerPosition?(nil, nil); return }
@@ -88,7 +88,7 @@ final class ChapterHostSurface {
     }
 
     /// Decodes one `hostPosition` message (a JSON string of four integers); anything else is ignored.
-    fileprivate func receivePosition(_ body: Any) {
+    func receivePosition(_ body: Any) {
         guard let json = body as? String,
             let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Int],
             let resource = object["resource"], let offset = object["offset"],
@@ -273,7 +273,9 @@ final class ChapterHostSurface {
         components.host = "book"
         components.path = "/" + Self.shellResourcePath
         guard !initial.isEmpty, let shellURL = components.url else { throw SpikeError.chapterUnavailable(index) }
-        schemeHandler.appResources[Self.shellResourcePath] = Data(ChapterHostShell.html(slots: slots, restore: shellRestore.map { clamped($0, count: package.spineURLs.count) }).utf8)
+        let shellHTML = ChapterHostShell.html(
+            slots: slots, restore: shellRestore.map { clamped($0, count: package.spineURLs.count) })
+        schemeHandler.appResources[Self.shellResourcePath] = Data(shellHTML.utf8)
         webView.load(URLRequest(url: shellURL))
         if shellRestore != nil {
             // The shell stays hidden until the script has restored. If it never reports (a chapter failed to
@@ -302,8 +304,8 @@ final class ChapterHostSurface {
     /// The text on the reference line (a third of the way down the window), or nil when the line has no
     /// text caret or no chapter is mounted under it. `x` defaults to the window's center, as in the merged
     /// reader; pass a value to read at a specific column.
-    func firstVisiblePosition(in webView: WKWebView, x: Double? = nil) async throws -> Position? {
-        let argument: Any = x.map { $0 as Any } ?? NSNull()
+    func firstVisiblePosition(in webView: WKWebView, x column: Double? = nil) async throws -> Position? {
+        let argument: Any = column.map { $0 as Any } ?? NSNull()
         let result = try await webView.callAsyncJavaScript(
             "return window.honeycrispHost ? JSON.stringify(window.honeycrispHost.offsetOfFirstVisibleText(x)) : 'null';",
             arguments: ["x": argument], in: nil, contentWorld: .defaultClient)
@@ -366,38 +368,5 @@ final class ChapterHostSurface {
     nonisolated static func allowsNavigation(to url: URL?) -> Bool {
         guard let url else { return false }
         return url.scheme == EPUBResourceSchemeHandler.scheme || url.absoluteString == "about:blank"
-    }
-}
-
-/// Receives the shell script's `hostPosition` posts (client world) and forwards them to the surface.
-@MainActor
-final class ChapterHostPositionHandler: NSObject, WKScriptMessageHandler {
-    private weak var surface: ChapterHostSurface?
-
-    init(surface: ChapterHostSurface) { self.surface = surface }
-
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        surface?.receivePosition(message.body)
-    }
-}
-
-/// Receives the pager's `pageAction` and `positionUpdate` posts (client world, paged chapters).
-@MainActor
-final class ChapterHostPagerHandler: NSObject, WKScriptMessageHandler {
-    enum Kind { case pageAction, positionUpdate }
-
-    private weak var surface: ChapterHostSurface?
-    private let kind: Kind
-
-    init(surface: ChapterHostSurface, kind: Kind) {
-        self.surface = surface
-        self.kind = kind
-    }
-
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        switch kind {
-        case .pageAction: surface?.receivePageAction(message.body)
-        case .positionUpdate: surface?.receivePagerPosition(message.body)
-        }
     }
 }

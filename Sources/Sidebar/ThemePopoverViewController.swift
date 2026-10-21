@@ -64,6 +64,14 @@ final class ThemePopoverViewController: NSViewController {
             rows.append(row)
         }
 
+        addModeBlock(to: container, below: previousAnchor)
+
+        self.view = container
+        refreshCheckmarks()
+    }
+
+    /// The separator and the appearance segmented control under the theme rows, pinned to the bottom of `container`.
+    private func addModeBlock(to container: NSView, below previousAnchor: NSLayoutYAxisAnchor) {
         let modeSeparator = NSBox()
         modeSeparator.boxType = .separator
         modeSeparator.translatesAutoresizingMaskIntoConstraints = false
@@ -90,9 +98,6 @@ final class ThemePopoverViewController: NSViewController {
             modeControl.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
             container.bottomAnchor.constraint(equalTo: modeControl.bottomAnchor, constant: 10),
         ])
-
-        self.view = container
-        refreshCheckmarks()
     }
 
     override func viewWillAppear() {

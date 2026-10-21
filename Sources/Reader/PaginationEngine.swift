@@ -148,8 +148,7 @@ final class PaginationEngine: NSObject {
     private func run(_ js: String, completion: ((Any?, Error?) -> Void)? = nil) {
         guard let webView else { return }
         guard let contentWorld else {
-            if let completion { webView.evaluateJavaScript(js, completionHandler: completion) }
-            else { webView.evaluateJavaScript(js, completionHandler: nil) }
+            webView.evaluateJavaScript(js, completionHandler: completion)
             return
         }
         webView.callAsyncJavaScript("return " + js, arguments: [:], in: nil, in: contentWorld) { result in

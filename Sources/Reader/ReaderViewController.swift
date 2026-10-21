@@ -428,7 +428,6 @@ final class ReaderViewController: NSViewController {
 
     // MARK: - EPUB Loading
 
-    // swiftlint:disable:next function_body_length
     func loadEPUB(at url: URL) {
         emptyStateView?.isHidden = true
         webView?.isHidden = false
@@ -458,80 +457,8 @@ final class ReaderViewController: NSViewController {
                 let tocEntries = tocParser.parseTOC(for: pkg)
 
                 DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    self.currentPackage = pkg
-                    self.extractionWorkDirectories.append(createdWorkDir)
-                    // Always show title centered in toolbar; never in window chrome
-                    let title =
-                        pkg.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        ? url.deletingPathExtension().lastPathComponent
-                        : pkg.title
-                    self.setToolbarTitle(title, author: pkg.author)
-                    HistoryManager.shared.record(url: url, title: title)
-                    self.tocEntries = tocEntries
-                    self.tocSidebar.load(entries: tocEntries)
-
-                    self.currentMode = SettingsManager.shared.defaultReadingMode
-                    self.applyScrollbarVisibility()
-                    let savedPosition = HistoryManager.shared.savedLocator(for: url)?.flowRestoreTarget
-                    let savedResource: Int
-                    let savedOffset: Int?
-                    let savedFraction: Double?
-                    switch savedPosition {
-                    case let .some(.offset(resource, offset)):
-                        savedResource = resource
-                        savedOffset = offset
-                        savedFraction = nil
-                    case let .some(.fraction(resource, fraction)):
-                        savedResource = resource
-                        savedOffset = nil
-                        savedFraction = fraction
-                    case .none:
-                        savedResource = 0
-                        savedOffset = nil
-                        savedFraction = nil
-                    }
-                    let hasMeaningfulSavedPosition =
-                        savedResource > 0 || (savedOffset ?? 0) > 0 || (savedFraction ?? 0) > 0
-                    let coverStartIndex =
-                        SettingsManager.shared.skipCoverWhenOpening
-                        ? tocParser.firstSpineIndex(afterCoverIn: pkg)
-                        : nil
-                    let shouldSkipCover = !hasMeaningfulSavedPosition && coverStartIndex != nil
-                    let initialSpineIndex =
-                        shouldSkipCover
-                        ? (coverStartIndex ?? 0)
-                        : min(savedResource, max(0, pkg.spineURLs.count - 1))
-                    self.currentSpineIndex = initialSpineIndex
-                    if self.currentMode == .scroll && shouldSkipCover {
-                        self.pendingInitialScrollSpineIndex = initialSpineIndex
-                    }
-                    if self.currentMode == .paginated {
-                        self.installScrollWheelMonitorIfNeeded()
-                        self.installKeyDownMonitor()
-                        if let savedPosition {
-                            switch savedPosition {
-                            case .offset(_, let offset):
-                                self.pendingPaginatedRestorePosition = offset > 0 ? .characterOffset(offset) : .start
-                            case .fraction(_, let fraction):
-                                self.pendingPaginatedRestorePosition = .fraction(fraction)
-                            }
-                        }
-                    }
-                    if self.currentMode == .scroll, let savedPosition {
-                        switch savedPosition {
-                        case .offset(_, let offset) where offset > 0:
-                            self.pendingPaginatedRestorePosition = .characterOffset(offset)
-                        case .fraction(_, let fraction):
-                            self.pendingPaginatedRestorePosition = .fraction(fraction)
-                        default:
-                            break
-                        }
-                    }
-
-                    self.renderCurrentContent()
-                    self.showLoading(false)
-                    self.startPositionSaveTimer()
+                    self?.finishLoading(
+                        package: pkg, tocEntries: tocEntries, tocParser: tocParser, workDir: createdWorkDir, url: url)
                 }
             } catch {
                 if let workDir {
@@ -542,6 +469,86 @@ final class ReaderViewController: NSViewController {
                     self?.showError(error)
                 }
             }
+        }
+    }
+
+    /// Main-thread half of `loadEPUB`: publishes the parsed package, works out where to open (saved position, or
+    /// past the cover) and renders.
+    private func finishLoading(
+        package pkg: EPUBPackage, tocEntries: [TOCEntry], tocParser: TOCParser, workDir: URL, url: URL
+    ) {
+        currentPackage = pkg
+        extractionWorkDirectories.append(workDir)
+        // Always show title centered in toolbar; never in window chrome
+        let title =
+            pkg.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? url.deletingPathExtension().lastPathComponent
+            : pkg.title
+        setToolbarTitle(title, author: pkg.author)
+        HistoryManager.shared.record(url: url, title: title)
+        self.tocEntries = tocEntries
+        tocSidebar.load(entries: tocEntries)
+
+        currentMode = SettingsManager.shared.defaultReadingMode
+        applyScrollbarVisibility()
+        let savedPosition = HistoryManager.shared.savedLocator(for: url)?.flowRestoreTarget
+        let start = initialSpineIndex(in: pkg, saved: savedPosition, tocParser: tocParser)
+        currentSpineIndex = start.index
+        if currentMode == .scroll && start.skippedCover {
+            pendingInitialScrollSpineIndex = start.index
+        }
+        if currentMode == .paginated {
+            installScrollWheelMonitorIfNeeded()
+            installKeyDownMonitor()
+        }
+        applyRestoreTarget(savedPosition)
+
+        renderCurrentContent()
+        showLoading(false)
+        startPositionSaveTimer()
+    }
+
+    /// The spine index to open at, and whether that skips the cover. A saved position past the start always wins
+    /// over the cover skip.
+    private func initialSpineIndex(
+        in pkg: EPUBPackage, saved: Locator.FlowRestoreTarget?, tocParser: TOCParser
+    ) -> (index: Int, skippedCover: Bool) {
+        let savedResource: Int
+        let hasMeaningfulSavedPosition: Bool
+        switch saved {
+        case let .some(.offset(resource, offset)):
+            savedResource = resource
+            hasMeaningfulSavedPosition = resource > 0 || offset > 0
+        case let .some(.fraction(resource, fraction)):
+            savedResource = resource
+            hasMeaningfulSavedPosition = resource > 0 || fraction > 0
+        case .none:
+            savedResource = 0
+            hasMeaningfulSavedPosition = false
+        }
+        let coverStartIndex =
+            SettingsManager.shared.skipCoverWhenOpening
+            ? tocParser.firstSpineIndex(afterCoverIn: pkg)
+            : nil
+        if !hasMeaningfulSavedPosition, let coverStartIndex {
+            return (coverStartIndex, true)
+        }
+        return (min(savedResource, max(0, pkg.spineURLs.count - 1)), false)
+    }
+
+    /// Seeds `pendingPaginatedRestorePosition` from the saved position. An offset of 0 restores to the start in
+    /// paged mode and leaves the default in scroll mode.
+    private func applyRestoreTarget(_ saved: Locator.FlowRestoreTarget?) {
+        guard let saved else { return }
+        switch saved {
+        case .offset(_, let offset):
+            if offset > 0 {
+                pendingPaginatedRestorePosition = .characterOffset(offset)
+            } else if currentMode == .paginated {
+                pendingPaginatedRestorePosition = .start
+            }
+        case .fraction(_, let fraction):
+            pendingPaginatedRestorePosition = .fraction(fraction)
         }
     }
 

@@ -29,11 +29,11 @@ import XCTest
 /// define it. Timings on a shared CI runner are noisy; take the numbers from a local run.
 @MainActor
 final class ReaderBaselineTests: XCTestCase {
-    private static let iterations = 3
+    static let iterations = 3
     /// Mirrors `ReaderViewController.readerHTMLFilename` (private there).
     private static let readerFilename = "_ql_reader.html"
 
-    private var temporaryDirectory: URL!
+    var temporaryDirectory: URL!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -61,87 +61,6 @@ final class ReaderBaselineTests: XCTestCase {
 
     func testHostOpenOfTwoThousandPageBook() async throws {
         try await runHostBaseline(pages: 2_000)
-    }
-
-    /// M4 pass 5: memory while scrolling through the real client script across 20 chapter boundaries of the
-    /// 2,000-page fixture (budget: WebContent at most 30 MB, roadmap M3 budgets). Three runs, median of each
-    /// run's maximum. Fails, rather than skips, when the private footprint key is unreadable (V9).
-    func testHostScrollAcrossTwentyBoundariesTwoThousandPageBook() async throws {
-        let book = SyntheticBook(pages: 2_000)
-        let root = temporaryDirectory.appendingPathComponent("host-scroll-book", isDirectory: true)
-        try book.write(to: root)
-        let package = try EPUBParser().parsePackage(at: root)
-        XCTAssertGreaterThan(book.chapterCount, 30)
-        var runs: [(maxBytes: UInt64, samples: Int, mountedAtMax: Int, boundaries: Int)] = []
-        for _ in 0..<Self.iterations {
-            runs.append(try await scrollRun(package: package, start: 10, boundaries: 20))
-        }
-        let maxima = runs.map(\.maxBytes).sorted()
-        var lines = ["BASELINE host-scroll pages=2000 boundaries=20 runs=\(runs.count)"]
-        for (index, run) in runs.enumerated() {
-            lines.append(
-                "run \(index + 1): maxWebContentFootprintMB=\(Self.megabytes(run.maxBytes)) samples=\(run.samples)"
-                    + " mountedAtMax=\(run.mountedAtMax) boundariesCrossed=\(run.boundaries)")
-        }
-        let median = maxima[maxima.count / 2]
-        lines.append("BASELINE host-scroll pages=2000 medianMaxWebContentFootprintMB=\(Self.megabytes(median))")
-        lines.append("BASELINE host-scroll pages=2000 rangeMB=\(Self.megabytes(maxima[0])) to \(Self.megabytes(maxima[maxima.count - 1]))")
-        try TestDiagnostics.write("host-scroll-2000-pages.txt", lines: lines)
-        XCTAssertTrue(runs.allSatisfy { $0.boundaries >= 20 }, "every run crossed 20 chapter boundaries")
-        XCTAssertLessThanOrEqual(median, 30 * 1_048_576, "WebContent stays inside the M3 budget while scrolling")
-    }
-
-    private func scrollRun(
-        package: EPUBPackage, start: Int, boundaries: Int
-    ) async throws -> (maxBytes: UInt64, samples: Int, mountedAtMax: Int, boundaries: Int) {
-        let surface = ChapterHostSurface()
-        let configuration = WKWebViewConfiguration()
-        configuration.userContentController = WKUserContentController()
-        surface.install(into: configuration)
-        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
-        let loaded = expectation(description: "host window loads")
-        let delegate = BaselineNavigationDelegate { loaded.fulfill() }
-        webView.navigationDelegate = delegate
-        surface.attach(package: package, cosmetics: Self.cosmetics)
-        try surface.loadWindow(around: start, in: package, into: webView, restoring: .start)
-        await fulfillment(of: [loaded], timeout: 180)
-        XCTAssertNil(delegate.error)
-        defer {
-            webView.navigationDelegate = nil
-            webView.stopLoading()
-        }
-        var maxBytes: UInt64 = 0, mountedAtMax = 0, samples = 0, crossed = 0
-        var lastResource: Int?
-        var steps = 0
-        while crossed < boundaries, steps < 4_000 {
-            steps += 1
-            let report = try await webView.callAsyncJavaScript(
-                """
-                window.scrollBy(0, Math.round(window.innerHeight * 0.8));
-                var mounted = window.honeycrispHost.reconcile();
-                var pos = window.honeycrispHost.offsetOfFirstVisibleText();
-                return JSON.stringify({ mounted: mounted, resource: pos ? pos.resource : -1 });
-                """, arguments: [:], in: nil, contentWorld: .defaultClient)
-            try await Task.sleep(nanoseconds: 20_000_000)
-            guard let json = report as? String,
-                let object = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Int],
-                let resource = object["resource"], resource >= 0
-            else { continue }
-            guard let previous = lastResource else { lastResource = resource; continue }
-            guard resource != previous else { continue }
-            lastResource = resource
-            crossed += 1
-            guard let bytes = Self.webContentFootprintBytes(webView) else {
-                XCTFail("WebContent footprint is unreadable on this machine (V9); the memory budget cannot be checked")
-                return (0, samples, mountedAtMax, crossed)
-            }
-            samples += 1
-            if bytes > maxBytes {
-                maxBytes = bytes
-                mountedAtMax = object["mounted"] ?? 0
-            }
-        }
-        return (maxBytes, samples, mountedAtMax, crossed)
     }
 
     // MARK: Measurement
@@ -390,7 +309,7 @@ final class ReaderBaselineTests: XCTestCase {
 
     private static func format(_ value: Double) -> String { String(format: "%.1f", value) }
 
-    private static func megabytes<T: BinaryInteger>(_ bytes: T) -> String {
+    static func megabytes<T: BinaryInteger>(_ bytes: T) -> String {
         String(format: "%.1f", Double(bytes) / 1_048_576)
     }
 
@@ -416,7 +335,7 @@ final class ReaderBaselineTests: XCTestCase {
     /// Physical footprint of the web view's WebContent process. Reads a private WebKit key
     /// (`_webProcessIdentifier`) and `proc_pid_rusage`, so it is guarded and returns nil when either is
     /// unavailable (for example under the App Sandbox). Test-only; never move this into `Sources/`.
-    private static func webContentFootprintBytes(_ webView: WKWebView) -> UInt64? {
+    static func webContentFootprintBytes(_ webView: WKWebView) -> UInt64? {
         guard webView.responds(to: NSSelectorFromString("_webProcessIdentifier")),
             let pid = (webView.value(forKey: "_webProcessIdentifier") as? NSNumber)?.int32Value, pid > 0
         else { return nil }
@@ -431,7 +350,7 @@ final class ReaderBaselineTests: XCTestCase {
 
     // MARK: Fixture
 
-    private static var cosmetics: ReaderCosmeticSettings {
+    static var cosmetics: ReaderCosmeticSettings {
         ReaderCosmeticSettings(
             fontSizePercent: 100,
             fontFamily: "Georgia, serif",
@@ -450,7 +369,7 @@ final class ReaderBaselineTests: XCTestCase {
     }
 }
 
-private final class BaselineNavigationDelegate: NSObject, WKNavigationDelegate {
+final class BaselineNavigationDelegate: NSObject, WKNavigationDelegate {
     private let onFinish: () -> Void
     private var finished = false
     private(set) var error: Error?

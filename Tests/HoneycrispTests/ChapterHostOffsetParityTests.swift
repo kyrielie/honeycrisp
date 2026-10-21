@@ -110,7 +110,7 @@ final class ChapterHostOffsetParityTests: XCTestCase {
     func testScrollToResourceOffsetRoundTrips() async throws {
         let harness = try await ChapterHostWindowHarness.make(in: self, chapters: 5, around: 2)
         self.harness = harness
-        let x = try await textLeft(harness, resource: 2)
+        let column = try await textLeft(harness, resource: 2)
         for paragraph in [2, 17, 33] {
             let offset = try await offsetOfText(harness, resource: 2, startingWith: "Paragraph \(paragraph) of chapter 2.")
             XCTAssertGreaterThan(offset, 0)
@@ -118,7 +118,7 @@ final class ChapterHostOffsetParityTests: XCTestCase {
 
             let scrolled = try await harness.surface.scroll(to: target, in: harness.webView)
             XCTAssertTrue(scrolled)
-            let read = try await harness.surface.firstVisiblePosition(in: harness.webView, x: x)
+            let read = try await harness.surface.firstVisiblePosition(in: harness.webView, x: column)
 
             XCTAssertEqual(read, target, "paragraph \(paragraph): set, read back, equal")
         }

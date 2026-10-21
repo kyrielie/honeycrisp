@@ -78,21 +78,25 @@ final class EPUBResourceSchemeHandler: NSObject, WKURLSchemeHandler {
         ["xhtml", "html", "htm"].contains(url.pathExtension.lowercased())
     }
 
+    private static let mimeTypes: [String: String] = [
+        "xhtml": "application/xhtml+xml",
+        "html": "application/xhtml+xml",
+        "htm": "application/xhtml+xml",
+        "css": "text/css",
+        "svg": "image/svg+xml",
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "woff": "font/woff",
+        "woff2": "font/woff2",
+        "ttf": "font/ttf",
+        "otf": "font/otf",
+    ]
+
     static func mimeType(for url: URL) -> String {
-        switch url.pathExtension.lowercased() {
-        case "xhtml", "html", "htm": return "application/xhtml+xml"
-        case "css": return "text/css"
-        case "svg": return "image/svg+xml"
-        case "png": return "image/png"
-        case "jpg", "jpeg": return "image/jpeg"
-        case "gif": return "image/gif"
-        case "webp": return "image/webp"
-        case "woff": return "font/woff"
-        case "woff2": return "font/woff2"
-        case "ttf": return "font/ttf"
-        case "otf": return "font/otf"
-        default: return "application/octet-stream"
-        }
+        mimeTypes[url.pathExtension.lowercased()] ?? "application/octet-stream"
     }
 
     private static func response(
