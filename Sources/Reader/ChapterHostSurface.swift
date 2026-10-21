@@ -88,7 +88,7 @@ final class ChapterHostSurface {
     }
 
     /// Decodes one `hostPosition` message (a JSON string of four integers); anything else is ignored.
-    fileprivate func receivePosition(_ body: Any) {
+    func receivePosition(_ body: Any) {
         guard let json = body as? String,
             let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Int],
             let resource = object["resource"], let offset = object["offset"],

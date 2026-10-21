@@ -76,7 +76,12 @@ final class ChapterHostMessagingTests: XCTestCase {
 
     func testMalformedPositionMessagesAreIgnored() async throws {
         let (harness, recorder) = try await mount()
-        try await run(harness, "window.webkit.messageHandlers.hostPosition.postMessage('{\"resource\":-1}'); window.webkit.messageHandlers.hostPosition.postMessage(5); return 1;")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        recorder.posts.removeAll()
+        try await run(
+            harness,
+            "window.webkit.messageHandlers.hostPosition.postMessage('{\"resource\":-1}'); "
+            + "window.webkit.messageHandlers.hostPosition.postMessage(5); return 1;")
         try await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertTrue(recorder.posts.isEmpty)
     }

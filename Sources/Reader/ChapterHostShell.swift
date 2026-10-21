@@ -123,6 +123,10 @@ enum ChapterHostScript {
           // between the height change and the compensation (`overflow-anchor: none` keeps WebKit from also
           // adjusting). `ratio` is the running px per byte of measured chapters, applied to unmeasured slots.
           var measuredBytes = 0, measuredPx = 0, reestimating = false;
+          // A restore lands on a position, a fraction or the chapter start. Chapter heights above or at the target
+          // can still change after the landing (deferred fits and neighbour loads), so the landing is repeated
+          // whenever any slot is re-fitted, until the reader scrolls or 2 s have passed.
+          var landing = null, landingTimer = null;
           function slotOf(frame) {
             var node = frame.parentNode;
             return node && node.classList && node.classList.contains('hc-slot') ? node : null;
@@ -134,24 +138,39 @@ enum ChapterHostScript {
             var rect = before || slot.getBoundingClientRect();
             var delta = height - rect.height;
             slot.style.height = height + 'px';
-            if (delta !== 0 && rect.bottom <= 0) { window.scrollBy(0, delta); }
+            if (delta !== 0 && rect.bottom <= 0 && rect.top < 0) {
+              suppressScrolls += 1;
+              window.scrollBy(0, delta);
+            }
           }
           function reestimate() {
             if (reestimating || ratio() <= 0) { return; }
             reestimating = true;
-            slots().forEach(function (slot) {
-              if (slot.hasAttribute('data-hc-measured') || frameOf(slot)) { return; }
+            // Snapshot viewport positions before modifying any heights so all slots evaluate their position
+            // relative to the viewport from the same initial layout.
+            var slotList = slots();
+            var snapped = slotList.map(function (s) { return s.getBoundingClientRect(); });
+            var scrollDelta = 0;
+            for (var si = 0; si < slotList.length; si++) {
+              var slot = slotList[si];
+              if (slot.hasAttribute('data-hc-measured') || frameOf(slot)) { continue; }
               var bytes = Number(slot.getAttribute('data-bytes')) || 0;
-              if (bytes <= 0) { return; }
+              if (bytes <= 0) { continue; }
               var height = Math.round(Math.max(window.innerHeight, bytes * ratio()));
-              if (Math.round(slot.getBoundingClientRect().height) !== height) { setSlotHeight(slot, height); }
-            });
+              var oldHeight = Math.round(snapped[si].height);
+              if (oldHeight !== height) {
+                slot.style.height = height + 'px';
+                if (snapped[si].bottom <= 0 && snapped[si].top < 0) { scrollDelta += height - oldHeight; }
+              }
+            }
+            // Apply all compensation as one scrollBy to avoid firing multiple onScroll events.
+            if (scrollDelta !== 0) { suppressScrolls += 1; window.scrollBy(0, scrollDelta); }
             reestimating = false;
           }
           function fit(frame) {
             try {
               var doc = frame.contentDocument;
-              if (!doc || !doc.documentElement) { return; }
+              if (!doc || !doc.documentElement || doc.location.href === 'about:blank') { return; }
               var root = doc.documentElement;
               var overflow = Math.max(root.scrollHeight, doc.body ? doc.body.scrollHeight : 0);
               // scrollHeight never drops below the frame's own height, so a chapter that became shorter
@@ -170,6 +189,7 @@ enum ChapterHostScript {
                   slot.setAttribute('data-hc-measured', String(bytes > 0 ? height : 0));
                   setSlotHeight(slot, height, before);
                   reestimate();
+                  if (landing) { land(landing); }
                 }
               }
             } catch (error) {
@@ -228,6 +248,7 @@ enum ChapterHostScript {
             if (!frame) { return false; }
             try {
               var doc = frame.contentDocument;
+              if (!doc || !doc.body) { return false; }
               var walker = bodyWalker(doc), count = 0, node, last = null, found = null, local = 0;
               while ((node = walker.nextNode()) !== null) {
                 last = node;
@@ -240,7 +261,19 @@ enum ChapterHostScript {
               var range = doc.createRange();
               range.setStart(found, local);
               range.setEnd(found, local);
-              var top = frame.getBoundingClientRect().top + range.getBoundingClientRect().top;
+              var r = range.getBoundingClientRect();
+              var rtop = r && r.height > 0 ? r.top : 0;
+              if (rtop === 0) {
+                var el = found.nodeType === 1 ? found : found.parentElement;
+                if (el && el !== doc.body && el !== doc.documentElement) {
+                  rtop = el.getBoundingClientRect().top;
+                } else if (found.previousElementSibling) {
+                  rtop = found.previousElementSibling.getBoundingClientRect().bottom;
+                } else if (found.nextElementSibling) {
+                  rtop = found.nextElementSibling.getBoundingClientRect().top;
+                }
+              }
+              var top = frame.getBoundingClientRect().top + rtop;
               window.scrollTo(0, Math.max(0, window.scrollY + top - referenceY()));
               return true;
             } catch (error) {
@@ -281,6 +314,8 @@ enum ChapterHostScript {
           // handlers have run, and again when the whole shell has finished loading.
           function wire(frame) {
             frame.addEventListener('load', function () {
+              var doc = frame.contentDocument;
+              if (!doc || doc.location.href === 'about:blank') { return; }
               fit(frame);
               setTimeout(function () {
                 fit(frame);
@@ -377,16 +412,25 @@ enum ChapterHostScript {
           function slotFor(resource) { return document.querySelector('div.hc-slot[data-resource="' + Number(resource) + '"]'); }
           function reveal() { if (document.body) { document.body.style.visibility = 'visible'; } }
           function loaded(frame) {
-            if (frame.getAttribute('data-hc-ready') === '1') { return true; }
-            try {
-              var doc = frame.contentDocument;
-              if (doc && doc.readyState === 'complete' && doc.location.href !== 'about:blank') {
-                fit(frame);
-                frame.setAttribute('data-hc-ready', '1');
-                return true;
-              }
-            } catch (error) { frame.setAttribute('data-hc-error', String(error)); }
-            return false;
+            return frame ? frame.getAttribute('data-hc-ready') === '1' : false;
+          }
+          function clearLanding() {
+            landing = null;
+            if (landingTimer !== null) { clearTimeout(landingTimer); landingTimer = null; }
+          }
+          function land(target) {
+            if (!target) { return; }
+            var slot = slotFor(target.resource);
+            if (!slot) { return; }
+            if (target.offset !== null) {
+              scrollTo(target.resource, target.offset);
+            } else if (target.fraction !== null) {
+              var rect = slot.getBoundingClientRect();
+              window.scrollTo(0, Math.max(0, Math.round(rect.top + window.scrollY + target.fraction * rect.height - referenceY())));
+            } else {
+              var top = slot.getBoundingClientRect().top + window.scrollY;
+              window.scrollTo(0, Math.max(0, Math.round(top)));
+            }
           }
           function performRestore() {
             var target = pending;
@@ -394,12 +438,9 @@ enum ChapterHostScript {
             if (!target) { return; }
             var slot = slotFor(target.resource);
             if (slot) {
-              var top = slot.getBoundingClientRect().top + window.scrollY;
-              if (target.offset !== null) { scrollTo(target.resource, target.offset); }
-              else if (target.fraction !== null) {
-                var height = slot.getBoundingClientRect().height;
-                window.scrollTo(0, Math.max(0, Math.round(top + target.fraction * height - referenceY())));
-              } else { window.scrollTo(0, Math.max(0, Math.round(top))); }
+              landing = target;
+              land(landing);
+              landingTimer = setTimeout(clearLanding, 2000);
             }
             reconcile();
             reveal();
@@ -431,6 +472,7 @@ enum ChapterHostScript {
               if (firstTop > 0) { suppressScrolls = 1; window.scrollTo(0, firstTop); }
             }
           }
+          ['wheel', 'keydown', 'mousedown', 'touchstart'].forEach(function (name) { window.addEventListener(name, clearLanding); });
           window.addEventListener('load', fitAll);
           window.addEventListener('scroll', onScroll);
           window.addEventListener('resize', function () { setTimeout(function () { fitAll(); schedule(); }, 50); });

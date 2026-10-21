@@ -139,7 +139,21 @@ final class ChapterHostPagedTests: XCTestCase {
         half.tearDown()
         harness = nil
 
-        let offset = 1_500
+        // The fixture chapter holds about 1,000 characters of text, so a fixed offset such as 1,500 lies past the
+        // end and clamps to column 0. Take three quarters of the measured text length instead.
+        let probe = try await mountPaged(restore: .start)
+        let textLength = try await probe.evaluate(
+            """
+            (function () {
+              var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null), total = 0, n;
+              while ((n = walker.nextNode()) !== null) { total += n.length; }
+              return total;
+            })()
+            """)
+        probe.tearDown()
+        harness = nil
+        let offset = (Int(textLength) ?? 0) * 3 / 4
+        XCTAssertGreaterThan(offset, 0, "the fixture chapter has text")
         let at = try await mountPaged(restore: .characterOffset(offset))
         let expected = try await at.evaluate(
             """
@@ -158,7 +172,7 @@ final class ChapterHostPagedTests: XCTestCase {
             })()
             """)
         let column = try await metrics(at).column
-        XCTAssertGreaterThan(column, 0, "offset 1500 is past the first column")
+        XCTAssertGreaterThan(column, 0, "offset \(offset) is past the first column")
         XCTAssertEqual(Double(column), Double(expected) ?? -2, accuracy: 0, "the column whose rect contains the offset (V5)")
     }
 
@@ -200,7 +214,7 @@ final class ChapterHostPagedTests: XCTestCase {
         let total = try await metrics(harness).columns
         let firstLoadMetrics = try await metrics(harness)
         XCTAssertEqual(firstLoadMetrics.column, 0)
-        _ = try await harness.evaluate("document.documentElement.setAttribute('data-old', '1')")
+        _ = try await harness.evaluate("document.documentElement.setAttribute('data-old', '1'); 'ok'")
         try harness.surface.loadPaged(
             resource: 2, in: harness.package, into: harness.webView, geometry: .harnessFixture, restore: .end)
         for _ in 0..<100 {
