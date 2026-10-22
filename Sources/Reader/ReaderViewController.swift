@@ -1115,6 +1115,10 @@ final class ReaderViewController: NSViewController {
         let goingTo: ReadingMode = currentMode == .scroll ? .paginated : .scroll
         SettingsManager.shared.defaultReadingMode = goingTo
 
+        if let host = chapterHost {
+            toggleHostedReadingMode(host, to: goingTo, pkg: pkg)
+            return
+        }
         if goingTo == .paginated {
             // Scroll mode's own progress fraction (scrollY / scrollHeight) becomes
             // the paginated spine item's restore fraction. Spine index carries over
@@ -1150,6 +1154,42 @@ final class ReaderViewController: NSViewController {
                 finishSwitch(0)
             }
         }
+    }
+
+    /// Flag mode (M4 pass 7.5): switches between the scroll window and a paged chapter by exact text offset
+    /// (decision B2), in memory only; nothing is read from or written to history. Scroll to paged reads the text
+    /// on the reference line; paged to scroll reads the first text on the page. A toggle during a chapter load
+    /// (engine not ready) reopens that chapter at its start.
+    private func toggleHostedReadingMode(_ host: ChapterHostSurface, to goingTo: ReadingMode, pkg: EPUBPackage) {
+        let count = pkg.spineURLs.count
+        if goingTo == .paginated {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let position = try? await host.firstVisiblePosition(in: self.webView)
+                guard self.currentMode == .scroll else { return }
+                let target = ChapterHostPaging.toPaged(from: position, activeIndex: self.activeScrollSpineIndex, count: count)
+                self.currentSpineIndex = target.index
+                self.pendingHostRestore = target.restore
+                self.currentMode = .paginated
+                self.applyScrollbarVisibility()
+                self.installScrollWheelMonitorIfNeeded()
+                self.installKeyDownMonitor()
+                self.renderCurrentContent()
+            }
+            return
+        }
+        let finish: (Int?) -> Void = { [weak self] offset in
+            guard let self, self.currentMode == .paginated else { return }
+            let target = ChapterHostPaging.toScroll(index: self.currentSpineIndex, offset: offset, count: count)
+            self.activeScrollSpineIndex = target.index
+            self.pendingHostRestore = target.restore
+            self.currentMode = .scroll
+            self.applyScrollbarVisibility()
+            self.removeScrollWheelMonitor()
+            self.removeKeyDownMonitor()
+            self.renderCurrentContent()
+        }
+        if let engine = paginationEngine { engine.currentOffset(completion: finish) } else { finish(nil) }
     }
 
     // MARK: - Toolbar Title

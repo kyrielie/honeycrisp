@@ -88,4 +88,40 @@ final class ChapterHostPagingTests: XCTestCase {
         XCTAssertEqual(nan.restore.bootstrapJS, "window.qlScrollToFraction(0.0);")
         XCTAssertEqual(ChapterHostPaging.pagedTarget(for: nil, fallbackIndex: 4, count: 0).index, 0)
     }
+
+    func testToPagedUsesTheScrollPositionAsAnExactOffset() {
+        let result = ChapterHostPaging.toPaged(
+            from: ChapterHostSurface.Position(resource: 3, offset: 410), activeIndex: 1, count: 5)
+        XCTAssertEqual(result.index, 3)
+        XCTAssertEqual(result.restore, .position(ChapterHostSurface.Position(resource: 3, offset: 410)))
+    }
+
+    func testToPagedWithoutAPositionOpensTheActiveChapterAtItsStart() {
+        let result = ChapterHostPaging.toPaged(from: nil, activeIndex: 4, count: 5)
+        XCTAssertEqual(result.index, 4)
+        XCTAssertEqual(result.restore, .start)
+    }
+
+    func testToPagedClampsChapterAndNegativeOffset() {
+        let high = ChapterHostPaging.toPaged(
+            from: ChapterHostSurface.Position(resource: 9, offset: -3), activeIndex: 0, count: 5)
+        XCTAssertEqual(high.index, 4)
+        XCTAssertEqual(high.restore, .position(ChapterHostSurface.Position(resource: 4, offset: 0)))
+        XCTAssertEqual(ChapterHostPaging.toPaged(from: nil, activeIndex: -2, count: 5).index, 0)
+        XCTAssertEqual(ChapterHostPaging.toPaged(from: nil, activeIndex: 3, count: 0).index, 0)
+    }
+
+    func testToScrollUsesThePagedOffsetInTheCurrentChapter() {
+        let result = ChapterHostPaging.toScroll(index: 2, offset: 1184, count: 5)
+        XCTAssertEqual(result.index, 2)
+        XCTAssertEqual(result.restore, .position(ChapterHostSurface.Position(resource: 2, offset: 1184)))
+    }
+
+    func testToScrollWithoutAnOffsetOpensTheChapterAtItsStart() {
+        let result = ChapterHostPaging.toScroll(index: 7, offset: nil, count: 5)
+        XCTAssertEqual(result.index, 4)
+        XCTAssertEqual(result.restore, .start)
+        XCTAssertEqual(ChapterHostPaging.toScroll(index: 1, offset: -5, count: 5).restore,
+                       .position(ChapterHostSurface.Position(resource: 1, offset: 0)))
+    }
 }

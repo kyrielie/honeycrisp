@@ -67,4 +67,29 @@ enum ChapterHostPaging {
             viewportWidth: size.width, viewportHeight: size.height, colsPerScreen: cols,
             paddingH: CGFloat(max(0, paddingH)), paddingV: CGFloat(max(0, paddingV)), maxWidth: CGFloat(max(0, maxWidth)))
     }
+
+    /// Scroll window to paged (M4 pass 7.5): the chapter under the reference line opens at the column holding
+    /// that text, by exact offset (decision B2). With no readable position the active scroll chapter opens at
+    /// its start. The chapter is clamped into the book.
+    nonisolated static func toPaged(
+        from position: ChapterHostSurface.Position?, activeIndex: Int, count: Int
+    ) -> (index: Int, restore: ChapterHostSurface.Restore) {
+        guard let position else { return (clampedIndex(activeIndex, count: count), .start) }
+        let index = clampedIndex(position.resource, count: count)
+        return (index, .position(ChapterHostSurface.Position(resource: index, offset: max(0, position.offset))))
+    }
+
+    /// Paged to scroll window: the paged chapter reopens in the window at the offset of the first text on the
+    /// page (decision B2), or at its start when the pager could not report one.
+    nonisolated static func toScroll(
+        index: Int, offset: Int?, count: Int
+    ) -> (index: Int, restore: ChapterHostSurface.Restore) {
+        let clamped = clampedIndex(index, count: count)
+        guard let offset else { return (clamped, .start) }
+        return (clamped, .position(ChapterHostSurface.Position(resource: clamped, offset: max(0, offset))))
+    }
+
+    private nonisolated static func clampedIndex(_ index: Int, count: Int) -> Int {
+        min(max(index, 0), max(0, count - 1))
+    }
 }

@@ -26,9 +26,11 @@ final class ChapterHostPagedHandoffTests: XCTestCase {
 
     /// Waits until the document is chapter `resource` and revealed.
     private func waitForChapter(_ resource: Int, in harness: ChapterHostWindowHarness) async throws {
+        let name = "Chapter \(resource + 1).xhtml"
         for _ in 0..<100 {
             let state = try? await harness.evaluate(
-                "location.pathname.indexOf('Chapter \(resource + 1).xhtml') >= 0 ? getComputedStyle(document.documentElement).visibility : 'other'")
+                "decodeURIComponent(location.pathname).indexOf('\(name)') >= 0"
+                + " ? getComputedStyle(document.documentElement).visibility : 'other'")
             if state == "visible" { return }
             try await Task.sleep(nanoseconds: 100_000_000)
         }

@@ -40,21 +40,21 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 ### Reader (`Sources/Reader`)
 - `ReaderWindowController.swift` (147): `setupWindow`, `loadEPUB(at:)`, `showOpenPanel`,
   `loadRecent`, `toggleFloat`, `windowWillClose` flushes position. Also `ReaderWindow` (key forwarding).
-- `ReaderViewController.swift` (2357): the reading surface. See section map below.
-- `PaginationEngine.swift` (268): `ColsPerScreen` (l.38), `RestorePosition` (l.60,
+- `ReaderViewController.swift` (2485): the reading surface. See section map below.
+- `PaginationEngine.swift` (321): `ColsPerScreen` (l.38), `RestorePosition` (l.60,
   `.start/.end/.fraction/.characterOffset`), `EPUBAnchor` (l.75; `currentLayout`, `legacyLayout`),
   `PaginationEngine` (l.116, Swift driver of column layout; `currentOffset`, `invalidate`). Bump `currentLayout` when offsets change
   (ARCHITECTURE.md 5a). `Locator.flowRestoreTarget` compares a saved layout with `currentLayout`.
-- `PaginationJS.swift` (313): JS for paginated mode: column snap, boundaries, char-offset seek.
+- `PaginationJS.swift` (393): JS for paginated mode: column snap, boundaries, char-offset seek.
   Posts `pageAction` and `positionUpdate`. `qlOffsetAtCurrentColumn` (M4 pass 7.2b) returns the offset of the first text on the current page, the inverse of `qlNavigateToOffset`.
 - `EPUBDropTargetView.swift` (43): drag and drop of `.epub` files.
 - `EPUBResourceSchemeHandler.swift` (163): `honeycrisp-epub://book/...` scheme handler (containment, MIME, optional response headers, `ActiveTaskSet`, `/__app/` app resources via `appResources`, markup `transform` hook). Wired only through `ChapterHostSurface` (flag mode, roadmap M3).
 - `ServedChapter.swift` (103): pure `ServedChapter.prepare`: inserts the host stylesheet link last in `<head>`, inlines the settings-dependent user block as `<style id="honeycrisp-user">`, adds a missing root `lang`; never edits the body (C2). Used by `ChapterHostSurface` (flag mode only).
-- `ChapterHostCSS.swift` (112): `ChapterHostCSS.stylesheet` (static, served as `__app/reader.css`: reset in `@layer app-reset`, user-owned properties with `!important`) and `userBlock(_:)` (variables from `EPUBParser.readerVarsCSS` plus the optional alignment, hyphenation and indent rules only while set). Roadmap M3, contract C4. M4 adds `pagedBlock(columnCSS:)`, `pagerBootstrap(cols:restore:)` and `ChapterHostPagedGeometry` (paged presentation).
-- `ChapterHostSurface.swift` (372): `ChapterHostFlag` (`HONEYCRISP_CHAPTER_HOST=1`, not persisted) and `ChapterHostSurface`: `install(into:)` (content JS off, scheme handler, client-world script), `attach(package:cosmetics:)`, `updateServedCosmetics`, `applyCosmetics(_:to:)` (live patch, no reload), `Position`, `Restore`, `onPositionChange`, `firstVisiblePosition`, `scroll(to:in:)`, `load(resource:...)`, `loadPaged(resource:...)` (one chapter as a paged top-level document, geometry stored, scripts re-added per load), `Presentation`, `onPageAction`, `onPagerPosition`, `loadWindow(around:...restoring:)` (a slot per spine item, three mounted), pure `windowIndices` and `estimatedHeight(byteCount:viewportHeight:pixelsPerByte:)`, `chapterURL`, `chapterPath`, `allowsNavigation`. Flag mode is a read-only viewer (ARCHITECTURE 4a).
+- `ChapterHostCSS.swift` (117): `ChapterHostCSS.stylesheet` (static, served as `__app/reader.css`: reset in `@layer app-reset`, user-owned properties with `!important`) and `userBlock(_:)` (variables from `EPUBParser.readerVarsCSS` plus the optional alignment, hyphenation and indent rules only while set). Roadmap M3, contract C4. M4 adds `pagedBlock(columnCSS:)`, `pagerBootstrap(cols:restore:)` and `ChapterHostPagedGeometry` (paged presentation).
+- `ChapterHostSurface.swift` (380): `ChapterHostFlag` (`HONEYCRISP_CHAPTER_HOST=1`, not persisted) and `ChapterHostSurface`: `install(into:)` (content JS off, scheme handler, client-world script), `attach(package:cosmetics:)`, `updateServedCosmetics`, `applyCosmetics(_:to:)` (live patch, no reload), `Position`, `Restore`, `onPositionChange`, `firstVisiblePosition`, `scroll(to:in:)`, `load(resource:...)`, `loadPaged(resource:...)` (one chapter as a paged top-level document, geometry stored, scripts re-added per load), `Presentation`, `onPageAction`, `onPagerPosition`, `loadWindow(around:...restoring:)` (a slot per spine item, three mounted), pure `windowIndices` and `estimatedHeight(byteCount:viewportHeight:pixelsPerByte:)`, `chapterURL`, `chapterPath`, `allowsNavigation`. Flag mode is a read-only viewer (ARCHITECTURE 4a).
 - `ChapterHostShell.swift` (102): `ChapterHostShell.html(slots:restore:)` (script-free XHTML shell, a `div.hc-slot` per spine item holding the iframe while mounted, attributes escaped; `html(frames:)` kept as a mounted-only wrapper).
 - `ChapterHostScript.swift` (200) and `ChapterHostScriptTail.swift` (198): `ChapterHostScript.source` (client-world script: frame sizing, `window.honeycrispHost.fitAll`, `applyUserCSS(css)` replacing `<style id="honeycrisp-user">` in every mounted chapter, `offsetOfFirstVisibleText(x)`, `scrollTo(resource, offset)`, `reconcile()`, `mountedResources()` and `pixelsPerByte()`, `restoreTo(resource, offset, fraction)`, `reveal()` and throttled `hostPosition` posts for windowing and measured heights (a measured chapter above the viewport scrolls the shell by the height difference in the same turn): mount margin 2 viewports, evict margin 4, at most 5 mounted). `source` is `sourceHead` (here: sizing, measured heights, offsets, `scrollTo`, `applyUserCSS`) plus `sourceTail` (extension in the second file: windowing, position reporting, restore, the `honeycrispHost` export); the two halves are one script, split only to satisfy the file length limit.
-- `ChapterHostPaging.swift` (about 45): pure `ChapterHostPaging` for paginated mode on the host (M4 pass 7): `handoff(from:forward:count:)` (next chapter at its start, previous at its end, nil at book edges), `restore(for:)` (a scroll-window `Position` as an exact `RestorePosition.characterOffset`), `geometry(viewport:cols:paddingH:paddingV:maxWidth:)`. `changesDocument(from:to:)` (link policy), `pagedTarget(for:fallbackIndex:count:)` (the in-memory restore of a flag-mode paged load). Called by `ReaderViewController.renderCurrentContent`, `navigateSpine` and `loadHostedPagedChapter`.
+- `ChapterHostPaging.swift` (95): pure `ChapterHostPaging` for paginated mode on the host (M4 pass 7): `handoff(from:forward:count:)` (next chapter at its start, previous at its end, nil at book edges), `restore(for:)` (a scroll-window `Position` as an exact `RestorePosition.characterOffset`), `geometry(viewport:cols:paddingH:paddingV:maxWidth:)`. `changesDocument(from:to:)` (link policy), `pagedTarget(for:fallbackIndex:count:)` (the in-memory restore of a flag-mode paged load), `toPaged(from:activeIndex:count:)` and `toScroll(index:offset:count:)` (the exact-offset restores of the mode toggle). Called by `ReaderViewController.renderCurrentContent`, `navigateSpine`, `loadHostedPagedChapter` and `toggleHostedReadingMode`.
 - `ChapterHostHandlers.swift` (35): `ChapterHostPositionHandler` (client-world `hostPosition`) and `ChapterHostPagerHandler` (client-world `pageAction` and `positionUpdate`), forwarding to `ChapterHostSurface.receive*`.
 
 ### Parsing (`Sources/Parsing`)
@@ -109,24 +109,24 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 ### `Reader/ReaderViewController.swift`
 | Lines | Content |
 |---|---|
-| 27-167 | Class, state, pagination state (Patch 0007), page-count state, child VCs, layout, toolbar properties |
-| 168-405 | View lifecycle: `loadView` (WKWebView config, `allowsContentJavaScript = true`, five message handlers), `viewDidLoad` |
-| 406-413 | `beginSecurityAccess` |
-| 414-1041 | Mislabeled `MARK: EPUB Loading`; holds far more: `loadEPUB`, `renderCurrentContent`, `renderScrollContent`, `scrollRestoreBootstrapJS`, `loadSpineItem`, `navigate(to:)`, `readPageLocation`; bookmarks (`toggleBookmarkAtCurrentPosition`, `navigate(to bookmark)`); `startReading`, chapter navigation; auto-scroll; speech (`speakCurrentLocation`, rate, voice); `navigateSpine`; scrollbar visibility; `toggleReadingMode` |
-| 1042-1058 | Toolbar title (`setToolbarTitle`) |
-| 1059-1123 | TOC sidebar host |
-| 1124-1147 | Search host |
-| 1148-1170 | Context menu |
-| 1171-1257 | Display settings: `applyDynamicSettings`, `applyCosmeticCSSUpdate`, `scheduleStructuralReload`, `adjustFontSize` |
-| 1258-1423 | Progress reporting and position save and restore: `flushPositionSave`, `reportPaginatedProgress`, `didReceiveScrollPageInfo` |
-| 1424-1471 | Navigation and key handling (`handleKeyDown`) |
-| 1472-1618 | Scroll-wheel, key monitor and resize (paginated mode only) |
-| 1619-1706 | Toolbar updates, helpers (`showLoading`, `showError`), toolbar actions (`showThemePopover`) |
-| 1707-1856 | Delegate extensions: TOC sidebar, search bar, split view, window, `AVSpeechSynthesizerDelegate` |
-| 1857-1907 | `WKNavigationDelegate` (link policy) |
-| 1908-2100 | `NSToolbarDelegate`: `itemForItemIdentifier`, `makeToolbarButton` |
-| 2101-2190 | Five private `WKScriptMessageHandler` classes (progress, position, page action, position update, page info) |
-| 2191-2269 | `ReaderWebView` (key and context menu), toolbar identifier constants |
+| 27-176 | Class, state, pagination state (Patch 0007), page-count state, child VCs, layout, toolbar properties |
+| 177-430 | View lifecycle: `loadView` (WKWebView config, `allowsContentJavaScript = true`, five message handlers), `viewDidLoad` |
+| 431-438 | `beginSecurityAccess` |
+| 439-1194 | Mislabeled `MARK: EPUB Loading`; holds far more: `loadEPUB`, `renderCurrentContent`, `renderScrollContent`, `scrollRestoreBootstrapJS`, `loadSpineItem`, `navigate(to:)`, `readPageLocation`; bookmarks (`toggleBookmarkAtCurrentPosition`, `navigate(to bookmark)`); `startReading`, chapter navigation; auto-scroll; speech (`speakCurrentLocation`, rate, voice); `navigateSpine`; scrollbar visibility; `toggleReadingMode` (flag branch `toggleHostedReadingMode`), flag-mode paged load (`loadHostedPagedChapter`, `reloadHostedPagedAtCurrentOffset`) |
+| 1195-1211 | Toolbar title (`setToolbarTitle`) |
+| 1212-1276 | TOC sidebar host |
+| 1277-1300 | Search host |
+| 1301-1323 | Context menu |
+| 1324-1434 | Display settings: `applyDynamicSettings`, `applyCosmeticCSSUpdate`, `scheduleStructuralReload`, `adjustFontSize` |
+| 1435-1613 | Progress reporting and position save and restore: `flushPositionSave`, `reportPaginatedProgress`, `didReceiveScrollPageInfo` |
+| 1614-1661 | Navigation and key handling (`handleKeyDown`) |
+| 1662-1813 | Scroll-wheel, key monitor and resize (paginated mode only) |
+| 1814-1901 | Toolbar updates, helpers (`showLoading`, `showError`), toolbar actions (`showThemePopover`) |
+| 1902-2051 | Delegate extensions: TOC sidebar, search bar, split view, window, `AVSpeechSynthesizerDelegate` |
+| 2052-2123 | `WKNavigationDelegate` (link policy) |
+| 2124-2316 | `NSToolbarDelegate`: `itemForItemIdentifier`, `makeToolbarButton` |
+| 2317-2406 | Five private `WKScriptMessageHandler` classes (progress, position, page action, position update, page info) |
+| 2407-2485 | `ReaderWebView` (key and context menu), toolbar identifier constants |
 
 ### `Parsing/EPUBParser.swift`
 | Lines | Content |
@@ -220,10 +220,15 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 | `ChapterHostMessagingTests.swift` | V1 asserted: a client-world handler receives a post with content JS off; host position posts carry resource, offset and a chapter page within range, monotonic while scrolling; 50 scroll events post at most twice; malformed bodies ignored |
 | `ChapterHostRestoreTests.swift` | `loadWindow(restoring:)`: shell hidden then revealed, `.start`, `.position` round trip through `firstVisiblePosition`, `.fraction`, no drift after the deferred re-fit, an unmounted far chapter is mounted first |
 | `ChapterHostPagedTests.swift` | paged chapter on the host (M4 pass 6): paged block and bootstrap carry numbers only, `PaginationEngine` default stays on the page world, column CSS applies to the root and body width wins, class italics and centered verse survive, the pager runs in the client world with content JS off, `.start`/`.end`/`.fraction`/`.characterOffset` land on the expected column, page turns at chapter edges post `pageAction`, a cosmetic patch keeps columns and recounts, a second load replaces the first bootstrap |
+| `ChapterHostPagingTests.swift` | pure `ChapterHostPaging` (M4 pass 7): hand-off forward to the next start and back to the previous end, nil at book edges, exact-offset restore, clamped fraction, geometry fallback, link-policy `changesDocument`, `pagedTarget`, `toPaged` and `toScroll` (mode toggle) |
+| `ChapterHostPagedHandoffTests.swift` | chapter hand-off replayed on the surface: an edge page turn posts `pageAction`, the next chapter opens at column 0, the previous at its last column, forward then back returns to the same column |
+| `ChapterHostPagedOffsetTests.swift` | `qlOffsetAtCurrentColumn` and `qlNavigateToOffset` round trip, zero on the first column and an empty chapter, the offset survives a font-size patch and a reload under new geometry |
+| `ChapterHostPagedToggleTests.swift` | scroll window and pager count the same offset (U2): a shell position opens paged on the same text, a paged offset reopens the window on the same text |
 | `ChapterHostCosmeticPatchTests.swift` | live patch (C8): all three mounted chapters change color and size with no navigation and no document reload, frames grow and shrink back, optional alignment rule appears and disappears, hostile payload stays inert text, chapters served later carry the new CSS, script is static and targets `ServedChapter.userStyleID` |
 | `ChapterHostOffsetParityTests.swift` | host offsets (C2): per-chapter text-node-walk offsets equal `EPUBParser.searchResults` offsets for entities, a supplementary-plane character, whitespace and a self-closing anchor (not an expected failure, unlike the merged document); `scrollTo` then `firstVisiblePosition` round trip at three paragraph starts; unmounted chapter and past-the-end offset; script uses the shared walk definition |
 | `WebKitOffsetParityTests.swift` | real `WKWebView` harness: offset parity (`XCTExpectFailure`, merged-document wrapper whitespace), known resource and link rewrite bugs (`XCTExpectFailure`), publisher class styles survive |
 | `ReaderBaselineTests.swift` (baseline, roadmap M3) | generated synthetic books (250 and 2,000 nominal pages, 20 pages per chapter): merged-document path (`parsePackage`, `buildScrollHTML`, file write, `loadFileURL` plus forced layout) and chapter host path (`ChapterHostSurface.attach` and `loadWindow`, three mounted chapters, `scrollHeight` forced on each), 3 runs, medians, best-effort app and WebContent memory; asserts fixture sanity only (merged: chapter count and layout height; host: right three chapters, headings, heights, no `data-hc-error`); numbers go to `build/diagnostics/baseline-<pages>-pages.txt` and `host-<pages>-pages.txt`; M4 pass 5 adds `testHostScrollAcrossTwentyBoundariesTwoThousandPageBook` (in `ReaderBaselineScrollTests.swift`, an extension of this class that also holds `ScrollRunResult`; real client script, 20 boundaries, WebContent at most 30 MB, fails when the footprint is unreadable, numbers in `host-scroll-2000-pages.txt`) |
+| `ReaderBaselinePagedTests.swift` (M4 pass 7.6) | paged memory: 20 consecutive chapters of the 2,000-page fixture reached through the real edge hand-off, median of each run's maximum WebContent footprint, at most 30 MB, writes `host-paged-2000-pages.txt` |
 | `SyntheticBook.swift` | deterministic synthetic EPUB folder generator (nested `Text/` and `Styles/`, relative images, class-only italics), shared by the baseline tests |
 | `Diagnostics.swift` | `TestDiagnostics.write(_:lines:)`: writes test measurements to `<repo>/build/diagnostics/` (gitignored); a failed write fails the test |
 | `SwiftSoupSpikeTests.swift` (spike, roadmap M6/R5) | SwiftSoup 2.14.3 on synthetic XHTML: XML serialization, text-node offsets versus `searchResults`, known `&amp;lt;` double-decode drift (expected failure), active-content removal, spacer detection parity, 1 MB parse time; test-target dependency only |

@@ -63,7 +63,8 @@ final class ChapterHostPagedOffsetTests: XCTestCase {
 
     func testOffsetAtFirstColumnIsZeroAndEmptyChapterIsZero() async throws {
         let first = try await mount()
-        XCTAssertEqual(intValue(try await client(first, "return window.qlOffsetAtCurrentColumn();")), 0)
+        let firstOffset = intValue(try await client(first, "return window.qlOffsetAtCurrentColumn();"))
+        XCTAssertEqual(firstOffset, 0)
         first.tearDown()
         harness = nil
 
@@ -73,7 +74,8 @@ final class ChapterHostPagedOffsetTests: XCTestCase {
             <html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head><body><p></p></body></html>
             """
         })
-        XCTAssertEqual(intValue(try await client(empty, "return window.qlOffsetAtCurrentColumn();")), 0)
+        let emptyOffset = intValue(try await client(empty, "return window.qlOffsetAtCurrentColumn();"))
+        XCTAssertEqual(emptyOffset, 0)
     }
 
     func testOffsetSurvivesFontSizeChange() async throws {

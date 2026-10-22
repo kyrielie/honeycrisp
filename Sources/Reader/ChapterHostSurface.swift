@@ -165,23 +165,31 @@ final class ChapterHostSurface {
     func applyCosmetics(_ cosmetics: ReaderCosmeticSettings, to webView: WKWebView) async throws -> Int {
         updateServedCosmetics(cosmetics)
         if case .paged(let geometry) = presentation {
-            // One document, no iframes: take the offset of the first text on the page, replace the user block,
-            // recount the columns and seek back to that offset, so the text being read stays on screen. A
-            // chapter with no text on or after this page has offset 0 and falls back to the fraction.
-            let patched = try await webView.callAsyncJavaScript(
+            // One document, no iframes: take the offset and fraction before the CSS change, then replace the
+            // user block. A second call lets WebKit reflow the new font/geometry before qlSetup reads computed
+            // style, so the column pitch and the navigate-to-offset land correctly (C8).
+            let snapshot = try await webView.callAsyncJavaScript(
                 """
                 var style = document.getElementById('honeycrisp-user');
-                if (!style || !window.qlSetup) { return 0; }
+                if (!style || !window.qlSetup) { return null; }
                 var offset = window.qlOffsetAtCurrentColumn();
                 var before = window.qlProgressFraction();
                 style.textContent = css;
+                return JSON.stringify({ offset: offset, before: before });
+                """,
+                arguments: ["css": userCSS(for: cosmetics)], in: nil, contentWorld: .defaultClient)
+            guard let snapshotStr = snapshot as? String else { return 0 }
+            let snapshotObj = try? JSONSerialization.jsonObject(with: Data(snapshotStr.utf8)) as? [String: Any]
+            let offset = (snapshotObj?["offset"] as? NSNumber)?.intValue ?? 0
+            let before = (snapshotObj?["before"] as? NSNumber)?.doubleValue ?? 0
+            try await webView.callAsyncJavaScript(
+                """
                 window.qlSetup(cols);
                 if (offset > 0) { window.qlNavigateToOffset(offset); } else { window.qlScrollToFraction(before); }
-                return 1;
                 """,
-                arguments: ["css": userCSS(for: cosmetics), "cols": geometry.colsPerScreen.rawValue], in: nil,
-                contentWorld: .defaultClient)
-            return (patched as? NSNumber)?.intValue ?? 0
+                arguments: ["cols": geometry.colsPerScreen.rawValue, "offset": offset, "before": before],
+                in: nil, contentWorld: .defaultClient)
+            return 1
         }
         let result = try await webView.callAsyncJavaScript(
             "return window.honeycrispHost ? window.honeycrispHost.applyUserCSS(css) : 0;",
@@ -233,22 +241,7 @@ final class ChapterHostSurface {
     func loadWindow(
         around index: Int, in package: EPUBPackage, into webView: WKWebView, restoring: Restore? = nil
     ) throws {
-        let target: Int
-        let shellRestore: ChapterHostShell.Restore?
-        switch restoring {
-        case nil:
-            target = index
-            shellRestore = nil
-        case .start?:
-            target = index
-            shellRestore = .init(resource: index, offset: nil, fraction: nil)
-        case .position(let position)?:
-            target = position.resource
-            shellRestore = .init(resource: position.resource, offset: position.offset, fraction: nil)
-        case .fraction(let resource, let fraction)?:
-            target = resource
-            shellRestore = .init(resource: resource, offset: nil, fraction: fraction)
-        }
+        let (target, shellRestore) = resolveWindowRestore(restoring, index: index)
         presentation = .scroll
         if let servedCosmetics { updateServedCosmetics(servedCosmetics) }
         Self.installScripts(into: webView.configuration.userContentController, pager: nil)
@@ -285,6 +278,22 @@ final class ChapterHostSurface {
                     "if (window.honeycrispHost) { window.honeycrispHost.reveal(); }", arguments: [:], in: nil,
                     contentWorld: .defaultClient)
             }
+        }
+    }
+
+    /// Maps a `Restore?` to the scroll-window target index and the shell restore record.
+    private func resolveWindowRestore(
+        _ restoring: Restore?, index: Int
+    ) -> (target: Int, shellRestore: ChapterHostShell.Restore?) {
+        switch restoring {
+        case nil:
+            return (index, nil)
+        case .start?:
+            return (index, .init(resource: index, offset: nil, fraction: nil))
+        case .position(let position)?:
+            return (position.resource, .init(resource: position.resource, offset: position.offset, fraction: nil))
+        case .fraction(let resource, let fraction)?:
+            return (resource, .init(resource: resource, offset: nil, fraction: fraction))
         }
     }
 

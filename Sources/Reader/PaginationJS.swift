@@ -250,15 +250,47 @@ private let _pjsNavigateToOffset: String = #"""
         if (!_ready) return;
         var pos = _nodeAtChar(charOffset);
         if (!pos) return;
-        var range = document.createRange();
-        range.setStart(pos.node, pos.localOffset);
-        range.collapse(true);
-        var marker = document.createElement('span');
-        marker.style.cssText = 'display:inline;font-size:0;line-height:0;';
-        range.insertNode(marker);
-        var docX = marker.getBoundingClientRect().left + window.scrollX;
-        marker.parentNode.removeChild(marker);
-        var col = _colAndGap > 0 ? Math.max(0, Math.floor(docX / _colAndGap)) : 0;
+        // Measure untransformed: the end-of-chapter compensation (see qlScrollToColumn) shifts rect.left by the
+        // same amount scrollX falls short, which would skew docX. qlScrollToColumn below sets it again.
+        document.body.style.transform = '';
+        var pitch = _colAndGap;
+        var padLeft = parseFloat(window.getComputedStyle(document.documentElement).paddingLeft) || 0;
+        var col = 0;
+        // Preferred: the box of the character itself, the same measure as qlOffsetAtCurrentColumn. Column i
+        // starts at padLeft + i * pitch, so floor from there. A zero-size marker is not used here: when the
+        // character opens a column after a collapsed space, the marker can sit at the end of the previous line.
+        // The node is found with a strict `<`, as in qlOffsetAtCurrentColumn: _nodeAtChar uses `<=`, so an offset
+        // at the start of a text node resolves to the end of the previous one, which lies in the previous column.
+        var probe = document.createRange();
+        var found = false;
+        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+        var rem = charOffset, target = null, local = 0, tn;
+        while ((tn = walker.nextNode()) !== null) {
+            if (rem < tn.length) { target = tn; local = rem; break; }
+            rem -= tn.length;
+        }
+        var last = target ? Math.min(target.length - 1, local + 64) : -1;
+        for (var k = local; k <= last && !found; k++) {
+            probe.setStart(target, k);
+            probe.setEnd(target, k + 1);
+            var rects = probe.getClientRects();
+            if (rects.length) {
+                col = pitch > 0 ? Math.max(0, Math.floor((rects[0].left + window.scrollX - padLeft + 2) / pitch)) : 0;
+                found = true;
+            }
+        }
+        if (!found) {
+            // No character with a box nearby (an image-only or collapsed run): fall back to the marker.
+            var range = document.createRange();
+            range.setStart(pos.node, pos.localOffset);
+            range.collapse(true);
+            var marker = document.createElement('span');
+            marker.style.cssText = 'display:inline;font-size:0;line-height:0;';
+            range.insertNode(marker);
+            var docX = marker.getBoundingClientRect().left + window.scrollX;
+            marker.parentNode.removeChild(marker);
+            col = pitch > 0 ? Math.max(0, Math.round(docX / pitch)) : 0;
+        }
         window.qlScrollToColumn(col);
         _postPositionUpdate();
     };

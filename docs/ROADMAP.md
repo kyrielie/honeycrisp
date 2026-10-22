@@ -254,15 +254,20 @@ Decision: adopt. The fall-back is not built.
 
 ### M4. Windowed continuous scroll and per-chapter pagination (L)
 
-Status: in progress (scroll windowing, messaging, restore and the baseline scroll test are in code through pass 6; paginated
-mode in flag mode is pass 7, in progress). Decisions: flag mode does not read or write saved history in M4 (saved
+Status: in progress (scroll windowing, messaging, restore, the scroll baseline and paginated mode in flag mode with chapter
+hand-off, exact-offset reflow and the scroll/paged toggle are in code through pass 7; owed: the owner's click-through of the
+flag-mode paged reader and the paged memory number). Decisions: flag mode does not read or write saved history in M4 (saved
 scroll positions are whole-document offsets with spine index 0, so mapping them to `(resource, offset)` is a persisted-format
 decision made in M5); the scroll-mode page label in flag mode is per chapter, same format as paginated mode (R11 confirmed).
 
 Measurement (pass 5): `ReaderBaselineTests.testHostScrollAcrossTwentyBoundariesTwoThousandPageBook` scrolls the 2,000-page fixture
 through the real client script across 20 chapter boundaries (3 runs, median of each run's maximum WebContent footprint, budget 30 MB).
-Numbers are recorded here by the owner after a local run; none are recorded yet.
-The paginated-mode memory measurement (pass 7) does not exist yet either; it is added in pass 7.6 and recorded the same way.
+Recorded 2026-10-21 (macOS 15.8.1, Xcode 26.3, arm64, one machine): median of each run's maximum WebContent footprint 21.8 MB
+(runs 21.6, 21.9 and 21.8 MB; range 21.6 to 21.9), at most 2 chapters mounted at the maximum, 20 of 20 boundaries crossed in
+every run, against the 30 MB budget: met. The boundary test (`m4-scroll-boundaries`) crossed 44 boundaries in 800 steps with
+at most 4 chapters mounted. The paginated-mode measurement is `ReaderBaselineTests.testHostPagedAcrossTwentyBoundariesTwoThousandPageBook`
+(20 consecutive chapters, each reached through the real edge hand-off, same method and 30 MB budget); it writes
+`host-paged-2000-pages.txt` and its number is not recorded yet: the owner records it here after a local run.
 Pass 7 decisions: paged forward and back returns to the same column (chapter start going forward, chapter end going back); every
 reflow or mode change restores the exact text offset (`qlOffsetAtCurrentColumn`, additive in `PaginationJS`), including paged
 font-size changes and the paged to scroll toggle.
