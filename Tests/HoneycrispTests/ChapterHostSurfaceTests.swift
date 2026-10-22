@@ -71,7 +71,6 @@ final class ChapterHostSurfaceTests: XCTestCase {
     }
 
     func testSpikeErrorsDescribeThemselves() {
-        XCTAssertFalse(ChapterHostSurface.SpikeError.pagedModeUnsupported.errorDescription?.isEmpty ?? true)
         XCTAssertTrue(ChapterHostSurface.SpikeError.chapterUnavailable(2).errorDescription?.contains("3") ?? false)
     }
 

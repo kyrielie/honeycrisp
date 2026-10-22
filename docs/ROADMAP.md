@@ -254,13 +254,18 @@ Decision: adopt. The fall-back is not built.
 
 ### M4. Windowed continuous scroll and per-chapter pagination (L)
 
-Status: in progress (plan written; no code yet). Decisions: flag mode does not read or write saved history in M4 (saved
+Status: in progress (scroll windowing, messaging, restore and the baseline scroll test are in code through pass 6; paginated
+mode in flag mode is pass 7, in progress). Decisions: flag mode does not read or write saved history in M4 (saved
 scroll positions are whole-document offsets with spine index 0, so mapping them to `(resource, offset)` is a persisted-format
 decision made in M5); the scroll-mode page label in flag mode is per chapter, same format as paginated mode (R11 confirmed).
 
 Measurement (pass 5): `ReaderBaselineTests.testHostScrollAcrossTwentyBoundariesTwoThousandPageBook` scrolls the 2,000-page fixture
 through the real client script across 20 chapter boundaries (3 runs, median of each run's maximum WebContent footprint, budget 30 MB).
 Numbers are recorded here by the owner after a local run; none are recorded yet.
+The paginated-mode memory measurement (pass 7) does not exist yet either; it is added in pass 7.6 and recorded the same way.
+Pass 7 decisions: paged forward and back returns to the same column (chapter start going forward, chapter end going back); every
+reflow or mode change restores the exact text offset (`qlOffsetAtCurrentColumn`, additive in `PaginationJS`), including paged
+font-size changes and the paged to scroll toggle.
 
 Mount and evict neighbors near the edges; prepend without visual jump; measure memory. Paginated
 mode paginates inside each chapter with a pager hand-off at chapter edges (R11). Update

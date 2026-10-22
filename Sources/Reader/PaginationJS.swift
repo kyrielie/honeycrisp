@@ -36,6 +36,7 @@ import Foundation
 //   window.qlScrollToFraction(frac)
 //   window.qlProgressFraction() → Double 0–1
 //   window.qlNavigateToOffset(charOffset)
+//   window.qlOffsetAtCurrentColumn() → Int (offset of the first text on the current page, 0 when none)
 //   window.qlPaginationMetrics() → JSON string, read once by Swift after setup
 //
 // MESSAGES POSTED TO SWIFT (via window.webkit.messageHandlers.*):
@@ -260,6 +261,53 @@ private let _pjsNavigateToOffset: String = #"""
         var col = _colAndGap > 0 ? Math.max(0, Math.floor(docX / _colAndGap)) : 0;
         window.qlScrollToColumn(col);
         _postPositionUpdate();
+    };
+
+    // ─── Offset of the first text on the current page ────────────────────────
+    //
+    // Inverse of qlNavigateToOffset: the UTF-16 offset (same text-node walk, same convention) of the first
+    // character laid out in the current column or later. After a reflow (font size, resize, mode switch) the
+    // caller seeks to this offset, so the text the reader was on stays on screen. Does not mutate the DOM.
+    // A character is on the current page when its left edge is at or past the page's content edge, which is
+    // the root's left padding (html carries the horizontal margin, see qlColumnCount); rect.left already
+    // includes the scroll position and any end-of-chapter compensation transform (see qlScrollToColumn).
+    // Returns the total text length when no text lies on or after the current page, and 0 before setup.
+
+    window.qlOffsetAtCurrentColumn = function () {
+        if (!_ready || _colAndGap <= 0) return 0;
+        var padLeft = parseFloat(window.getComputedStyle(document.documentElement).paddingLeft) || 0;
+        function columnOf(rect) { return Math.floor((rect.left - padLeft + 2) / _colAndGap); }
+        // Column of the character at `index`. A character with no box (collapsed whitespace) takes the column of
+        // the nearest earlier character that has one, so a space at a column break stays with the page it ends;
+        // before any box there is no column (-Infinity). Non-decreasing in document order, so it can be bisected.
+        function relColumn(node, index) {
+            var r = document.createRange();
+            var stop = Math.max(0, index - 64);
+            for (var j = index; j >= stop; j--) {
+                r.setStart(node, j);
+                r.setEnd(node, j + 1);
+                var rects = r.getClientRects();
+                if (rects.length) return columnOf(rects[0]);
+            }
+            return -Infinity;
+        }
+        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+        var whole = document.createRange();
+        var consumed = 0, node;
+        while ((node = walker.nextNode()) !== null) {
+            whole.selectNodeContents(node);
+            var boxes = whole.getClientRects();
+            if (node.length > 0 && boxes.length && columnOf(boxes[boxes.length - 1]) >= 0) {
+                var low = 0, high = node.length - 1;
+                while (low < high) {
+                    var mid = (low + high) >> 1;
+                    if (relColumn(node, mid) >= 0) high = mid; else low = mid + 1;
+                }
+                return consumed + low;
+            }
+            consumed += node.length;
+        }
+        return consumed;
     };
     """#
 

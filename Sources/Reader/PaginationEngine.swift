@@ -159,6 +159,12 @@ final class PaginationEngine: NSObject {
         }
     }
 
+    /// Marks the engine not ready until the next `applyLayout`. Called before a chapter hand-off load so a key
+    /// press during the load cannot drive the old document into a second chapter request.
+    func invalidate() {
+        isReady = false
+    }
+
     func setColsPerScreen(_ cols: ColsPerScreen) {
         colsPerScreen = cols.rawValue
     }
@@ -171,11 +177,29 @@ final class PaginationEngine: NSObject {
     /// itself — by the time didFinish fires and this runs, restore has
     /// already happened.
     func applyLayout(restorePosition: RestorePosition) {
+        applyLayout(restorePosition: restorePosition, attempt: 0)
+    }
+
+    /// Flag mode runs the pager's setup on the window `load` event, which can come after `didFinish`; while the
+    /// script reports `ready: false` the read-back is retried (every 0.1 s, at most `maxLayoutRetries` times).
+    private static let maxLayoutRetries = 30
+
+    private func applyLayout(restorePosition: RestorePosition, attempt: Int) {
         guard webView != nil else { return }
         isReady = false
 
         run("window.qlPaginationMetrics();") { [weak self] result, error in
             guard let self else { return }
+            if error == nil, let str = result as? String,
+                let data = str.data(using: .utf8),
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                (json["ready"] as? Bool) == false, attempt < Self.maxLayoutRetries
+            {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                    self?.applyLayout(restorePosition: restorePosition, attempt: attempt + 1)
+                }
+                return
+            }
             self.isReady = true
 
             guard error == nil,
@@ -231,6 +255,15 @@ final class PaginationEngine: NSObject {
     func scrollToOffset(_ charOffset: Int) {
         guard isReady else { return }
         run("window.qlNavigateToOffset(\(charOffset));")
+    }
+
+    /// UTF-16 offset of the first text on the current page (`qlOffsetAtCurrentColumn`), or nil before layout is
+    /// ready or when the script call fails. Used to restore the same text after a reflow.
+    func currentOffset(completion: @escaping (Int?) -> Void) {
+        guard isReady else { completion(nil); return }
+        run("window.qlOffsetAtCurrentColumn();") { result, _ in
+            completion((result as? NSNumber)?.intValue)
+        }
     }
 
     func queryProgress(completion: @escaping (_ fraction: Double, _ column: Int, _ total: Int) -> Void) {

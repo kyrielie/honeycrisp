@@ -22,13 +22,10 @@ enum ChapterHostFlag {
 @MainActor
 final class ChapterHostSurface {
     enum SpikeError: LocalizedError {
-        case pagedModeUnsupported
         case chapterUnavailable(Int)
 
         var errorDescription: String? {
             switch self {
-            case .pagedModeUnsupported:
-                return "Paginated mode is not available while the chapter host spike is enabled."
             case .chapterUnavailable(let index):
                 return "Chapter \(index + 1) could not be shown by the chapter host spike."
             }
@@ -168,16 +165,18 @@ final class ChapterHostSurface {
     func applyCosmetics(_ cosmetics: ReaderCosmeticSettings, to webView: WKWebView) async throws -> Int {
         updateServedCosmetics(cosmetics)
         if case .paged(let geometry) = presentation {
-            // One document, no iframes: replace its user block, recount the columns and re-seek by fraction
-            // (an exact offset would need an "offset at the current column" function; roadmap N3).
+            // One document, no iframes: take the offset of the first text on the page, replace the user block,
+            // recount the columns and seek back to that offset, so the text being read stays on screen. A
+            // chapter with no text on or after this page has offset 0 and falls back to the fraction.
             let patched = try await webView.callAsyncJavaScript(
                 """
                 var style = document.getElementById('honeycrisp-user');
                 if (!style || !window.qlSetup) { return 0; }
+                var offset = window.qlOffsetAtCurrentColumn();
                 var before = window.qlProgressFraction();
                 style.textContent = css;
                 window.qlSetup(cols);
-                window.qlScrollToFraction(before);
+                if (offset > 0) { window.qlNavigateToOffset(offset); } else { window.qlScrollToFraction(before); }
                 return 1;
                 """,
                 arguments: ["css": userCSS(for: cosmetics), "cols": geometry.colsPerScreen.rawValue], in: nil,

@@ -95,6 +95,9 @@ final class ReaderViewController: NSViewController {
     /// isn't sufficient here.
     private var keyDownMonitor: Any?
     private var resizeDebounceTimer: Timer?
+    /// Flag mode: the column geometry of the paged chapter on screen, so a layout pass that changed nothing
+    /// does not reload it.
+    private var lastHostedPagedGeometry: ChapterHostPagedGeometry?
     private var pendingPaginatedRestorePosition: RestorePosition = .start
 
     /// Set just before switching from paginated mode to scroll mode, so
@@ -193,6 +196,11 @@ final class ReaderViewController: NSViewController {
             host.onPositionChange = { [weak self] position, page, pages in
                 self?.didReceiveHostPosition(position, chapterPage: page, chapterPages: pages)
             }
+            // Paginated mode on the host (M4 pass 7): the pager's edge request and column reports.
+            host.onPageAction = { [weak self] forward in self?.navigateSpine(forward: forward) }
+            host.onPagerPosition = { [weak self] column, total in
+                self?.didReceivePositionUpdate(column: column, totalColumns: total)
+            }
             chapterHost = host
         }
 
@@ -213,7 +221,9 @@ final class ReaderViewController: NSViewController {
         webView.setValue(false, forKey: "drawsBackground")
         webView.readerViewController = self
 
-        paginationEngine = PaginationEngine(webView: webView)
+        // Flag mode: the pager runs in the client world (ChapterHostSurface.install), so the engine must too.
+        let pagerWorld: WKContentWorld? = chapterHost == nil ? nil : .defaultClient
+        paginationEngine = PaginationEngine(webView: webView, contentWorld: pagerWorld)
         paginationEngine?.spineDidLoad = { [weak self] totalCols in
             guard let self else { return }
             self.paginatedTotalColumns = totalCols
@@ -559,7 +569,11 @@ final class ReaderViewController: NSViewController {
             renderScrollContent(pkg: pkg)
         case .paginated:
             if chapterHost != nil {
-                showError(ChapterHostSurface.SpikeError.pagedModeUnsupported)
+                // Flag mode: an in-memory restore only. `pendingPaginatedRestorePosition` comes from history.
+                let target = ChapterHostPaging.pagedTarget(
+                    for: pendingHostRestore, fallbackIndex: currentSpineIndex, count: pkg.spineURLs.count)
+                pendingHostRestore = nil
+                loadSpineItem(index: target.index, restorePosition: target.restore, pkg: pkg)
                 return
             }
             loadSpineItem(index: currentSpineIndex, restorePosition: pendingPaginatedRestorePosition, pkg: pkg)
@@ -665,6 +679,10 @@ final class ReaderViewController: NSViewController {
         }
         currentSpineIndex = index
         updateCurrentChapter(for: pkg.spineURLs[index])
+        if let host = chapterHost {
+            loadHostedPagedChapter(host, index: index, restorePosition: restorePosition, pkg: pkg)
+            return
+        }
         pendingPaginatedRestorePosition = restorePosition
         do {
             let parser = EPUBParser()
@@ -692,6 +710,50 @@ final class ReaderViewController: NSViewController {
             webView.loadFileURL(indexURL, allowingReadAccessTo: pkg.rootFolder)
         } catch {
             showError(error)
+        }
+    }
+
+    /// Flag mode (M4 pass 7): one chapter as the top-level document, laid out in columns by the shared pager.
+    /// The engine is not ready until `didFinish` has read the layout back, so a key press or a second edge
+    /// request during the load is ignored (`navigateSpine`). Nothing is read from or written to history.
+    private func loadHostedPagedChapter(
+        _ host: ChapterHostSurface, index: Int, restorePosition: RestorePosition, pkg: EPUBPackage
+    ) {
+        let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, language: pkg.language)
+        lastBuiltCosmetics = cosmetics
+        host.attach(package: pkg, cosmetics: cosmetics)
+        let geometry = hostedPagedGeometry()
+        lastHostedPagedGeometry = geometry
+        paginationEngine?.invalidate()
+        do {
+            try host.loadPaged(
+                resource: index, in: pkg, into: webView, geometry: geometry, restore: restorePosition)
+        } catch {
+            showError(error)
+        }
+    }
+
+    private func hostedPagedGeometry() -> ChapterHostPagedGeometry {
+        ChapterHostPaging.geometry(
+            viewport: webView.bounds.size, cols: SettingsManager.shared.colsPerScreen,
+            paddingH: SettingsManager.shared.paddingH, paddingV: SettingsManager.shared.paddingV,
+            maxWidth: SettingsManager.shared.maxWidth)
+    }
+
+    /// Flag mode, paged: reopen the current chapter at the offset of the first text on the page, so a resize or
+    /// a structural setting change keeps the text being read on screen (roadmap M4 decision). In memory only.
+    private func reloadHostedPagedAtCurrentOffset() {
+        guard let engine = paginationEngine, engine.isReady else {
+            renderCurrentContent()
+            return
+        }
+        engine.currentOffset { [weak self] offset in
+            guard let self else { return }
+            if let offset {
+                self.pendingHostRestore = .position(
+                    ChapterHostSurface.Position(resource: self.currentSpineIndex, offset: offset))
+            }
+            self.renderCurrentContent()
         }
     }
 
@@ -1008,10 +1070,13 @@ final class ReaderViewController: NSViewController {
     /// Called from PaginationEngine.spineNavigationHandler when a page turn runs
     /// past the current spine item's last/first column.
     private func navigateSpine(forward: Bool) {
-        guard let pkg = currentPackage else { return }
-        let next = currentSpineIndex + (forward ? 1 : -1)
-        guard next >= 0 && next < pkg.spineURLs.count else { return }
-        loadSpineItem(index: next, restorePosition: forward ? .start : .end, pkg: pkg)
+        guard let pkg = currentPackage,
+            let target = ChapterHostPaging.handoff(
+                from: currentSpineIndex, forward: forward, count: pkg.spineURLs.count)
+        else { return }
+        // Flag mode: the engine is not ready while a chapter loads, which drops a second request.
+        if chapterHost != nil, paginationEngine?.isReady != true { return }
+        loadSpineItem(index: target.index, restorePosition: target.restore, pkg: pkg)
     }
 
     // Paginated-mode position saves are unified with scroll mode's — see
@@ -1278,6 +1343,10 @@ final class ReaderViewController: NSViewController {
         structuralSettingsDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
             // Flag mode: the position query below falls back to offset 0 and would overwrite the saved position.
             if let self, let host = self.chapterHost {
+                if case .paged = host.presentation {
+                    self.reloadHostedPagedAtCurrentOffset()
+                    return
+                }
                 // Reopen where the reader is, in memory only: nothing is written to `HistoryManager`.
                 Task { @MainActor in
                     if let position = try? await host.firstVisiblePosition(in: self.webView) {
@@ -1326,7 +1395,8 @@ final class ReaderViewController: NSViewController {
     // MARK: - Progress reporting
 
     func didReceiveProgress(_ percent: Int) {
-        guard let url = currentEPUBURL else { return }
+        // Flag mode writes no progress (roadmap M4: position and progress persistence is M5).
+        guard chapterHost == nil, let url = currentEPUBURL else { return }
         HistoryManager.shared.updateProgress(url: url, percent: percent)
     }
 
@@ -1690,6 +1760,11 @@ final class ReaderViewController: NSViewController {
             // layout pass fired before PaginationEngine.applyLayout finished its
             // own setup (isReady flips true only once that completes).
             guard self.paginationEngine?.isReady == true else { return }
+            if self.chapterHost != nil {
+                // Flag mode: only a changed geometry reloads, and it restores the exact offset.
+                if self.hostedPagedGeometry() != self.lastHostedPagedGeometry { self.reloadHostedPagedAtCurrentOffset() }
+                return
+            }
             self.paginationEngine?.currentFraction { fraction in
                 self.loadSpineItem(index: self.currentSpineIndex, restorePosition: .fraction(fraction), pkg: pkg)
             }
@@ -1949,6 +2024,14 @@ extension ReaderViewController: WKNavigationDelegate {
             decisionHandler(.cancel)
             return
         }
+        // Flag mode, paged: a link to another chapter would replace the document behind the reader's back.
+        // Cross-chapter links are M5; same-document fragment jumps are left alone.
+        if let host = chapterHost, case .paged = host.presentation, action.navigationType == .linkActivated,
+            let target = action.request.url, ChapterHostPaging.changesDocument(from: webView.url, to: target)
+        {
+            decisionHandler(.cancel)
+            return
+        }
         if chapterHost != nil, !ChapterHostSurface.allowsNavigation(to: action.request.url) {
             decisionHandler(.cancel)
             return
@@ -1957,7 +2040,12 @@ extension ReaderViewController: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if chapterHost != nil {
+        if let host = chapterHost {
+            if case .paged = host.presentation {
+                // Read the column count and position back; the pager's own setup, restore and reveal ran on `load`.
+                paginationEngine?.setColsPerScreen(SettingsManager.shared.colsPerScreen)
+                paginationEngine?.applyLayout(restorePosition: .start)
+            }
             refreshBookmarkButton()
             return
         }
