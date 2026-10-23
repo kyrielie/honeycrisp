@@ -31,7 +31,7 @@ final class WebKitOffsetParityTests: XCTestCase {
             let result = try XCTUnwrap(parser.searchResults(for: marker, in: package).first)
             return result.characterOffset
         }
-        let html = try parser.buildScrollHTML(from: package, cosmetics: cosmetics)
+        let html = try FlowDocumentBuilder.buildDocument(package: package, cosmetics: cosmetics)
         XCTAssertTrue(html.contains("<html lang=\"en-US\">"))
         let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         let loaded = expectation(description: "synthetic EPUB loads in WebKit")
@@ -53,25 +53,21 @@ final class WebKitOffsetParityTests: XCTestCase {
 
     func testSyntheticFixtureCapturesKnownResourceAndLinkBugs() throws {
         let package = try makeFixturePackage()
-        let html = try EPUBParser().buildScrollHTML(from: package, cosmetics: cosmetics)
-        let nestedImage = package.rootFolder
-            .appendingPathComponent("Text/Images/cover art.png")
-            .absoluteString
-        let encodedImage = package.rootFolder
-            .appendingPathComponent("Text/Images/encoded art.png")
-            .absoluteString
-        let secondChapter = package.rootFolder.appendingPathComponent("Text/chapter 2.xhtml").absoluteString
+        let html = try FlowDocumentBuilder.buildDocument(package: package, cosmetics: cosmetics)
+        let rootPath = package.rootFolder.path
 
-        XCTAssertTrue(html.contains("src=\"\(nestedImage)\""))
-        XCTAssertTrue(html.contains("src=\"\(encodedImage)\""))
-        XCTAssertTrue(html.contains("href=\"\(secondChapter)#target\""))
-        XCTAssertTrue(html.contains("href=\"#local-target\""))
-        XCTAssertTrue(html.contains("<a id=\"self-closing\"></a>ANCHOR_MARKER"))
+        // FlowDocumentBuilder isolates URLs and does not leak absolute filesystem paths into src/href
+        XCTAssertFalse(html.contains("src=\"file://"))
+        XCTAssertFalse(html.contains("src=\"\(rootPath)"))
+        XCTAssertTrue(html.contains("honeycrisp-epub://book/Text/Images/cover%20art.png"))
+        XCTAssertTrue(html.contains("honeycrisp-epub://book/Text/Images/encoded%20art.png"))
+        XCTAssertTrue(html.contains("href=\"#hc-r1-target\""))
+        XCTAssertTrue(html.contains("href=\"#hc-r0-local-target\""))
     }
 
     func testPublisherClassStylesRemainInFixtureDocument() async throws {
         let package = try makeFixturePackage()
-        let html = try EPUBParser().buildScrollHTML(from: package, cosmetics: cosmetics)
+        let html = try FlowDocumentBuilder.buildDocument(package: package, cosmetics: cosmetics)
         let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         let loaded = expectation(description: "styled synthetic EPUB loads in WebKit")
         let delegate = NavigationDelegate { loaded.fulfill() }

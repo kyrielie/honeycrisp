@@ -39,7 +39,7 @@ final class ChapterPipelineThroughputTests: XCTestCase {
             "renderAll300ChaptersSequentialMs: \(String(format: "%.1f", seqMs))",
             "renderAll300ChaptersConcurrentMs: \(String(format: "%.1f", concMs))",
             "searchResults300ChaptersMs: \(String(format: "%.1f", searchMs))",
-            "buildScrollHTML2000PagesMs: \(String(format: "%.1f", scrollMs))",
+            "buildFlowDocument2000PagesMs: \(String(format: "%.1f", scrollMs))",
         ]
         try TestDiagnostics.write("pipeline-throughput.txt", lines: lines)
     }
@@ -128,7 +128,7 @@ final class ChapterPipelineThroughputTests: XCTestCase {
         let parser = EPUBParser()
         for _ in 0..<3 {
             let (_, ms) = try timeBlock {
-                try parser.buildScrollHTML(from: package, cosmetics: Self.testCosmetics)
+                try FlowDocumentBuilder.buildDocument(package: package, cosmetics: Self.testCosmetics)
             }
             runs.append(ms)
         }

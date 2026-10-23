@@ -2,8 +2,8 @@ import Foundation
 import WebKit
 
 /// The L3 surface protocol representing a flowing reader surface (FRAMEWORK contract C5).
-/// Concrete implementations include `ChapterHostSurface` (windowed iframe host behind `HONEYCRISP_CHAPTER_HOST=1`),
-/// `LegacyMergedSurface` (the 2.2.1 merged-document render), and `FlowSurface` (roadmap M4a default).
+/// Concrete implementations include `ChapterHostSurface` (windowed iframe host behind `HONEYCRISP_CHAPTER_HOST=1`)
+/// and `FlowSurface` (roadmap M4a default).
 @MainActor
 protocol FlowingSurface: AnyObject {
     /// Content world where pagination scripts run: nil for merged document, `.defaultClient` for isolated surfaces.
@@ -50,51 +50,6 @@ protocol FlowingSurface: AnyObject {
 
     /// Target spine index and restore position when restoring paginated mode.
     func targetForPaginatedRestore(fallbackIndex: Int, count: Int) -> (index: Int, restore: RestorePosition)?
-}
-
-/// Adapts the legacy 2.2.1 merged document path to `FlowingSurface` (contract C5).
-@MainActor
-final class LegacyMergedSurface: FlowingSurface {
-    var pagerContentWorld: WKContentWorld? { nil }
-    var supportsBookmarks: Bool { true }
-    var persistsProgress: Bool { true }
-    var persistsPosition: Bool { true }
-    var requiresEngineReadyForSpineNavigation: Bool { false }
-    var managesScrollWindow: Bool { false }
-    var managesPagedChapter: Bool { false }
-    var handlesReadingModeToggle: Bool { false }
-    var handlesStructuralReload: Bool { false }
-    var handlesPaginatedResize: Bool { false }
-
-    func install(into configuration: WKWebViewConfiguration) {
-        // Legacy merged path does not install scheme handlers or isolate scripts.
-    }
-
-    func applyCosmetics(_ cosmetics: ReaderCosmeticSettings, to webView: WKWebView, mode: ReadingMode) async throws {
-        guard let cssLiteral = EPUBParser.javaScriptStringLiteral(EPUBParser.readerVarsCSS(cosmetics)) else { return }
-        let js = """
-            (function() {
-              var el = document.getElementById('honeycrisp-vars');
-              if (el) el.textContent = \(cssLiteral);
-            })();
-            """
-        _ = try await webView.evaluateJavaScript(js)
-        if mode == .scroll {
-            _ = try? await webView.evaluateJavaScript("window.reportPageInfo && window.reportPageInfo();")
-        }
-    }
-
-    func allowsNavigation(action: WKNavigationAction, currentURL: URL?) -> Bool {
-        true
-    }
-
-    func didFinishNavigation(in webView: WKWebView, paginationEngine: PaginationEngine?, colsPerScreen: ColsPerScreen) -> Bool {
-        false
-    }
-
-    func targetForPaginatedRestore(fallbackIndex: Int, count: Int) -> (index: Int, restore: RestorePosition)? {
-        nil
-    }
 }
 
 extension ChapterHostSurface: FlowingSurface {

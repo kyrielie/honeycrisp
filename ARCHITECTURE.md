@@ -34,7 +34,7 @@ EPUBReaderApp (SwiftUI @main, boots AppDelegate)
             ├── EPUBParser                 — unzip, OPF/spine parse, HTML+CSS build
             ├── TOCParser                  — NCX / nav.xhtml / spine-synthesis
             ├── PaginationEngine           — column-layout state machine (paginated mode)
-            ├── TOCSidebarViewController   — NSSplitView sidebar
+            ├── TOCPopupViewController     — popup with type-to-filter
             └── SearchBarViewController    — in-book search overlay
     SettingsManager (singleton)            — UserDefaults-backed settings/themes
     HistoryManager (singleton)             — UserDefaults-backed recent-files + position
@@ -49,17 +49,29 @@ EPUBReaderApp (SwiftUI @main, boots AppDelegate)
 | `App/EPUBReaderApp.swift` | SwiftUI `@main` entry point; immediately hands off to `AppDelegate`. |
 | `App/AppDelegate.swift` | App lifecycle, all `NSMenu` construction, Apple-Event file-open handling, per-window vs per-tab open routing, live keybinding sync (`syncMenuShortcuts`), menu validation. |
 | `Reader/ReaderWindowController.swift` | Per-window chrome: `NSWindow` creation, toolbar attach, float-on-top level/collectionBehavior, cascading placement, window-close → flush position save. |
-| `Reader/ReaderViewController.swift` | The core reading surface: `WKWebView` configuration and message handlers, toolbar (`NSToolbarDelegate`), keyboard/scroll-wheel monitors for paginated mode, TOC sidebar host, search overlay host, cosmetic-vs-structural settings application, position save/restore, title display. |
-| `Reader/FlowingSurface.swift` | L3 surface protocol (`FlowingSurface`, FRAMEWORK C5) isolating reading surfaces from shell logic; `LegacyMergedSurface` adapter; `ChapterHostSurface` conformance. |
+| `Reader/ReaderViewController.swift` | The core reading surface: `WKWebView` configuration and message handlers, toolbar (`NSToolbarDelegate`), keyboard/scroll-wheel monitors for paginated mode, TOC popup host, search overlay host, cosmetic-vs-structural settings application, position save/restore, title display. |
+| `Reader/FlowingSurface.swift` | L3 surface protocol (`FlowingSurface`, FRAMEWORK C5) isolating reading surfaces from shell logic; `ChapterHostSurface` and `FlowSurface` conformance. (Legacy merged document path deleted in M5). |
 | `Reader/FlowDocumentBuilder.swift` | Multi-chapter flow document builder; namespaces element IDs, rewrites in-book links, resolves app-scheme URLs. |
-| `Reader/FlowSurface.swift` | Flow surface implementation (M4a default surface): renders continuous flow document under `honeycrisp-epub://`, disables author JS, isolates client-world scripts, section-rooted positions, and enforces CSP. |
+| `Reader/FlowSurface.swift` | Flow surface implementation (default reading surface): renders continuous flow document under `honeycrisp-epub://`, disables author JS, isolates client-world scripts, section-rooted positions, and enforces CSP. |
+| `Reader/ReaderCosmeticSettings.swift` | Snapshot of reader cosmetics and hit color palette; pure Foundation and AppKit-free. |
+| `Reader/ReaderStyles.swift` | Stylesheets, CSS variables (`readerVarsCSS`), image visibility, and multi-column CSS (`paginatedColumnCSS`). |
+| `Reader/ReaderScripts.swift` | Injected client-world scripts (`readerJS`) for search, position, navigation, and speech. |
 | `Reader/PaginationEngine.swift` | Drives `PaginationJS` from Swift: column navigation, fraction/offset restore, spine-boundary detection. |
 | `Reader/PaginationJS.swift` | JS injected only in paginated mode: column-snap page turns, boundary detection posting back to `PageActionMessageHandler`. |
-| `Parsing/EPUBParser.swift` | ZIP extraction (via ZIPFoundation), `container.xml` → OPF → manifest/spine/navigation/landmark parsing, per-chapter HTML extraction/rewriting, whole-spine search indexing, scroll-mode and paginated-mode HTML+CSS builders, and the `readerJS` bridge (search, progress, position, chapter navigation, auto-scroll). |
+| `Parsing/BookFormat.swift` | File format detection enum (`BookFormat`), UTI definitions, file extension mappings, and format support queries. |
+| `Parsing/DocumentImporter.swift` | Unified importation dispatcher (`DocumentImporter`, `DocumentImporterError`) converting EPUB, plain text, HTML, and Markdown files into `EPUBPackage` instances. |
+| `Parsing/PlainTextImporter.swift` | Pure Foundation plain text importer: multi-encoding fallback, metadata extraction, chapter heading detection, scene break detection, and synthesized EPUB package generation. |
+| `Parsing/HTMLDocumentImporter.swift` | Pure Foundation HTML importer: SwiftSoup parsing, active script/plugin stripping, article/heading chapter splitting, and synthesized EPUB package generation. |
+| `Parsing/MarkdownImporter.swift` | Pure Foundation Markdown importer: CommonMark/GFM block parsing, YAML frontmatter extraction, heading chapter splitting, and synthesized EPUB package generation. |
+| `Parsing/EPUBPackage.swift` | Publication data models (`EPUBPackage`, `EPUBManifestItem`, `EPUBSpineItem`, `EPUBLandmark`, `BookSearchResult`, `EPUBParseError`). |
+| `Parsing/EPUBParser.swift` | Pure Foundation and ZIPFoundation parser (AppKit-free, WebKit-free): ZIP extraction, `container.xml` -> OPF -> manifest/spine/navigation/landmark parsing. |
 | `Parsing/TOCParser.swift` | Manifest-declared EPUB3 nav, NCX (EPUB2), and synthesized spine fallback; preserves hierarchy and resolves Start Reading landmarks. |
-| `Sidebar/TOCSidebarViewController.swift` | TOC outline view inside the reader's `NSSplitView`. |
+| `Content/ChapterSearch.swift` | Search indexing and speech text extraction over package chapters using `ChapterPipeline`. |
+| `Sidebar/TOCModel.swift` | Pure Swift model for TOC hierarchy, resolution, expansion, and filtering (`TOCLocation`, `TOCItem`, `TOCModel`). |
+| `Sidebar/TOCPopupViewController.swift` | Modernized popup Table of Contents with type-to-filter search and keyboard navigation (`TOCPanel`, `TOCOutlineView`). |
 | `Sidebar/SearchBarViewController.swift` | Centered in-book search overlay, debounced input, contextual excerpts, and navigable results. Search terms pass to WebKit as JSON string literals. |
 | `Sidebar/ThemePopoverViewController.swift` | Toolbar gear-button quick theme switcher (Apple-Books-style popover). |
+| `History/NavigationHistory.swift` | Back and Forward navigation history stack (`NavigationLocation`, `NavigationHistoryStack`, Decision R13). |
 | `History/HistoryManager.swift` | Singleton; `UserDefaults`-backed `[HistoryEntry]` — url, title, opened date, security-scoped bookmark, reading-progress percent, and a flow locator with offset, layout, and fraction fallback. |
 | `History/ReadingBookmark.swift` | Codable bookmarks in an independently versioned `UserDefaults` envelope, separate from History. |
 | `History/HistoryViewController.swift` | Popover list of recent books (open / remove actions). |
@@ -113,13 +125,11 @@ back to `super.keyDown(with:)` when it didn't.
 1. `AppDelegate.application(_:open:)` or `ReaderWindowController.showOpenPanel` gets a file `URL`.
 2. `ReaderViewController.loadEPUB(url:)` starts security-scoped access, then off the main thread:
    `EPUBParser.unpackEPUB` (ZIP → temp dir) → `EPUBParser.parsePackage` (container.xml → OPF → `EPUBPackage`) → `TOCParser.parseTOC`.
-3. Back on main: `HistoryManager.record`, TOC sidebar populated, reading mode read from `SettingsManager.shared.defaultReadingMode`.
-4. `EPUBParser.buildScrollHTML` or `buildPageHTML` renders the actual HTML document (CSS vars baked in from `ReaderCosmeticSettings.current`), written to a temp file, loaded via `webView.loadFileURL`.
-5. `readerJS` (embedded in every rendered document) reports scroll/position/page-info back to Swift via `WKScriptMessageHandler`s registered in `ReaderViewController.loadView()`.
+3. Back on main: `HistoryManager.record`, TOC model initialized, reading mode read from `SettingsManager.shared.defaultReadingMode`.
+4. In continuous flow reading (the active default), `FlowDocumentBuilder` renders chapters inside `<section class="hc-chapter" id="hc-r{N}">` served over `honeycrisp-epub://book/...` via `FlowSurface`. In paginated mode, `buildPageHTML` renders each spine item.
+5. `readerJS` (embedded in the rendered document or injected via `FlowSurface`) reports scroll, position, and page information back to Swift via `WKScriptMessageHandler` handlers.
 
-Two independent HTML-generation paths (`buildScrollHTML` for scroll mode, one document per spine item via `buildPageHTML` for paginated mode) share one SwiftSoup content pipeline (`ChapterPipeline` in `Sources/Content/`) and one CSS-vars function (`readerVarsCSS`) so the two rendering modes can't drift apart on formatting or theming. Under milestone M4a, `FlowDocumentBuilder` and `FlowSurface` render chapters inside `<section class="hc-chapter" id="hc-r{N}">` served over `honeycrisp-epub://book/...` with author JavaScript disabled, app scripts in `WKContentWorld.defaultClient`, and publisher styles harvested via `ChapterStyles` (Rule N3/N6, Decision R21).
-
-Direction (roadmap R20): EPUB XHTML is parsed as XML by the SwiftSoup content pipeline (M6) and is shown by the flow surface (`FlowSurface`, M4a), one document with a section per chapter, served through the scheme handler. The chapter host in 4a stays behind its flag.
+The reader architecture is layered across L1-L3: `FlowDocumentBuilder` and `FlowSurface` render chapters served over `honeycrisp-epub://book/...` with author JavaScript disabled, app scripts in `WKContentWorld.defaultClient`, and publisher styles harvested via `ChapterStyles` (Rule N3/N6, Decision R21). The legacy merged document path (`buildScrollHTML` and `LegacyMergedSurface`) was completely removed in Milestone M5. Under milestone M5, navigation history (Decision R13), TOC fragment navigation, bookmarks, speech, and cross-chapter anchor navigation operate directly on `FlowSurface`.
 
 ### 4a. Flag mode: chapter host spike (roadmap M3; off by default)
 

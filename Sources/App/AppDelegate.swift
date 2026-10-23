@@ -92,17 +92,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        let epubURLs = urls.filter { $0.pathExtension.lowercased() == "epub" }
-        let unsupported = urls.filter { !$0.isFileURL || $0.pathExtension.lowercased() != "epub" }
+        let supportedURLs = urls.filter { BookFormat.isSupported(url: $0) }
+        let unsupported = urls.filter { !BookFormat.isSupported(url: $0) }
         if !unsupported.isEmpty {
             let alert = NSAlert()
             alert.messageText = "Unsupported File Type"
             let skippedNames = unsupported.map(\.lastPathComponent).joined(separator: ", ")
-            alert.informativeText = "Honeycrisp opens EPUB books. Unsupported items were skipped: \(skippedNames)"
+            alert.informativeText = "Honeycrisp opens EPUB, HTML, Markdown, and Plain Text files. Unsupported items were skipped: \(skippedNames)"
             alert.alertStyle = .warning
             alert.runModal()
         }
-        for url in epubURLs {
+        for url in supportedURLs {
             let wc = ReaderWindowController()
             // "New tab" means a tab of the frontmost reader window, the same
             // way Safari/Preview interpret it -- simplest option, and there's
@@ -246,6 +246,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(.separator())
         viewMenu.addItem(readingModeItem)
 
+        // ── Go Menu ───────────────────────────────────────────────────────────
+        let goMenuItem = NSMenuItem()
+        mainMenu.addItem(goMenuItem)
+        let goMenu = NSMenu(title: "Go")
+        goMenuItem.submenu = goMenu
+
+        let backItem = NSMenuItem(title: "Back", action: #selector(goBack), keyEquivalent: "[")
+        goMenu.addItem(backItem)
+        let forwardItem = NSMenuItem(title: "Forward", action: #selector(goForward), keyEquivalent: "]")
+        goMenu.addItem(forwardItem)
+
+        goMenu.addItem(.separator())
+        goMenu.addItem(NSMenuItem(title: "Start Reading", action: #selector(startReading), keyEquivalent: ""))
+        goMenu.addItem(NSMenuItem(title: "Go to Beginning", action: #selector(goToBeginning), keyEquivalent: ""))
+
+        goMenu.addItem(.separator())
+        let chapterItems: [(String, Selector)] = [
+            ("Previous Chapter", #selector(previousChapter)),
+            ("Next Chapter", #selector(nextChapter)),
+            ("Beginning of Chapter", #selector(chapterBeginning)),
+            ("End of Chapter", #selector(chapterEnd)),
+        ]
+        for (title, action) in chapterItems {
+            goMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: ""))
+        }
+
         let bookmarksItem = NSMenuItem()
         mainMenu.addItem(bookmarksItem)
         let bookmarksMenu = NSMenu(title: "Bookmarks")
@@ -293,17 +319,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSMenuItem(title: "Increase Font Size", action: #selector(increaseFontSize), keyEquivalent: "+"))
         readingMenu.addItem(
             NSMenuItem(title: "Decrease Font Size", action: #selector(decreaseFontSize), keyEquivalent: "-"))
-
-        readingMenu.addItem(.separator())
-        let chapterItems: [(String, Selector)] = [
-            ("Previous Chapter", #selector(previousChapter)),
-            ("Next Chapter", #selector(nextChapter)),
-            ("Beginning of Chapter", #selector(chapterBeginning)),
-            ("End of Chapter", #selector(chapterEnd)),
-        ]
-        for (title, action) in chapterItems {
-            readingMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: ""))
-        }
 
         let autoScrollMenu = NSMenu(title: "Auto-Scroll")
         autoScrollMenu.addItem(
@@ -409,9 +424,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openDocumentAction() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.init(filenameExtension: "epub")!]
+        panel.allowedContentTypes = BookFormat.supportedContentTypes
         panel.allowsMultipleSelection = false
-        panel.message = "Choose an EPUB file to open"
+        panel.message = "Choose a book or document to open"
         panel.prompt = "Open"
 
         if let window = NSApp.keyWindow ?? NSApp.windows.first {
@@ -444,6 +459,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func startReading() { readerVC()?.startReading() }
     @objc private func goToBeginning() { readerVC()?.goToBeginning() }
+    @objc private func goBack() { readerVC()?.goBack() }
+    @objc private func goForward() { readerVC()?.goForward() }
     @objc private func toggleBookmark() { readerVC()?.toggleBookmarkAtCurrentPosition() }
     @objc private func openRecent(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID,
@@ -512,7 +529,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Helpers
 
     private func readerVC() -> ReaderViewController? {
-        NSApp.keyWindow?.contentViewController as? ReaderViewController
+        TOCPanel.hostWindow(for: NSApp.keyWindow)?.contentViewController as? ReaderViewController
     }
 }
 
@@ -601,6 +618,12 @@ extension AppDelegate: NSMenuItemValidation {
             // Only meaningful in paginated mode; grey it out in scroll mode (and
             // when there's no reader window open at all to be consistent with).
             return readerVC()?.currentMode == .paginated
+        }
+        if menuItem.action == #selector(goBack) {
+            return readerVC()?.canGoBack ?? false
+        }
+        if menuItem.action == #selector(goForward) {
+            return readerVC()?.canGoForward ?? false
         }
         let readingActions: [Selector?] = [
             #selector(previousChapter), #selector(nextChapter), #selector(chapterBeginning), #selector(chapterEnd),

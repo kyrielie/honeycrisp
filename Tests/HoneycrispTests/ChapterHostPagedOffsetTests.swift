@@ -17,8 +17,8 @@ final class ChapterHostPagedOffsetTests: XCTestCase {
 
     /// About 60 paragraphs of numbered, unique words: many columns at the harness geometry.
     private static func longChapter(_ index: Int) -> String {
-        let paragraphs = (0..<60).map { n in
-            "<p>Paragraph \(n) of chapter \(index). " + String(repeating: "alpha beta gamma delta epsilon ", count: 8) + "</p>"
+        let paragraphs = (0..<60).map { paragraphIndex in
+            "<p>Paragraph \(paragraphIndex) of chapter \(index). " + String(repeating: "alpha beta gamma delta epsilon ", count: 8) + "</p>"
         }.joined()
         return """
             <?xml version="1.0" encoding="utf-8"?>

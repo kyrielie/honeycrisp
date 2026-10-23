@@ -202,12 +202,12 @@ final class ChapterPipelineParityTests: XCTestCase {
 
         let parser = EPUBParser()
         let package = try parser.parsePackage(at: tempDir)
-        let scrollHTML = try parser.buildScrollHTML(from: package, cosmetics: Self.testCosmetics)
+        let scrollHTML = try FlowDocumentBuilder.buildDocument(package: package, cosmetics: Self.testCosmetics)
         try await loadHTML(scrollHTML)
 
         let script = """
             (function() {
-                var sections = document.querySelectorAll('section.ql-chapter');
+                var sections = document.querySelectorAll('section.hc-chapter');
                 var result = [];
                 for (var i = 0; i < sections.length; i++) {
                     var walker = document.createTreeWalker(sections[i], NodeFilter.SHOW_TEXT, null);

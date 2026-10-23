@@ -304,13 +304,16 @@ Exit: the default path is the flow surface, the chapter host is still reachable 
 
 ### M5. Port features to the surface seam, delete the regex path (L)
 
-Status: not started; after M4a (R20).
+Status: complete. (Passes 1 to 7 complete: Navigation history stack, Flow TOC and fragment navigation, speech and auto-scroll on FlowSurface, bookmarks on FlowSurface, in-book anchor and cross-chapter links, deleted legacy merged document path and LegacyMergedSurface, EPUBParser modularized across layers).
 
-Port onto `FlowSurface` through the `FlowingSurface` protocol, one per PR: position save and restore (including the mapping from saved whole-document scroll offsets to
-`(resource, offset)`, decided here), search and highlights, auto-scroll,
-speech, bookmarks, TOC jumps, in-book links including cross-chapter links. Add navigation history
-(R13). Port to `ChapterHostSurface` only if a decision (R20) makes it selectable. Then delete the 2.2.1 merged path (`buildScrollHTML`, `buildPageHTML`, the `loadFileURL` sites), if the owner confirms after M4a ships; `rewriteResourceURLs` and the regex URL code are already gone (M6). Split
-`EPUBParser.swift` by layer at this point (FRAMEWORK section 2).
+Pass summary:
+- Pass 1 (Decision R13): Navigation history stack (`NavigationLocation`, `NavigationHistoryStack` in `Sources/History/NavigationHistory.swift`), Back (Cmd-[) and Forward (Cmd-]) shortcuts, native Go menu in `AppDelegate`. Tested in `NavigationHistoryTests.swift`.
+- Pass 2: TOC and fragment navigation on flow surface (`hc-r{resource}-{id}` namespacing, fallback resolver in `readerJS`). Tested in `FlowTOCNavigationTests.swift`.
+- Pass 3: Speech (TTS) and auto-scroll evaluation in client world (`evaluateInSurfaceWorld`), skip hidden/aria-hidden/script/style elements. Tested in `FlowSpeechAndAutoScrollTests.swift`.
+- Pass 4: Bookmarks on flow surface (`honeycrispCurrentChapterCharacterOffset` scoped to chapter section, `readPageLocation(spineIndex:)`). Tested in `FlowBookmarkTests.swift`.
+- Pass 5: In-book anchor navigation and cross-chapter jumps record navigation history for footnote back-navigation; chapter sync on crossing chapter boundaries. Tested in `FlowLinkNavigationTests.swift`.
+- Pass 6: Deleted legacy merged document path (`buildScrollHTML` removed from `EPUBParser.swift`, `LegacyMergedSurface` removed from `FlowingSurface.swift`, `ReaderViewController` defaults directly to `FlowSurface`). Updated all baseline and parity tests to use `FlowDocumentBuilder.buildDocument`.
+- Pass 7: Split `EPUBParser.swift` by layer: `EPUBPackage.swift` (L1 Publication), `ChapterSearch.swift` (L2 Content), `ReaderCosmeticSettings.swift` (L3 Reader), `ReaderStyles.swift` (L3 Reader), `ReaderScripts.swift` (L3 Reader). Pure Foundation in L0-L2 with AppKit imports eliminated from parsing.
 
 Exit: parity and restore tests green; no reference to the removed functions; INDEX and ARCHITECTURE
 updated.
@@ -329,9 +332,9 @@ Exit: no regex remains in L2 for HTML structure; chapter bodies contain no `<scr
 
 ### M7. Formats (M each, after M5)
 
-Status: not started.
+Status: M7.1 complete (HTML, Markdown, Plain Text). M7.2-M7.4 pending.
 
-1. HTML, Markdown and plain text (R22): convert to chapters at L0; may start after M6, in parallel with M4a and M5. HTML splits on `<article>` or generator containers, then headings, then a size cap. Plain text normalizes CRLF and encodings, treats a leading `> ` block as the header and `> N. Title` lines as chapter starts (seen in one Fimfiction export), and turns scene-break lines into `<hr>`. The open path hardcodes `epub` (`EPUBDropTargetView`, `ReaderWindowController`, `AppDelegate`) and `Honeycrisp/Info.plist` declares only `org.idpf.epub-container`; both change here. Original item text follows. Plain text is escaping plus paragraph
+1. [COMPLETE] HTML, Markdown and plain text (R22): convert to chapters at L0; may start after M6, in parallel with M4a and M5. HTML splits on `<article>` or generator containers, then headings, then a size cap. Plain text normalizes CRLF and encodings, treats a leading `> ` block as the header and `> N. Title` lines as chapter starts (seen in one Fimfiction export), and turns scene-break lines into `<hr>`. The open path hardcodes `epub` (`EPUBDropTargetView`, `ReaderWindowController`, `AppDelegate`) and `Honeycrisp/Info.plist` declares only `org.idpf.epub-container`; both change here. Original item text follows. Plain text is escaping plus paragraph
    detection; Markdown splits chapters on top-level headings. Verify the Markdown parser choice from
    its manifest and docs before adding it (candidates: Foundation Markdown support, or a small
    package); none is assumed. Supported-types registry shared by Open panel, drag-and-drop, Finder
@@ -363,10 +366,7 @@ Exit: no hardcoded materials or bar colors outside the chrome definitions.
 
 ### M8.1. Table of contents (M, parallel track)
 
-Status: not started. Decision R23. Handoff plan: `toc-plan.md` (outside the repo). Independent of the pipeline milestones (M3 to M6);
-touches `ReaderViewController` only in the TOC host region, the `TOCSidebarDelegate` extension, `updateCurrentChapter` and the
-`NSSplitView` setup, none of which contain `chapterHost` branches. Does not touch offsets (no `currentLayout` bump) or any
-persisted format (`TOCEntry` is not stored).
+Status: complete. Decision R23. Passes TP1 to TP4 complete: pure `TOCModel` (Foundation-only), modernized `TOCPopupViewController` inside key `TOCPanel` with type-to-filter search and full keyboard navigation (Return/Escape/Arrows), deleted `TOCSidebarViewController` and reader `NSSplitView`, refined `TOCParser` fallbacks (SwiftSoup HTML5 nav parsing, generic and numeric spine title synthesis). Independent of pipeline milestones (M3 to M6). Does not touch offsets (no `currentLayout` bump) or persisted formats.
 
 Findings this milestone fixes (Verified in code unless marked): the sidebar is built then collapsed and never shown; navigation fires
 only from a mouse click (`clickedRow`); `TOCEntry` is a struct used as an `NSOutlineView` item; only level 0 is expanded and the

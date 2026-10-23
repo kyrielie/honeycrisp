@@ -36,7 +36,7 @@ final class EPUBDropTargetView: NSView {
                 options: options
             ) as? [URL],
             let url = urls.first,
-            url.pathExtension.lowercased() == "epub"
+            BookFormat.isSupported(url: url)
         else { return nil }
         return url
     }

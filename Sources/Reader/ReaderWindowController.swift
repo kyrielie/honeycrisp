@@ -65,11 +65,15 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    func loadDocument(at url: URL) {
+        loadEPUB(at: url)
+    }
+
     func loadEPUB(at url: URL) {
-        guard url.isFileURL, url.pathExtension.lowercased() == "epub" else {
+        guard url.isFileURL, BookFormat.isSupported(url: url) else {
             let alert = NSAlert()
             alert.messageText = "Unsupported File"
-            alert.informativeText = "Honeycrisp can open EPUB books."
+            alert.informativeText = "Honeycrisp opens EPUB, HTML, Markdown, and Plain Text files."
             alert.alertStyle = .warning
             if let window { alert.beginSheetModal(for: window) }
             return
@@ -80,9 +84,9 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func showOpenPanel() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.init(filenameExtension: "epub")!]
+        panel.allowedContentTypes = BookFormat.supportedContentTypes
         panel.allowsMultipleSelection = false
-        panel.message = "Choose an EPUB file to open"
+        panel.message = "Choose a book or document to open"
         panel.prompt = "Open"
 
         guard let targetWindow = window else { return }

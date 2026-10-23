@@ -4,23 +4,6 @@ import XCTest
 
 @MainActor
 final class FlowingSurfaceTests: XCTestCase {
-    func testLegacyMergedSurfaceProperties() {
-        let surface: FlowingSurface = LegacyMergedSurface()
-
-        XCTAssertNil(surface.pagerContentWorld)
-        XCTAssertTrue(surface.supportsBookmarks)
-        XCTAssertTrue(surface.persistsProgress)
-        XCTAssertTrue(surface.persistsPosition)
-        XCTAssertFalse(surface.requiresEngineReadyForSpineNavigation)
-        XCTAssertFalse(surface.managesScrollWindow)
-        XCTAssertFalse(surface.managesPagedChapter)
-        XCTAssertFalse(surface.handlesReadingModeToggle)
-        XCTAssertFalse(surface.handlesStructuralReload)
-        XCTAssertFalse(surface.handlesPaginatedResize)
-        XCTAssertFalse(surface.didFinishNavigation(in: WKWebView(), paginationEngine: nil, colsPerScreen: .two))
-        XCTAssertNil(surface.targetForPaginatedRestore(fallbackIndex: 3, count: 10))
-    }
-
     func testChapterHostSurfaceProperties() {
         let host = ChapterHostSurface()
         let surface: FlowingSurface = host

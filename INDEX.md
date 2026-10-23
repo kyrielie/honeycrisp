@@ -38,53 +38,63 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
   `validateMenuItem` (l.519-633).
 
 ### Reader (`Sources/Reader`)
-- `FlowingSurface.swift` (142): `protocol FlowingSurface` (L3 surface seam, FRAMEWORK C5), `LegacyMergedSurface` (2.2.1 merged-document adapter), and `extension ChapterHostSurface: FlowingSurface`.
-- `FlowDocumentBuilder.swift` (246): `FlowSurfaceFlag`, `FlowDocumentBuilder` (multi-chapter flow document builder, `SectionContext`, element ID namespacing `hc-r{N}-{id}`, internal link rewriting, `wrapSections`).
-- `FlowSurface.swift` (187): `FlowSurface` (flowing reader surface served under `honeycrisp-epub://`, roadmap M4a default surface): `allowsContentJavaScript = false`, client-world user scripts and message handlers, strict CSP headers, in-book navigation link policy.
-- `ReaderWindowController.swift` (147): `setupWindow`, `loadEPUB(at:)`, `showOpenPanel`,
+- `FlowingSurface.swift`: `protocol FlowingSurface` (L3 surface seam, FRAMEWORK C5) and `extension ChapterHostSurface: FlowingSurface`.
+- `FlowDocumentBuilder.swift`: `FlowSurfaceFlag`, `FlowDocumentBuilder` (multi-chapter flow document builder, `SectionContext`, element ID namespacing `hc-r{N}-{id}`, internal link rewriting, `wrapSections`).
+- `FlowSurface.swift`: `FlowSurface` (flowing reader surface served under `honeycrisp-epub://`, roadmap M4a default surface): `allowsContentJavaScript = false`, client-world user scripts and message handlers, strict CSP headers, in-book navigation link policy.
+- `ReaderCosmeticSettings.swift`: `ReaderCosmeticSettings` (pure snapshot of reader styling and contrast hit palette).
+- `ReaderStyles.swift`: `ReaderStyles` (`monospaceStack`, `readerVarsCSS`, `readerCSS`, `imageVisibilityCSS`, `paginatedColumnCSS`).
+- `ReaderScripts.swift`: `ReaderScripts.readerJS` (client-world scripts for search, position, chapter navigation, and speech).
+- `ReaderWindowController.swift`: `setupWindow`, `loadEPUB(at:)`, `showOpenPanel`,
   `loadRecent`, `toggleFloat`, `windowWillClose` flushes position. Also `ReaderWindow` (key forwarding).
-- `ReaderViewController.swift` (2487): the reading surface. See section map below.
-- `PaginationEngine.swift` (321): `ColsPerScreen` (l.38), `RestorePosition` (l.60,
-  `.start/.end/.fraction/.characterOffset`), `EPUBAnchor` (l.75; `currentLayout = 2`, `legacyLayout = 1`),
-  `PaginationEngine` (l.116, Swift driver of column layout; `currentOffset`, `invalidate`). Bump `currentLayout` when offsets change
+- `ReaderViewController.swift`: the reading surface. See section map below.
+- `PaginationEngine.swift`: `ColsPerScreen`, `RestorePosition`
+  (`.start/.end/.fraction/.characterOffset`), `EPUBAnchor` (`currentLayout = 2`, `legacyLayout = 1`),
+  `PaginationEngine` (Swift driver of column layout; `currentOffset`, `invalidate`). Bump `currentLayout` when offsets change
   (ARCHITECTURE.md 5a). `Locator.flowRestoreTarget` compares a saved layout with `currentLayout`.
-- `PaginationJS.swift` (393): JS for paginated mode: column snap, boundaries, char-offset seek.
+- `PaginationJS.swift`: JS for paginated mode: column snap, boundaries, char-offset seek.
   Posts `pageAction` and `positionUpdate`. `qlOffsetAtCurrentColumn` (M4 pass 7.2b) returns the offset of the first text on the current page, the inverse of `qlNavigateToOffset`.
-- `EPUBDropTargetView.swift` (43): drag and drop of `.epub` files.
-- `EPUBResourceSchemeHandler.swift` (173): `honeycrisp-epub://book/...` scheme handler (containment, MIME with `text/html` app resource override for flow documents, optional response headers, `ActiveTaskSet`, `/__app/` app resources via `appResources`, markup `transform` hook). Wired for `ChapterHostSurface` and `FlowSurface`.
-- `ServedChapter.swift` (103): pure `ServedChapter.prepare`: inserts the host stylesheet link last in `<head>`, inlines the settings-dependent user block as `<style id="honeycrisp-user">`, adds a missing root `lang`; never edits the body (C2). Used by `ChapterHostSurface` (flag mode only).
-- `ChapterHostCSS.swift` (117): `ChapterHostCSS.stylesheet` (static, served as `__app/reader.css`: reset in `@layer app-reset`, user-owned properties with `!important`) and `userBlock(_:)` (variables from `EPUBParser.readerVarsCSS` plus the optional alignment, hyphenation and indent rules only while set). Roadmap M3, contract C4. M4 adds `pagedBlock(columnCSS:)`, `pagerBootstrap(cols:restore:)` and `ChapterHostPagedGeometry` (paged presentation).
-- `ChapterHostSurface.swift` (380): `ChapterHostFlag` (`HONEYCRISP_CHAPTER_HOST=1`, not persisted) and `ChapterHostSurface`: `install(into:)` (content JS off, scheme handler, client-world script), `attach(package:cosmetics:)`, `updateServedCosmetics`, `applyCosmetics(_:to:)` (live patch, no reload), `Position`, `Restore`, `onPositionChange`, `firstVisiblePosition`, `scroll(to:in:)`, `load(resource:...)`, `loadPaged(resource:...)` (one chapter as a paged top-level document, geometry stored, scripts re-added per load), `Presentation`, `onPageAction`, `onPagerPosition`, `loadWindow(around:...restoring:)` (a slot per spine item, three mounted), pure `windowIndices` and `estimatedHeight(byteCount:viewportHeight:pixelsPerByte:)`, `chapterURL`, `chapterPath`, `allowsNavigation`. Flag mode is a read-only viewer (ARCHITECTURE 4a).
-- `ChapterHostShell.swift` (102): `ChapterHostShell.html(slots:restore:)` (script-free XHTML shell, a `div.hc-slot` per spine item holding the iframe while mounted, attributes escaped; `html(frames:)` kept as a mounted-only wrapper).
-- `ChapterHostScript.swift` (200) and `ChapterHostScriptTail.swift` (198): `ChapterHostScript.source` (client-world script: frame sizing, `window.honeycrispHost.fitAll`, `applyUserCSS(css)` replacing `<style id="honeycrisp-user">` in every mounted chapter, `offsetOfFirstVisibleText(x)`, `scrollTo(resource, offset)`, `reconcile()`, `mountedResources()` and `pixelsPerByte()`, `restoreTo(resource, offset, fraction)`, `reveal()` and throttled `hostPosition` posts for windowing and measured heights (a measured chapter above the viewport scrolls the shell by the height difference in the same turn): mount margin 2 viewports, evict margin 4, at most 5 mounted). `source` is `sourceHead` (here: sizing, measured heights, offsets, `scrollTo`, `applyUserCSS`) plus `sourceTail` (extension in the second file: windowing, position reporting, restore, the `honeycrispHost` export); the two halves are one script, split only to satisfy the file length limit.
-- `ChapterHostPaging.swift` (95): pure `ChapterHostPaging` for paginated mode on the host (M4 pass 7): `handoff(from:forward:count:)` (next chapter at its start, previous at its end, nil at book edges), `restore(for:)` (a scroll-window `Position` as an exact `RestorePosition.characterOffset`), `geometry(viewport:cols:paddingH:paddingV:maxWidth:)`. `changesDocument(from:to:)` (link policy), `pagedTarget(for:fallbackIndex:count:)` (the in-memory restore of a flag-mode paged load), `toPaged(from:activeIndex:count:)` and `toScroll(index:offset:count:)` (the exact-offset restores of the mode toggle). Called by `ReaderViewController.renderCurrentContent`, `navigateSpine`, `loadHostedPagedChapter` and `toggleHostedReadingMode`.
-- `ChapterHostHandlers.swift` (35): `ChapterHostPositionHandler` (client-world `hostPosition`) and `ChapterHostPagerHandler` (client-world `pageAction` and `positionUpdate`), forwarding to `ChapterHostSurface.receive*`.
+- `EPUBDropTargetView.swift`: drag and drop of `.epub` files.
+- `EPUBResourceSchemeHandler.swift`: `honeycrisp-epub://book/...` scheme handler (containment, MIME with `text/html` app resource override for flow documents, optional response headers, `ActiveTaskSet`, `/__app/` app resources via `appResources`, markup `transform` hook). Wired for `ChapterHostSurface` and `FlowSurface`.
+- `ServedChapter.swift`: pure `ServedChapter.prepare`: inserts the host stylesheet link last in `<head>`, inlines the settings-dependent user block as `<style id="honeycrisp-user">`, adds a missing root `lang`; never edits the body (C2). Used by `ChapterHostSurface` (flag mode only).
+- `ChapterHostCSS.swift`: `ChapterHostCSS.stylesheet` (static, served as `__app/reader.css`: reset in `@layer app-reset`, user-owned properties with `!important`) and `userBlock(_:)` (variables from `ReaderStyles.readerVarsCSS` plus the optional alignment, hyphenation and indent rules only while set). Roadmap M3, contract C4. M4 adds `pagedBlock(columnCSS:)`, `pagerBootstrap(cols:restore:)` and `ChapterHostPagedGeometry` (paged presentation).
+- `ChapterHostSurface.swift`: `ChapterHostFlag` (`HONEYCRISP_CHAPTER_HOST=1`, not persisted) and `ChapterHostSurface`: `install(into:)` (content JS off, scheme handler, client-world script), `attach(package:cosmetics:)`, `updateServedCosmetics`, `applyCosmetics(_:to:)` (live patch, no reload), `Position`, `Restore`, `onPositionChange`, `firstVisiblePosition`, `scroll(to:in:)`, `load(resource:...)`, `loadPaged(resource:...)` (one chapter as a paged top-level document, geometry stored, scripts re-added per load), `Presentation`, `onPageAction`, `onPagerPosition`, `loadWindow(around:...restoring:)` (a slot per spine item, three mounted), pure `windowIndices` and `estimatedHeight(byteCount:viewportHeight:pixelsPerByte:)`, `chapterURL`, `chapterPath`, `allowsNavigation`. Flag mode is a read-only viewer (ARCHITECTURE 4a).
+- `ChapterHostShell.swift`: `ChapterHostShell.html(slots:restore:)` (script-free XHTML shell, a `div.hc-slot` per spine item holding the iframe while mounted, attributes escaped; `html(frames:)` kept as a mounted-only wrapper).
+- `ChapterHostScript.swift` and `ChapterHostScriptTail.swift`: `ChapterHostScript.source` (client-world script: frame sizing, `window.honeycrispHost.fitAll`, `applyUserCSS(css)` replacing `<style id="honeycrisp-user">` in every mounted chapter, `offsetOfFirstVisibleText(x)`, `scrollTo(resource, offset)`, `reconcile()`, `mountedResources()` and `pixelsPerByte()`, `restoreTo(resource, offset, fraction)`, `reveal()` and throttled `hostPosition` posts for windowing and measured heights).
+- `ChapterHostPaging.swift`: pure `ChapterHostPaging` for paginated mode on the host (M4 pass 7): `handoff(from:forward:count:)` (next chapter at its start, previous at its end, nil at book edges), `restore(for:)` (a scroll-window `Position` as an exact `RestorePosition.characterOffset`), `geometry(viewport:cols:paddingH:paddingV:maxWidth:)`. `changesDocument(from:to:)` (link policy), `pagedTarget(for:fallbackIndex:count:)` (the in-memory restore of a flag-mode paged load), `toPaged(from:activeIndex:count:)` and `toScroll(index:offset:count:)` (the exact-offset restores of the mode toggle). Called by `ReaderViewController.renderCurrentContent`, `navigateSpine`, `loadHostedPagedChapter` and `toggleHostedReadingMode`.
+- `ChapterHostHandlers.swift`: `ChapterHostPositionHandler` (client-world `hostPosition`) and `ChapterHostPagerHandler` (client-world `pageAction` and `positionUpdate`), forwarding to `ChapterHostSurface.receive*`.
 
 ### Content (`Sources/Content`)
-- `ChapterDecoder.swift` (209): pure byte decoding (BOM, XML declaration, meta charset, UTF-8, windows-1252/iso-8859-1 fallback).
-- `ChapterMarkup.swift` (102): syntax mapping, XML/HTML parsing, active content removal, body HTML serialization.
-- `ChapterText.swift` (81): text extraction matching WebKit TreeWalker, hidden ranges detection.
-- `ChapterTransforms.swift` (102): AO3 formatting, spacer paragraph marking, and preface heading hiding in the DOM.
-- `ChapterURLs.swift` (94): DOM URL rewriting (resolving against chapter directory, containment in root, scheme URLs and fragments preserved).
-- `ChapterStyles.swift` (290): publisher stylesheet harvesting (Rule N3) for simple selectors, inlining whitelisted typography (italic, bold, underline/line-through, center/right alignment, monospace) and display:none as `hidden`, discarding geometry/colors, applying Rule N6 HTML5 semantics (`<details open>`, `<nav hidden>`), and stripping raw `<style>` elements (Decision R21).
-- `ChapterPipeline.swift` (107): pipeline facade for decoding, parsing, transforms, style harvesting, URL rewriting into served body HTML and text, and concurrent batch processing (`renderAll`).
+- `ChapterDecoder.swift`: pure byte decoding (BOM, XML declaration, meta charset, UTF-8, windows-1252/iso-8859-1 fallback).
+- `ChapterMarkup.swift`: syntax mapping, XML/HTML parsing, active content removal, body HTML serialization.
+- `ChapterText.swift`: text extraction matching WebKit TreeWalker, hidden ranges detection.
+- `ChapterTransforms.swift`: AO3 formatting, spacer paragraph marking, and preface heading hiding in the DOM.
+- `ChapterURLs.swift`: DOM URL rewriting (resolving against chapter directory, containment in root, scheme URLs and fragments preserved).
+- `ChapterStyles.swift`: publisher stylesheet harvesting (Rule N3) for simple selectors, inlining whitelisted typography (italic, bold, underline/line-through, center/right alignment, monospace) and display:none as `hidden`, discarding geometry/colors, applying Rule N6 HTML5 semantics (`<details open>`, `<nav hidden>`), and stripping raw `<style>` elements (Decision R21).
+- `ChapterPipeline.swift`: pipeline facade for decoding, parsing, transforms, style harvesting, URL rewriting into served body HTML and text, and concurrent batch processing (`renderAll`).
+- `ChapterSearch.swift`: text search (`searchResults`) and speech extraction (`speechText`) over package chapters using `ChapterPipeline`.
 
 ### Parsing (`Sources/Parsing`)
-- `EPUBParser.swift` (1338): models, unzip, OPF, DRM, search, HTML and CSS building, `readerJS`.
-  See section map below.
-- `TOCParser.swift` (335): `TOCEntry`, `TOCNode`, `TOCParser` (`parseTOC`, `tocNodes`,
-  `startReadingNode`, `firstSpineIndex(afterCoverIn:)`); EPUB3 nav (`parseNav`), NCX (`parseNCX`),
+- `BookFormat.swift`: format detection enum (`BookFormat`), UTI mappings, file extension matching, and support predicates.
+- `DocumentImporter.swift`: unified importation entrypoint (`DocumentImporter`, `DocumentImporterError`) dispatching to EPUB, plain text, HTML, and Markdown importers.
+- `EPUBPackage.swift`: publication data types (`EPUBPackage`, `EPUBManifestItem`, `EPUBSpineItem`, `EPUBLandmark`, `BookSearchResult`, `EPUBParseError`).
+- `EPUBParser.swift`: pure Foundation and ZIPFoundation unzip, OPF/spine parsing, DRM detection, and landmarks extraction (AppKit-free, WebKit-free).
+- `HTMLDocumentImporter.swift`: ingests standalone HTML, strips active scripts/objects, splits into logical chapters via articles/headings, synthesizes EPUBPackage with NCX TOC.
+- `MarkdownImporter.swift`: parses CommonMark/GFM blocks, extracts YAML frontmatter and heading metadata, splits into chapters by headings, synthesizes EPUBPackage with NCX TOC.
+- `PlainTextImporter.swift`: decodes plain text with encoding fallbacks, extracts metadata/headings, detects scene breaks, synthesizes multi-chapter EPUBPackage with NCX TOC.
+- `TOCParser.swift` (357): `TOCEntry`, `TOCNode`, `TOCParser` (`parseTOC`,
+  `startReadingNode`, `firstSpineIndex(afterCoverIn:)`, `fallbackTitle`); EPUB3 nav (`parseNav` with SwiftSoup HTML5 fallback), NCX (`parseNCX`),
   spine synthesis (`synthesiseFromSpine`).
 
 ### Sidebar (`Sources/Sidebar`)
-- `TOCSidebarViewController.swift` (173): outline sidebar; `TOCSidebarDelegate`.
-- `TOCPopupViewController.swift` (110): popup TOC outline.
+- `TOCModel.swift` (285): pure model for TOC hierarchy, resolution, expansion, and filtering (`TOCLocation`, `TOCItem`, `TOCModel`).
+- `TOCPopupViewController.swift` (364): popup TOC outline with type-to-filter search (`TOCPanel`, `TOCOutlineView`, `TOCPopupViewController`).
 - `SearchBarViewController.swift` (295): in-book search overlay; `SearchBarDelegate`.
 - `ThemePopoverViewController.swift` (245): toolbar quick theme switcher (`ThemeRowView`,
   `ThemeSwatchView`).
 
 ### History (`Sources/History`)
-- `HistoryManager.swift` (284): `HistoryEntry` (Codable, security-scoped bookmark, progress, spine
+- `NavigationHistory.swift`: `NavigationLocation`, `NavigationHistoryStack` (Back/Forward navigation stack for Decision R13, bounded history depth, push/back/forward operations).
+- `HistoryManager.swift`: `HistoryEntry` (Codable, security-scoped bookmark, progress, spine
   index, char offset, `anchorLayout`) and `HistoryManager.shared` (`record`, `updateProgress`,
   `updatePosition`, `savedPosition`, `resolveURL`, `clearAll`; `maxEntries` default 100).
   Notification: `entriesDidChangeNotification`. Load decodes per element; unreadable elements are
@@ -193,7 +203,7 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 | Change how a chapter's HTML is cleaned | `ChapterPipeline`, `ChapterMarkup`, `ChapterTransforms`, `ChapterURLs` (any change shifts offsets: see CLAUDE.md invariants) |
 | Page turning or column layout | `PaginationEngine`, `PaginationJS`, `ReaderViewController` scroll-wheel, key monitor and resize regions |
 | Saved position and progress | `HistoryManager`, `RestorePosition`, `ReaderViewController` position save and restore region, `scrollRestoreBootstrapJS` |
-| Table of contents or Start Reading | `TOCParser`, `Sidebar/TOC*`, `ReaderViewController` TOC sidebar host region |
+| Table of contents or Start Reading | `TOCParser`, `Sidebar/TOC*`, `ReaderViewController` `toggleTOC` / `goToTOCEntry` |
 | In-book search | `EPUBParser.searchResults`, `SearchBarViewController`, `ReaderViewController` `SearchBarDelegate` extension |
 | Bookmarks | `BookmarkManager`, `ReaderViewController` bookmark functions (inside the EPUB Loading region), `AppDelegate` bookmark menu actions |
 | Reading history UI | `HistoryViewController`, `HistoryEntryOpener`, `HistorySettingsViewController` |
@@ -221,7 +231,9 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 | `ChapterPipelineParityTests.swift` | WebKit TreeWalker text and marker offset parity across fixtures |
 | `ChapterFixtures.swift` | synthetic test fixture definitions |
 | `EPUBParserTests.swift` | package and spine parsing, landmarks, search offsets, JS string escaping, DRM rules (LCP file, LCP and ADEPT markers, unknown algorithm; font-obfuscation-only and empty manifests open), missing container, unpack |
-| `TOCParserTests.swift` | NCX, EPUB3 nav, nested hierarchy, Start Reading, missing-TOC fallback |
+| `TOCParserTests.swift` | NCX, EPUB3 XML nav, HTML5 SwiftSoup nav fallback, nested hierarchy, generic and numeric spine title synthesis, Start Reading, missing-TOC fallback |
+| `TOCModelTests.swift` | tree hierarchy, pre-order traversal, spine and fragment resolution, title collapsing, expansion, type-to-filter |
+| `TOCPopupViewControllerTests.swift` | prepareForDisplay current reveal and selection, type-to-filter, keyboard navigation (Return/Escape/Arrows), TOCPanel key window host resolution |
 | `HistoryManagerTests.swift` | record, progress and position persistence, clamping, cap, clear, reload, bad-element survival, whole-blob quarantine, unreadable elements and the cap |
 | `HistoryEntryTests.swift` | legacy decode defaults (including `anchorLayout`), round-trip of restore position and layout |
 | `BookmarkManagerTests.swift` | per-book persistence, rename and remove, corrupt data isolation, bad-element survival, newer version and whole-blob quarantine, quarantine pruning, legacy bookmark decode, anchor layout round trip |
@@ -256,6 +268,11 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 | `Diagnostics.swift` | `TestDiagnostics.write(_:lines:)`: writes test measurements to `<repo>/build/diagnostics/` (gitignored); a failed write fails the test |
 | `ChapterStylesTests.swift` | publisher CSS harvesting (Rule N3, Decision R21): property whitelist, discarded geometry and colors, simple selectors and combinators, cascade and source order, Rule N6 details/nav semantics, style tag stripping |
 | `ChapterStylesIntegrationTests.swift` | publisher CSS integration: linked stylesheet resolution and file read, FicLab and AO3 real sample patterns, ChapterPipeline and FlowDocumentBuilder integration |
+| `NavigationHistoryTests.swift` | navigation history stack (Decision R13): push, back, forward, truncation on new navigation, duplicate deduplication, bounded capacity |
+| `FlowTOCNavigationTests.swift` | TOC and fragment navigation on flow surface: `hc-r{resource}-{id}` namespacing, fragment fallback, and smooth scroll into view |
+| `FlowSpeechAndAutoScrollTests.swift` | speech text extraction and auto-scroll on flow surface: client-world execution, skipping script, style, and aria-hidden nodes |
+| `FlowBookmarkTests.swift` | bookmarks on flow surface: chapter-scoped character offset calculation and bookmark restore |
+| `FlowLinkNavigationTests.swift` | in-book anchor links: namespaced targets, cross-chapter navigation sync, navigation history recording for back-navigation |
 | `FlowSurfaceTests.swift` | FlowSurface protocol conformance, link containment policy, CSP headers, user script injection, client-world message dispatch, environment flag controls |
 | `FlowPositionTests.swift` | section-rooted position walk in WebKit, FlowSurface resource/offset dispatch, exact section seek, and position restore |
 | `ChapterSearchTests.swift` | search and speech offsets with AO3 transforms, hidden preface and TOC heading filtering, double-encoded ampersand exactness, limit across chapters |

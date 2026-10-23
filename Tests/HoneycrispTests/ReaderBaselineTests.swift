@@ -102,7 +102,7 @@ final class ReaderBaselineTests: XCTestCase {
         let footprintBefore = Self.appFootprintBytes()
 
         let buildStart = ContinuousClock.now
-        let html = try parser.buildScrollHTML(from: package, cosmetics: Self.cosmetics)
+        let html = try FlowDocumentBuilder.buildDocument(package: package, cosmetics: Self.cosmetics)
         let buildMs = Self.milliseconds(since: buildStart)
 
         let writeStart = ContinuousClock.now
@@ -122,7 +122,7 @@ final class ReaderBaselineTests: XCTestCase {
         let probe = try await webView.evaluateJavaScript("""
             JSON.stringify({
               height: document.documentElement.scrollHeight,
-              chapters: document.querySelectorAll('section.ql-chapter').length
+              chapters: document.querySelectorAll('section.hc-chapter, section.ql-chapter').length
             });
             """)
         let loadAndLayoutMs = Self.milliseconds(since: loadStart)

@@ -73,7 +73,7 @@ xattr -d com.apple.quarantine /Applications/Honeycrisp.app
 - Light and dark appearance, following the system
 
 **Navigation**
-- Table of contents sidebar and popup
+- Table of contents popup with type-to-filter
 - In-book search with excerpts and chapter locations
 - Start Reading follows EPUB landmarks when available
 - Persistent bookmarks: toggle one per page, rename, and return from the Bookmarks menu

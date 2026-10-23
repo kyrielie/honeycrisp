@@ -133,6 +133,162 @@ final class TOCParserTests: XCTestCase {
         XCTAssertTrue(entries.allSatisfy { $0.children.isEmpty })
     }
 
+    func testSynthesizedTitleKeepsPrefixAndNumberForGenericFilenames() {
+        XCTAssertEqual(TOCParser.fallbackTitle(forFileNamed: "Part0001", spineIndex: 0), "Part 1")
+        XCTAssertEqual(TOCParser.fallbackTitle(forFileNamed: "chapter_12", spineIndex: 11), "Chapter 12")
+        XCTAssertEqual(TOCParser.fallbackTitle(forFileNamed: "Section-03", spineIndex: 2), "Section 3")
+    }
+
+    func testSynthesizedTitleForDigitOnlyFilenameUsesSpinePosition() {
+        XCTAssertEqual(TOCParser.fallbackTitle(forFileNamed: "0007", spineIndex: 2), "Section 3")
+        XCTAssertEqual(TOCParser.fallbackTitle(forFileNamed: "123", spineIndex: 0), "Section 1")
+    }
+
+    func testHTML5NavThatIsNotXMLKeepsNestedHierarchy() throws {
+        let navURL = temporaryDirectory.appendingPathComponent("nav.xhtml")
+        // HTML5 with unclosed <br>, HTML entity &nbsp; that would break XMLDocument
+        let navHTML = """
+        <!DOCTYPE html>
+        <html>
+        <body>
+          <nav epub:type="toc">
+            <h2>Contents</h2><br>
+            <ol>
+              <li>
+                <a href="Text/part1.xhtml">Part&nbsp;One</a>
+                <ol>
+                  <li><a href="Text/c1.xhtml">Chapter 1</a></li>
+                </ol>
+              </li>
+            </ol>
+          </nav>
+        </body>
+        </html>
+        """
+        try Data(navHTML.utf8).write(to: navURL)
+        let package = EPUBPackage(
+            rootFolder: temporaryDirectory,
+            spineURLs: [temporaryDirectory.appendingPathComponent("Text/part1.xhtml"), temporaryDirectory.appendingPathComponent("Text/c1.xhtml")],
+            title: "HTML5 Nav",
+            author: "",
+            coverURL: nil,
+            navigationURL: navURL
+        )
+
+        let entries = TOCParser().parseTOC(for: package)
+
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].title, "Part One")
+        XCTAssertEqual(entries[0].depth, 0)
+        XCTAssertEqual(entries[0].playOrder, 1)
+
+        XCTAssertEqual(entries[0].children.count, 1)
+        XCTAssertEqual(entries[0].children[0].title, "Chapter 1")
+        XCTAssertEqual(entries[0].children[0].depth, 1)
+        XCTAssertEqual(entries[0].children[0].playOrder, 2)
+    }
+
+    func testHTML5NavFallbackIgnoresLandmarksAndPageList() throws {
+        let navURL = temporaryDirectory.appendingPathComponent("nav.xhtml")
+        let navHTML = """
+        <!DOCTYPE html>
+        <html>
+        <body>
+          <nav epub:type="landmarks">
+            <ol><li><a href="Text/cover.xhtml">Cover</a></li></ol>
+          </nav>
+          <nav epub:type="toc">
+            <ol><li><a href="Text/chapter1.xhtml">Chapter 1</a></li></ol>
+          </nav>
+        </body>
+        </html>
+        """
+        try Data(navHTML.utf8).write(to: navURL)
+        let package = EPUBPackage(
+            rootFolder: temporaryDirectory,
+            spineURLs: [temporaryDirectory.appendingPathComponent("Text/chapter1.xhtml")],
+            title: "TOC",
+            author: "",
+            coverURL: nil,
+            navigationURL: navURL
+        )
+
+        let entries = TOCParser().parseTOC(for: package)
+        XCTAssertEqual(entries.map(\.title), ["Chapter 1"])
+    }
+
+    func testLandmarksOnlyNavIsNotUsedAsTOCAndNCXWins() throws {
+        let navURL = temporaryDirectory.appendingPathComponent("nav.xhtml")
+        let navXML = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+        <body>
+          <nav epub:type="landmarks">
+            <ol><li><a href="Text/cover.xhtml">Cover</a></li></ol>
+          </nav>
+        </body>
+        </html>
+        """
+        try Data(navXML.utf8).write(to: navURL)
+
+        let ncx = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
+          <navMap>
+            <navPoint id="c1"><navLabel><text>NCX Chapter 1</text></navLabel><content src="Text/c1.xhtml"/></navPoint>
+          </navMap>
+        </ncx>
+        """
+        try Data(ncx.utf8).write(to: temporaryDirectory.appendingPathComponent("toc.ncx"))
+
+        let package = EPUBPackage(
+            rootFolder: temporaryDirectory,
+            spineURLs: [temporaryDirectory.appendingPathComponent("Text/c1.xhtml")],
+            title: "Book",
+            author: "",
+            coverURL: nil
+            // Note: navigationURL omitted so findNav and findNCX are checked
+        )
+
+        let entries = TOCParser().parseTOC(for: package)
+        XCTAssertEqual(entries.map(\.title), ["NCX Chapter 1"])
+    }
+
+    func testFindNavDoesNotMatchUnrelatedFilenames() throws {
+        let textDir = temporaryDirectory.appendingPathComponent("Text", isDirectory: true)
+        try FileManager.default.createDirectory(at: textDir, withIntermediateDirectories: true)
+
+        let canvas = "<html><body><canvas>Canvas content</canvas></body></html>"
+        try Data(canvas.utf8).write(to: temporaryDirectory.appendingPathComponent("canvas.xhtml"))
+
+        let naval = "<html><body><p>Naval History</p></body></html>"
+        try Data(naval.utf8).write(to: textDir.appendingPathComponent("naval.xhtml"))
+
+        let package = makePackage(root: temporaryDirectory, spineNames: ["chapter_one.xhtml"])
+
+        let entries = TOCParser().parseTOC(for: package)
+        // Since canvas.xhtml and naval.xhtml are not valid nav documents and no NCX exists, synthesiseFromSpine wins
+        XCTAssertEqual(entries.map(\.title), ["Chapter One"])
+    }
+
+    func testFindNavAcceptsNavXhtmlNotDeclaredInTheManifest() throws {
+        let navHTML = """
+        <!DOCTYPE html>
+        <html>
+        <body>
+          <nav epub:type="toc">
+            <ol><li><a href="Text/c1.xhtml">Undeclared Nav Chapter</a></li></ol>
+          </nav>
+        </body>
+        </html>
+        """
+        try Data(navHTML.utf8).write(to: temporaryDirectory.appendingPathComponent("nav.xhtml"))
+
+        let package = makePackage(root: temporaryDirectory, spineNames: ["c1.xhtml"])
+        let entries = TOCParser().parseTOC(for: package)
+        XCTAssertEqual(entries.map(\.title), ["Undeclared Nav Chapter"])
+    }
+
     private func makePackage(root: URL, spineNames: [String]) -> EPUBPackage {
         return EPUBPackage(
             rootFolder: root,

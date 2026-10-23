@@ -107,8 +107,9 @@ final class SpacerParagraphTests: XCTestCase {
 
         let parser = EPUBParser()
         let package = try parser.parsePackage(at: root)
-        return try parser.buildScrollHTML(
-            from: package, cosmetics: Self.cosmetics, collapseSpacerParagraphs: collapse
+        let options = ChapterTransformOptions(markSpacers: collapse)
+        return try FlowDocumentBuilder.buildDocument(
+            package: package, options: options, cosmetics: Self.cosmetics
         )
     }
 
