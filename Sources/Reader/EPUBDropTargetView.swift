@@ -3,6 +3,8 @@ import AppKit
 final class EPUBDropTargetView: NSView {
     var onDrop: ((URL) -> Void)?
 
+    override var acceptsFirstResponder: Bool { false }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         registerForDraggedTypes([.fileURL])

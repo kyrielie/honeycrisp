@@ -106,14 +106,11 @@ final class ReaderViewController: NSViewController {
     /// explicitly identified EPUB cover. Consumed once during first render.
     private var pendingInitialScrollSpineIndex: Int?
     /// Snapshot of the cosmetics actually baked into whatever HTML is
-    /// currently loading/loaded (set alongside each buildScrollHTML/
-    /// buildPageHTML call). Compared against current settings in
+    /// currently loading/loaded. Compared against current settings in
     /// webView(_:didFinish:) so the post-load cosmetic re-sync only fires on
     /// genuine drift — see applyCosmeticCSSUpdate's call site.
     private var lastBuiltCosmetics: ReaderCosmeticSettings?
     private var securityScopedURL: URL?
-
-    private static let readerHTMLFilename = "_ql_reader.html"
 
     private var fontSizePercent: Int {
         get { SettingsManager.shared.fontSizePercent }
@@ -143,11 +140,13 @@ final class ReaderViewController: NSViewController {
     private weak var searchButton: NSButton?
     private weak var tocButton: NSButton?
     private weak var titleLabel: NSTextField?  // centered title in toolbar
+    private weak var authorLabel: NSTextField? // author in toolbar
     /// Last values shown in the title and page-count labels. A toolbar item removed
     /// through Customize Toolbar is destroyed, and re-adding it builds a brand-new
     /// label; these let that label start with the current text instead of blank.
     private var toolbarTitleText = ""
     private var toolbarTitleTooltip: String?
+    private var toolbarAuthorText = ""
     private var pageCountText = ""
     private var appearanceObservation: NSKeyValueObservation?
 
@@ -162,11 +161,7 @@ final class ReaderViewController: NSViewController {
     /// belt-and-suspenders alongside the debounced-scroll save, so a reader who
     /// stops scrolling and just sits reading still gets saved periodically.
     private var positionSaveTimer: Timer?
-    private let speechSynthesizer = AVSpeechSynthesizer()
-    private var speechRate: Float = AVSpeechUtteranceDefaultSpeechRate
-    private var speechQueueGeneration = 0
-    private var speechNextSpineIndex: Int?
-    private var speechCurrentText: String?
+    let speechCoordinator = SpeechCoordinator()
     private var autoScrollSpeed: Double { SettingsManager.shared.autoScrollSpeed }
     private var isAutoScrolling = false
     private var isAdjustingAutoScrollSpeed = false
@@ -229,7 +224,10 @@ final class ReaderViewController: NSViewController {
 
         webView = ReaderWebView(frame: NSRect(x: 0, y: 0, width: 780, height: 920), configuration: cfg)
         webView.navigationDelegate = self
-        speechSynthesizer.delegate = self
+        speechCoordinator.delegate = self
+        if let id = SettingsManager.shared.speechVoiceIdentifier {
+            speechCoordinator.voiceIdentifier = id
+        }
         webView.allowsMagnification = true
         webView.setValue(false, forKey: "drawsBackground")
         webView.readerViewController = self
@@ -243,8 +241,7 @@ final class ReaderViewController: NSViewController {
             self.updatePageCountLabel()
         }
         // The restore scroll for .start/.end/.fraction/.characterOffset all
-        // happen inline, baked into the HTML by RestorePosition.bootstrapJS
-        // (see EPUBParser.buildPageHTML), before first paint — not via a
+        // happen via the client-world pager bootstrap before first paint — not via a
         // post-load Swift -> JS round trip. positionDidChange is
         // PaginationEngine.applyLayout's readback of the column that inline
         // script already landed on; route it through the same path as
@@ -307,7 +304,15 @@ final class ReaderViewController: NSViewController {
         let empty = EPUBDropTargetView()
         empty.translatesAutoresizingMaskIntoConstraints = false
         empty.onDrop = { [weak self] url in
-            (self?.view.window?.windowController as? ReaderWindowController)?.loadEPUB(at: url)
+            guard let self else { return }
+            if self.currentEPUBURL != nil || self.currentPackage != nil {
+                // If a book is already open in this window, open dropped file in a new window/tab
+                if let appDelegate = NSApp.delegate as? AppDelegate {
+                    appDelegate.application(NSApp, open: [url])
+                }
+            } else {
+                (self.view.window?.windowController as? ReaderWindowController)?.loadEPUB(at: url)
+            }
         }
         let dropSymbolImage = NSImage(
             systemSymbolName: "tray.and.arrow.down",
@@ -318,8 +323,8 @@ final class ReaderViewController: NSViewController {
         dropSymbol.contentTintColor = .tertiaryLabelColor
         dropSymbol.imageScaling = .scaleProportionallyDown
         dropSymbol.translatesAutoresizingMaskIntoConstraints = false
-        dropSymbol.setAccessibilityLabel("Drop EPUB here")
-        let hint = NSTextField(labelWithString: "Drag and drop EPUB files")
+        dropSymbol.setAccessibilityLabel("Drop files here")
+        let hint = NSTextField(labelWithString: "Drag and drop EPUB, HTML, Markdown, or Plain Text files")
         hint.textColor = .secondaryLabelColor
         emptyStateHintLabel = hint
         hint.translatesAutoresizingMaskIntoConstraints = false
@@ -334,7 +339,7 @@ final class ReaderViewController: NSViewController {
             dropSymbol.centerXAnchor.constraint(equalTo: empty.centerXAnchor),
             dropSymbol.centerYAnchor.constraint(equalTo: empty.centerYAnchor, constant: -32),
             hint.centerXAnchor.constraint(equalTo: empty.centerXAnchor),
-            hint.topAnchor.constraint(equalTo: dropSymbol.bottomAnchor, constant: 14),
+            hint.topAnchor.constraint(equalTo: dropSymbol.bottomAnchor, constant: 28),
         ])
         emptyStateView = empty
         webView.isHidden = true
@@ -513,6 +518,10 @@ final class ReaderViewController: NSViewController {
         renderCurrentContent()
         showLoading(false)
         startPositionSaveTimer()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.view.window?.makeFirstResponder(self.webView)
+        }
     }
 
     /// The spine index to open at, and whether that skips the cover. A saved position past the start always wins
@@ -606,6 +615,7 @@ final class ReaderViewController: NSViewController {
                 hideImages: SettingsManager.shared.hideImages
             )
             flow.attach(package: pkg, html: html)
+            flow.installScripts(mode: .scroll, into: webView.configuration.userContentController)
             if let flowURL = flow.documentURL {
                 webView.load(URLRequest(url: flowURL))
             }
@@ -664,12 +674,9 @@ final class ReaderViewController: NSViewController {
         return ""
     }
 
-    /// Loads a single spine item in paginated mode, with the column layout CSS
-    /// baked into the HTML before load (never injected after, to avoid an
-    /// unstyled flash before repagination). The restore position is baked in
-    /// the same way via `RestorePosition.bootstrapJS` — see
-    /// `EPUBParser.buildPageHTML` — so it's already applied by the time the
-    /// page first paints; `PaginationEngine.applyLayout` (from
+    /// Loads a single spine item in paginated mode, with column layout CSS
+    /// applied in the HTML. The restore position is applied before first paint
+    /// via the client-world pager bootstrap; `PaginationEngine.applyLayout` (from
     /// `webView(_:didFinish:)`) just reads back the result.
     private func loadSpineItem(index: Int, restorePosition: RestorePosition, pkg: EPUBPackage) {
         guard index >= 0 && index < pkg.spineURLs.count else { return }
@@ -683,35 +690,54 @@ final class ReaderViewController: NSViewController {
         }
         currentSpineIndex = index
         updateCurrentChapter(spineIndex: index)
+        if let flow = surface as? FlowSurface {
+            loadFlowPagedChapter(flow, index: index, restorePosition: restorePosition, pkg: pkg)
+            return
+        }
         if surface.managesPagedChapter, let host = surface as? ChapterHostSurface {
             loadHostedPagedChapter(host, index: index, restorePosition: restorePosition, pkg: pkg)
             return
         }
-        pendingPaginatedRestorePosition = restorePosition
+    }
+
+    /// Flow surface, paged mode: single chapter rendered via FlowDocumentBuilder and served from __app/paged.html.
+    private func loadFlowPagedChapter(
+        _ flow: FlowSurface, index: Int, restorePosition: RestorePosition, pkg: EPUBPackage
+    ) {
+        let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, language: pkg.language)
+        lastBuiltCosmetics = cosmetics
+        let bounds = webView.bounds.isEmpty ? NSRect(x: 0, y: 0, width: 780, height: 920) : webView.bounds
+        let cols = SettingsManager.shared.colsPerScreen
+        let columnCSS = EPUBParser.paginatedColumnCSS(
+            viewportWidth: bounds.width,
+            viewportHeight: bounds.height,
+            colsPerScreen: cols,
+            marginH: CGFloat(SettingsManager.shared.paddingH),
+            marginV: CGFloat(SettingsManager.shared.paddingV),
+            maxWidth: CGFloat(SettingsManager.shared.maxWidth)
+        )
+        paginationEngine?.invalidate()
         do {
-            let parser = EPUBParser()
-            let format = SettingsManager.shared.formatFirstChapter
-            let removeIndents = SettingsManager.shared.removeParagraphIndents
-            let collapseSpacers = SettingsManager.shared.collapseSpacerParagraphs
-            let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, language: pkg.language)
-            lastBuiltCosmetics = cosmetics
-            let bounds = webView.bounds.isEmpty ? NSRect(x: 0, y: 0, width: 780, height: 920) : webView.bounds
-            let html = try parser.buildPageHTML(
-                from: pkg, spineIndex: index,
-                viewportWidth: bounds.width, viewportHeight: bounds.height,
-                colsPerScreen: SettingsManager.shared.colsPerScreen,
+            let html = try FlowDocumentBuilder.buildPagedDocument(
+                resource: index,
+                package: pkg,
+                columnCSS: columnCSS,
+                options: ChapterTransformOptions(
+                    formatAO3: SettingsManager.shared.formatFirstChapter,
+                    markSpacers: SettingsManager.shared.collapseSpacerParagraphs
+                ),
                 cosmetics: cosmetics,
-                restorePosition: restorePosition,
-                maxWidth: CGFloat(SettingsManager.shared.maxWidth),
-                paddingH: CGFloat(SettingsManager.shared.paddingH),
-                paddingV: CGFloat(SettingsManager.shared.paddingV),
-                formatFirstChapter: format, removeParagraphIndents: removeIndents,
-                collapseSpacerParagraphs: collapseSpacers,
                 hideImages: SettingsManager.shared.hideImages
             )
-            let indexURL = pkg.rootFolder.appendingPathComponent(Self.readerHTMLFilename)
-            try html.write(to: indexURL, atomically: true, encoding: .utf8)
-            webView.loadFileURL(indexURL, allowingReadAccessTo: pkg.rootFolder)
+            flow.attachPaged(package: pkg, html: html)
+            flow.installScripts(
+                mode: .paginated,
+                cols: cols,
+                restore: restorePosition,
+                into: webView.configuration.userContentController
+            )
+            guard let url = flow.pagedDocumentURL else { return }
+            webView.load(URLRequest(url: url))
         } catch {
             showError(error)
         }
@@ -744,20 +770,27 @@ final class ReaderViewController: NSViewController {
             maxWidth: SettingsManager.shared.maxWidth)
     }
 
-    /// Flag mode, paged: reopen the current chapter at the offset of the first text on the page, so a resize or
-    /// a structural setting change keeps the text being read on screen (roadmap M4 decision). In memory only.
-    private func reloadHostedPagedAtCurrentOffset() {
-        guard let engine = paginationEngine, engine.isReady else {
+    /// Paged mode: reopen the current chapter at the offset of the first text on the page, so a resize or
+    /// a structural setting change keeps the text being read on screen (roadmap M4 decision).
+    private func reloadPagedAtCurrentOffset() {
+        guard let engine = paginationEngine, engine.isReady, let pkg = currentPackage else {
             renderCurrentContent()
             return
         }
         engine.currentOffset { [weak self] offset in
             guard let self else { return }
-            if let offset, let host = self.surface as? ChapterHostSurface {
-                host.pendingRestore = .position(
-                    ChapterHostSurface.Position(resource: self.currentSpineIndex, offset: offset))
+            if let host = self.surface as? ChapterHostSurface {
+                if let offset {
+                    host.pendingRestore = .position(
+                        ChapterHostSurface.Position(resource: self.currentSpineIndex, offset: offset))
+                }
+                self.renderCurrentContent()
+            } else if let flow = self.surface as? FlowSurface {
+                let restore: RestorePosition = offset != nil ? .characterOffset(offset!) : .start
+                self.loadFlowPagedChapter(flow, index: self.currentSpineIndex, restorePosition: restore, pkg: pkg)
+            } else {
+                self.renderCurrentContent()
             }
-            self.renderCurrentContent()
         }
     }
 
@@ -958,6 +991,18 @@ final class ReaderViewController: NSViewController {
         navigate(to: bookmark.spineIndex, offset: bookmark.characterOffset, chapterLocalOffset: currentMode == .scroll)
     }
 
+    func canPerformStartReading() -> Bool {
+        guard let pkg = currentPackage else { return false }
+        let parser = TOCParser()
+        guard let node = parser.startReadingNode(in: pkg, toc: tocEntries), let index = node.spineIndex else { return false }
+        let currentIdx = currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex
+        if currentIdx != index { return true }
+        if let fragment = node.url.fragment, !fragment.isEmpty { return true }
+        // If already at index and at start
+        let offset = currentMode == .scroll ? currentFlowOffset : paginatedCurrentColumn
+        return offset > 0
+    }
+
     func startReading() {
         guard let pkg = currentPackage else { return }
         let parser = TOCParser()
@@ -988,6 +1033,21 @@ final class ReaderViewController: NSViewController {
     func goToBeginning() {
         pushCurrentNavigationLocation()
         navigate(to: 0)
+    }
+
+    func goToEnd() {
+        guard let pkg = currentPackage, !pkg.spineURLs.isEmpty else { return }
+        pushCurrentNavigationLocation()
+        let lastIndex = pkg.spineURLs.count - 1
+        if currentMode == .paginated {
+            loadSpineItem(index: lastIndex, restorePosition: .end, pkg: pkg)
+        } else {
+            stopAutoScroll()
+            stopSpeech()
+            activeScrollSpineIndex = lastIndex
+            updateCurrentChapter(spineIndex: lastIndex)
+            evaluateInSurfaceWorld("window.navigateToChapterEnd(\(lastIndex));")
+        }
     }
 
     func navigateChapter(forward: Bool) {
@@ -1058,64 +1118,30 @@ final class ReaderViewController: NSViewController {
 
     func speakCurrentLocation() {
         guard currentPackage != nil else { return }
-        speechQueueGeneration += 1
-        let generation = speechQueueGeneration
         let index = currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex
-        speechNextSpineIndex = index + 1
         evaluateInSurfaceWorld("window.honeycrispCurrentSpeechText(\(index));") { [weak self] result, _ in
-            guard let self, self.speechQueueGeneration == generation,
-                let text = result as? String, !text.isEmpty
-            else { return }
-            self.speechSynthesizer.stopSpeaking(at: .immediate)
-            self.speechCurrentText = text
-            let utterance = AVSpeechUtterance(string: text)
-            utterance.rate = self.speechRate
-            if let id = SettingsManager.shared.speechVoiceIdentifier {
-                utterance.voice = AVSpeechSynthesisVoice(identifier: id)
-            }
-            self.speechSynthesizer.speak(utterance)
+            guard let self, let text = result as? String, !text.isEmpty else { return }
+            self.speechCoordinator.start(chapterIndex: index, text: text)
         }
     }
 
     func toggleSpeechPause() {
-        if speechSynthesizer.isPaused {
-            speechSynthesizer.continueSpeaking()
-        } else if speechSynthesizer.isSpeaking {
-            speechSynthesizer.pauseSpeaking(at: .immediate)
-        } else {
-            speakCurrentLocation()
+        speechCoordinator.togglePlayPause { [weak self] in
+            self?.speakCurrentLocation()
         }
     }
 
     func adjustSpeechRate(by delta: Float) {
-        speechRate = min(
-            AVSpeechUtteranceMaximumSpeechRate, max(AVSpeechUtteranceMinimumSpeechRate, speechRate + delta))
+        speechCoordinator.adjustRate(by: delta)
     }
 
     func stopSpeech() {
-        speechQueueGeneration += 1
-        speechNextSpineIndex = nil
-        speechSynthesizer.stopSpeaking(at: .immediate)
+        speechCoordinator.stop()
     }
+
     func setSpeechVoice(identifier: String?) {
         SettingsManager.shared.speechVoiceIdentifier = identifier
-        guard speechSynthesizer.isSpeaking || speechSynthesizer.isPaused,
-            let text = speechCurrentText
-        else { return }
-        let wasPaused = speechSynthesizer.isPaused
-        speechQueueGeneration += 1
-        let generation = speechQueueGeneration
-        speechSynthesizer.stopSpeaking(at: .immediate)
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.speechQueueGeneration == generation else { return }
-            let utterance = AVSpeechUtterance(string: text)
-            utterance.rate = self.speechRate
-            if let identifier, !identifier.isEmpty {
-                utterance.voice = AVSpeechSynthesisVoice(identifier: identifier)
-            }
-            self.speechSynthesizer.speak(utterance)
-            if wasPaused { self.speechSynthesizer.pauseSpeaking(at: .immediate) }
-        }
+        speechCoordinator.setVoice(identifier: identifier)
     }
 
     func currentBookURL() -> URL? { currentEPUBURL }
@@ -1175,22 +1201,20 @@ final class ReaderViewController: NSViewController {
             return
         }
         if goingTo == .paginated {
-            // Scroll mode's own progress fraction (scrollY / scrollHeight) becomes
-            // the paginated spine item's restore fraction. Spine index carries over
-            // as-is — scroll mode has no notion of "which spine item", so index 0
-            // (the merged document's start) is the only thing to hand off; this is
-            // an approximation, not lossless, since scroll mode's fraction is over
-            // the WHOLE book while paginated mode's fraction is over ONE spine item.
-            evaluateInSurfaceWorld("(window.scrollY + window.innerHeight) / document.documentElement.scrollHeight")
+            evaluateInSurfaceWorld("window.honeycrispCurrentPosition ? window.honeycrispCurrentPosition() : {resource: 0, offset: 0, fraction: 0}")
             { [weak self] result, _ in
                 guard let self else { return }
                 self.currentMode = .paginated
                 self.applyScrollbarVisibility()
                 self.installScrollWheelMonitorIfNeeded()
                 self.installKeyDownMonitor()
-                let fraction = (result as? Double) ?? 0
-                let spineIndex = min(self.activeScrollSpineIndex, max(0, pkg.spineURLs.count - 1))
-                self.loadSpineItem(index: spineIndex, restorePosition: .fraction(fraction), pkg: pkg)
+                let dict = result as? [String: Any]
+                let resource = (dict?["resource"] as? NSNumber)?.intValue ?? self.activeScrollSpineIndex
+                let offset = (dict?["offset"] as? NSNumber)?.intValue ?? 0
+                let fraction = (dict?["fraction"] as? NSNumber)?.doubleValue ?? 0
+                let spineIndex = min(max(0, resource), max(0, pkg.spineURLs.count - 1))
+                let restore: RestorePosition = offset > 0 ? .characterOffset(offset) : .fraction(fraction)
+                self.loadSpineItem(index: spineIndex, restorePosition: restore, pkg: pkg)
             }
         } else {
             let spineIndex = currentSpineIndex
@@ -1260,8 +1284,11 @@ final class ReaderViewController: NSViewController {
         view.window?.title = cleanAuthor.isEmpty ? title : "\(title) — \(cleanAuthor)"
         toolbarTitleText = title
         toolbarTitleTooltip = cleanAuthor.isEmpty ? title : "\(title) by \(cleanAuthor)"
+        toolbarAuthorText = cleanAuthor
         titleLabel?.stringValue = toolbarTitleText
         titleLabel?.toolTip = toolbarTitleTooltip
+        authorLabel?.stringValue = toolbarAuthorText
+        authorLabel?.toolTip = cleanAuthor.isEmpty ? nil : "By \(cleanAuthor)"
     }
 
     // MARK: - Table of Contents
@@ -1294,7 +1321,10 @@ final class ReaderViewController: NSViewController {
         )
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        panel.contentView?.wantsLayer = true
+        panel.contentView?.layer?.masksToBounds = false
         panel.hasShadow = true
+        panel.invalidateShadow()
         panel.isFloatingPanel = true
         panel.level = .floating
         panel.contentViewController = popupVC
@@ -1384,6 +1414,14 @@ final class ReaderViewController: NSViewController {
         }
     }
 
+    // MARK: - Book Info Sheet (Milestone M9)
+
+    @objc func showBookInfo(_ sender: Any?) {
+        guard let pkg = currentPackage else { return }
+        let infoVC = BookInfoViewController(package: pkg, sourceURL: currentEPUBURL)
+        presentAsSheet(infoVC)
+    }
+
     // MARK: - Display Settings
 
     /// Full initial apply on load: sets every CSS var. Window appearance is owned by
@@ -1397,7 +1435,7 @@ final class ReaderViewController: NSViewController {
     /// JS-only live patch of the `#honeycrisp-vars` `<style>` element's textContent —
     /// no reload, so scroll position and any other DOM state survive a font/theme/
     /// line-height tweak. Builds the replacement CSS with the exact same
-    /// `EPUBParser.readerVarsCSS` function buildScrollHTML/buildPageHTML use for the
+    /// `EPUBParser.readerVarsCSS` function used for the
     /// initial paint, so this can't drift from what a fresh load would produce.
     @objc private func applyCosmeticCSSUpdate() {
         let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, language: currentPackage?.language)
@@ -1433,7 +1471,7 @@ final class ReaderViewController: NSViewController {
             // Flag mode: the position query below falls back to offset 0 and would overwrite the saved position.
             if let self, self.surface.handlesStructuralReload, let host = self.surface as? ChapterHostSurface {
                 if case .paged = host.presentation {
-                    self.reloadHostedPagedAtCurrentOffset()
+                    self.reloadPagedAtCurrentOffset()
                     return
                 }
                 // Reopen where the reader is, in memory only: nothing is written to `HistoryManager`.
@@ -1501,11 +1539,10 @@ final class ReaderViewController: NSViewController {
     // MARK: - Position save/restore
 
     /// spineIndex is 0 in scroll mode (the whole book is one merged document) and
-    /// currentSpineIndex in paginated mode. honeycrispCurrentCharacterOffset (Patch
-    /// 0005) is embedded in both buildScrollHTML's and buildPageHTML's readerJS, and
-    /// caretRangeFromPoint works the same regardless of which axis is scrolling, so
-    /// one save path serves both modes without a separate paginated-only offset
-    /// scheme.
+    /// currentSpineIndex in paginated mode. honeycrispCurrentCharacterOffset
+    /// is embedded in readerJS, and caretRangeFromPoint works the same regardless
+    /// of which axis is scrolling, so one save path serves both modes without a
+    /// separate paginated-only offset scheme.
     func didReceivePosition(_ offset: Int) {
         guard let url = currentEPUBURL else { return }
         HistoryManager.shared.updatePosition(
@@ -1881,8 +1918,11 @@ final class ReaderViewController: NSViewController {
             // own setup (isReady flips true only once that completes).
             guard self.paginationEngine?.isReady == true else { return }
             if self.surface.handlesPaginatedResize {
-                // Flag mode: only a changed geometry reloads, and it restores the exact offset.
-                if self.hostedPagedGeometry() != self.lastHostedPagedGeometry { self.reloadHostedPagedAtCurrentOffset() }
+                if self.surface is ChapterHostSurface {
+                    if self.hostedPagedGeometry() != self.lastHostedPagedGeometry { self.reloadPagedAtCurrentOffset() }
+                } else {
+                    self.reloadPagedAtCurrentOffset()
+                }
                 return
             }
             self.paginationEngine?.currentFraction { fraction in
@@ -2096,41 +2136,43 @@ extension ReaderViewController: NSWindowDelegate {
     }
 }
 
-extension ReaderViewController: AVSpeechSynthesizerDelegate {
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        guard let nextIndex = speechNextSpineIndex, let package = currentPackage,
-            package.spineURLs.indices.contains(nextIndex)
-        else {
-            speechNextSpineIndex = nil
-            return
-        }
-        let generation = speechQueueGeneration
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let parser = EPUBParser()
-            let options = ChapterTransformOptions.current(from: SettingsManager.shared)
-            var candidate = nextIndex
-            var text: String?
-            while package.spineURLs.indices.contains(candidate), text == nil {
-                text = parser.speechText(in: package, at: candidate, options: options)
-                if text == nil { candidate += 1 }
+extension ReaderViewController: SpeechCoordinatorDelegate {
+    func speechCoordinator(_ coordinator: SpeechCoordinator, didChangeState state: SpeechCoordinator.PlaybackState) {
+        // Observers or UI controls can bind here
+    }
+
+    func speechCoordinatorRequestsNextChapter(
+        _ coordinator: SpeechCoordinator,
+        afterChapter chapterIndex: Int
+    ) -> (chapterIndex: Int, text: String)? {
+        guard let package = currentPackage else { return nil }
+        let parser = EPUBParser()
+        let options = ChapterTransformOptions.current(from: SettingsManager.shared)
+        var candidate = chapterIndex + 1
+        while package.spineURLs.indices.contains(candidate) {
+            if let text = parser.speechText(in: package, at: candidate, options: options), !text.isEmpty {
+                return (candidate, text)
             }
-            let followingIndex = candidate + 1
-            DispatchQueue.main.async {
-                guard let self, self.speechQueueGeneration == generation else { return }
-                guard let text else {
-                    self.speechNextSpineIndex = nil
-                    return
-                }
-                self.speechNextSpineIndex = followingIndex
-                self.speechCurrentText = text
-                let next = AVSpeechUtterance(string: text)
-                next.rate = self.speechRate
-                if let id = SettingsManager.shared.speechVoiceIdentifier {
-                    next.voice = AVSpeechSynthesisVoice(identifier: id)
-                }
-                synthesizer.speak(next)
-            }
+            candidate += 1
         }
+        return nil
+    }
+
+    func speechCoordinatorRequestsPreviousChapter(
+        _ coordinator: SpeechCoordinator,
+        beforeChapter chapterIndex: Int
+    ) -> (chapterIndex: Int, text: String)? {
+        guard let package = currentPackage else { return nil }
+        let parser = EPUBParser()
+        let options = ChapterTransformOptions.current(from: SettingsManager.shared)
+        var candidate = chapterIndex - 1
+        while candidate >= 0 {
+            if let text = parser.speechText(in: package, at: candidate, options: options), !text.isEmpty {
+                return (candidate, text)
+            }
+            candidate -= 1
+        }
+        return nil
     }
 }
 
@@ -2166,14 +2208,13 @@ extension ReaderViewController: WKNavigationDelegate {
             refreshBookmarkButton()
             return
         }
-        // The initial HTML already bakes real settings in via ReaderCosmeticSettings
-        // (see buildScrollHTML/buildPageHTML). Re-applying unconditionally here was
-        // itself a source of a visible flash on every load -- even when values match,
-        // rewriting #honeycrisp-vars forces a second style recalc right after first
-        // paint, and when a setting genuinely changed in the (synchronous build,
-        // async load) window it produced a color flip after the correct colors had
-        // already painted. Only re-sync if lastBuiltCosmetics actually disagrees with
-        // the current settings snapshot.
+        // The initial HTML already bakes real settings in via ReaderCosmeticSettings.
+        // Re-applying unconditionally here was itself a source of a visible flash on
+        // every load -- even when values match, rewriting #honeycrisp-vars forces a
+        // second style recalc right after first paint, and when a setting genuinely
+        // changed in the (synchronous build, async load) window it produced a color
+        // flip after the correct colors had already painted. Only re-sync if
+        // lastBuiltCosmetics actually disagrees with the current settings snapshot.
         let currentCosmetics = ReaderCosmeticSettings.current(
             from: SettingsManager.shared, language: currentPackage?.language
         )
@@ -2225,7 +2266,7 @@ extension ReaderViewController: NSToolbarDelegate {
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
-            .openFile, .titleLabel, .search, .toc, .pageCount, .fontSize, .themePopover, .history, .floatToggle,
+            .openFile, .titleLabel, .authorLabel, .search, .toc, .pageCount, .fontSize, .themePopover, .history, .floatToggle,
             .bookmark, .space, .flexibleSpace,
         ]
     }
@@ -2284,6 +2325,25 @@ extension ReaderViewController: NSToolbarDelegate {
             // Non-empty so the item is visible and draggable in Customize Toolbar.
             item.label = "Title"
             item.paletteLabel = "Title"
+            return item
+
+        case .authorLabel:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            let label = NSTextField(labelWithString: "")
+            label.font = NSFont.systemFont(ofSize: 12, weight: .regular)
+            label.textColor = .secondaryLabelColor
+            label.alignment = .center
+            label.lineBreakMode = .byTruncatingTail
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.widthAnchor.constraint(lessThanOrEqualToConstant: 240).isActive = true
+            label.widthAnchor.constraint(greaterThanOrEqualToConstant: 50).isActive = true
+            label.stringValue = toolbarAuthorText
+            label.toolTip = toolbarAuthorText.isEmpty ? nil : "By \(toolbarAuthorText)"
+            authorLabel = label
+            item.view = label
+            item.label = "Author"
+            item.paletteLabel = "Author"
             return item
 
         case .fontSize:
@@ -2556,6 +2616,7 @@ extension NSToolbarItem.Identifier {
     static let search = NSToolbarItem.Identifier("search")
     static let toc = NSToolbarItem.Identifier("toc")
     static let titleLabel = NSToolbarItem.Identifier("titleLabel")  // NEW: centered title
+    static let authorLabel = NSToolbarItem.Identifier("authorLabel") // author label
     static let pageCount = NSToolbarItem.Identifier("pageCount")  // NEW: "3 of 12 · Ch 2 of 20"
     static let fontSize = NSToolbarItem.Identifier("fontSize")
     static let history = NSToolbarItem.Identifier("history")

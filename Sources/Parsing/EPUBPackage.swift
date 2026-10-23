@@ -8,7 +8,12 @@ struct EPUBPackage {
     let spineURLs: [URL]
     let title: String
     let author: String
+    let publisher: String?
     let language: String?
+    let identifier: String?
+    let publicationDate: String?
+    let bookDescription: String?
+    let subjects: [String]
     let coverURL: URL?
     let manifest: [String: EPUBManifestItem]
     let spine: [EPUBSpineItem]
@@ -27,13 +32,17 @@ struct EPUBPackage {
         version: String? = nil,
         navigationURL: URL? = nil,
         landmarks: [EPUBLandmark] = [],
-        language: String? = nil
+        language: String? = nil,
+        publisher: String? = nil,
+        identifier: String? = nil,
+        publicationDate: String? = nil,
+        bookDescription: String? = nil,
+        subjects: [String] = []
     ) {
         self.rootFolder = rootFolder
         self.spineURLs = spineURLs
         self.title = title
         self.author = author
-        self.language = language
         self.coverURL = coverURL
         self.manifest = manifest
         self.spine = spine ?? spineURLs.enumerated().map {
@@ -42,6 +51,12 @@ struct EPUBPackage {
         self.version = version
         self.navigationURL = navigationURL
         self.landmarks = landmarks
+        self.language = language
+        self.publisher = publisher
+        self.identifier = identifier
+        self.publicationDate = publicationDate
+        self.bookDescription = bookDescription
+        self.subjects = subjects
     }
 }
 

@@ -155,11 +155,8 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 ### `Parsing/EPUBParser.swift`
 | Lines | Content |
 |---|---|
-| 9-144 | `EPUBPackage`, `EPUBManifestItem`, `EPUBSpineItem`, `EPUBLandmark`, `BookSearchResult`, `ReaderCosmeticSettings` (`current(from:)`), `EPUBParseError` (incl. `.drmProtected`) |
-| 145-456 | `EPUBParser`: `javaScriptStringLiteral`, `unpackEPUB`, `isDRMProtected(extractedRoot:)`, `parsePackage`, `searchResults`, `speechText`, `parseOPF`, `sanitizedLanguageTag`, `parseLandmarks` |
-| 457-710 | HTML building: `buildScrollHTML`, `buildPageHTML`, `imageVisibilityCSS`, `paginatedColumnCSS`, `extractedChapterBody` (delegating to `ChapterPipeline.render`) |
-| 711-1188 | `readerJS` string: progress, position, page info, chapter navigation, auto-scroll, search |
-| 1189-1338 | CSS: `readerVarsCSS` turns `ReaderCosmeticSettings` into CSS variables; `readerCSS` |
+| 1-270 | `EPUBParser`: `javaScriptStringLiteral`, `unpackEPUB`, `isDRMProtected(extractedRoot:)`, `parsePackage`, `searchResults`, `speechText`, `parseOPF`, `sanitizedLanguageTag`, `parseLandmarks` |
+| 271-318 | CSS / script forwards: `imageVisibilityCSS`, `paginatedColumnCSS`, `readerJS`, `monospaceStack`, `readerVarsCSS`, `readerCSS` |
 
 ### `Settings/SettingsManager.swift`
 | Lines | Content |
@@ -190,7 +187,7 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 | JS to Swift handlers | `progressHandler`, `positionHandler`, `pageInfoHandler` (from `readerJS`); `pageAction`, `positionUpdate` (from `PaginationJS`) | registered in `ReaderViewController.loadView`; handler classes at l.2101-2190 |
 | Notifications | `readerCosmeticSettingsChanged`, `readerStructuralSettingsChanged`, `ReaderSettingsChanged` (`settingsChangedNotification`), `keyBindingsChanged`, `ReadingHistoryEntriesDidChange` | `SettingsManager`, `KeyBinding`, `HistoryManager` |
 | UserDefaults keys | `reader*` settings keys, `appearanceMode`, `readerThemes`, `readerCurrentThemeID`, `readerKeyBindings`, `customSelectedFontID`, `HoneycrispReadingBookmarks.v1`, `EPUBReaderHistory` | `SettingsManager`, `KeyBinding`, `ReadingBookmark`, `HistoryManager`, `SettingsWindowController` |
-| Open-book flow | `AppDelegate`/`ReaderWindowController` -> `ReaderViewController.loadEPUB` -> `EPUBParser.unpackEPUB`, `parsePackage` -> `TOCParser.parseTOC` -> `HistoryManager.record` -> `buildScrollHTML` or `buildPageHTML` -> `loadFileURL` | see `ARCHITECTURE.md` section 4 |
+| Open-book flow | `AppDelegate`/`ReaderWindowController` -> `ReaderViewController.loadEPUB` -> `DocumentImporter.importDocument` / `EPUBParser` -> `TOCParser.parseTOC` -> `HistoryManager.record` -> `FlowDocumentBuilder` -> `FlowSurface` (`honeycrisp-epub://book/__app/...`) | see `ARCHITECTURE.md` section 4 |
 
 ## Where do I change X
 

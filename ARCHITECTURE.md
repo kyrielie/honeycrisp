@@ -126,8 +126,8 @@ back to `super.keyDown(with:)` when it didn't.
 2. `ReaderViewController.loadEPUB(url:)` starts security-scoped access, then off the main thread:
    `EPUBParser.unpackEPUB` (ZIP → temp dir) → `EPUBParser.parsePackage` (container.xml → OPF → `EPUBPackage`) → `TOCParser.parseTOC`.
 3. Back on main: `HistoryManager.record`, TOC model initialized, reading mode read from `SettingsManager.shared.defaultReadingMode`.
-4. In continuous flow reading (the active default), `FlowDocumentBuilder` renders chapters inside `<section class="hc-chapter" id="hc-r{N}">` served over `honeycrisp-epub://book/...` via `FlowSurface`. In paginated mode, `buildPageHTML` renders each spine item.
-5. `readerJS` (embedded in the rendered document or injected via `FlowSurface`) reports scroll, position, and page information back to Swift via `WKScriptMessageHandler` handlers.
+4. `FlowDocumentBuilder` renders chapters inside `<section class="hc-chapter" id="hc-r{N}">` served over `honeycrisp-epub://book/...` via `FlowSurface` for both continuous flow reading (`__app/flow.html`) and paginated mode (`__app/paged.html`).
+5. `readerJS` (injected via `FlowSurface` in `WKContentWorld.defaultClient`) reports scroll, position, and page information back to Swift via `WKScriptMessageHandler` handlers. In paginated mode, `PaginationJS` runs in `defaultClient` alongside a pager bootstrap script that applies column restore before revealing the page.
 
 The reader architecture is layered across L1-L3: `FlowDocumentBuilder` and `FlowSurface` render chapters served over `honeycrisp-epub://book/...` with author JavaScript disabled, app scripts in `WKContentWorld.defaultClient`, and publisher styles harvested via `ChapterStyles` (Rule N3/N6, Decision R21). The legacy merged document path (`buildScrollHTML` and `LegacyMergedSurface`) was completely removed in Milestone M5. Under milestone M5, navigation history (Decision R13), TOC fragment navigation, bookmarks, speech, and cross-chapter anchor navigation operate directly on `FlowSurface`.
 

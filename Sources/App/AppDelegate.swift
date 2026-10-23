@@ -168,6 +168,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         recentItem.submenu = recentMenu
         fileMenu.addItem(recentItem)
         fileMenu.addItem(.separator())
+        fileMenu.addItem(NSMenuItem(title: "Book Info…", action: #selector(showBookInfo), keyEquivalent: "i"))
+        fileMenu.addItem(.separator())
         fileMenu.addItem(NSMenuItem(title: "New Window", action: #selector(newWindowAction), keyEquivalent: "n"))
         fileMenu.items.last?.keyEquivalentModifierMask = [.command]
         fileMenu.addItem(.separator())
@@ -224,6 +226,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let startItem = NSMenuItem(title: "Start Reading", action: #selector(startReading), keyEquivalent: "")
         viewMenu.addItem(startItem)
         viewMenu.addItem(NSMenuItem(title: "Go to Beginning", action: #selector(goToBeginning), keyEquivalent: ""))
+        viewMenu.addItem(NSMenuItem(title: "Go to End", action: #selector(goToEnd), keyEquivalent: ""))
 
         viewMenu.addItem(.separator())
 
@@ -260,6 +263,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         goMenu.addItem(.separator())
         goMenu.addItem(NSMenuItem(title: "Start Reading", action: #selector(startReading), keyEquivalent: ""))
         goMenu.addItem(NSMenuItem(title: "Go to Beginning", action: #selector(goToBeginning), keyEquivalent: ""))
+        goMenu.addItem(NSMenuItem(title: "Go to End", action: #selector(goToEnd), keyEquivalent: ""))
 
         goMenu.addItem(.separator())
         let chapterItems: [(String, Selector)] = [
@@ -385,6 +389,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .showTOC: #selector(showTOC),
             .toggleFloat: #selector(ReaderWindowController.toggleFloat(_:)),
             .toggleReadingMode: #selector(toggleReadingMode),
+            .bookInfo: #selector(showBookInfo),
         ]
         // Invert once: selector -> binding, so the recursive walk below is a
         // single dictionary lookup per item instead of re-scanning all five
@@ -459,6 +464,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func startReading() { readerVC()?.startReading() }
     @objc private func goToBeginning() { readerVC()?.goToBeginning() }
+    @objc private func goToEnd() { readerVC()?.goToEnd() }
+    @objc private func showBookInfo() { readerVC()?.showBookInfo(nil) }
     @objc private func goBack() { readerVC()?.goBack() }
     @objc private func goForward() { readerVC()?.goForward() }
     @objc private func toggleBookmark() { readerVC()?.toggleBookmarkAtCurrentPosition() }
@@ -608,6 +615,7 @@ extension AppDelegate: NSMenuDelegate {
 }
 
 extension AppDelegate: NSMenuItemValidation {
+    // swiftlint:disable:next cyclomatic_complexity
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(selectTheme(_:)) {
             menuItem.state = (menuItem.representedObject as? UUID == SettingsManager.shared.currentThemeID) ? .on : .off
@@ -637,11 +645,15 @@ extension AppDelegate: NSMenuItemValidation {
             return readerVC()?.currentBookURL() != nil
         }
         let bookActions: [Selector?] = [
-            #selector(startReading), #selector(goToBeginning), #selector(searchInBook), #selector(showTOC),
-            #selector(toggleBookmark),
+            #selector(startReading), #selector(goToBeginning), #selector(goToEnd), #selector(searchInBook), #selector(showTOC),
+            #selector(toggleBookmark), #selector(showBookInfo),
         ]
         if bookActions.contains(menuItem.action) {
-            return readerVC()?.currentBookURL() != nil
+            guard let vc = readerVC(), vc.currentBookURL() != nil else { return false }
+            if menuItem.action == #selector(startReading) {
+                return vc.canPerformStartReading()
+            }
+            return true
         }
         guard let vc = readerVC() else {
             // No reader window/content: these don't apply yet.

@@ -10,6 +10,9 @@ final class FlowSurface: FlowingSurface {
     /// App resource path of the flow document.
     static let flowResourcePath = "__app/flow.html"
 
+    /// App resource path of the paged document.
+    static let pagedResourcePath = "__app/paged.html"
+
     /// Default Content-Security-Policy applied to flow responses.
     static let defaultCSP = "default-src 'self' honeycrisp-epub:; script-src 'none'; "
         + "style-src 'self' 'unsafe-inline' honeycrisp-epub:; "
@@ -18,16 +21,18 @@ final class FlowSurface: FlowingSurface {
 
     let schemeHandler: EPUBResourceSchemeHandler
 
+    private(set) var presentationMode: ReadingMode = .scroll
+
     var pagerContentWorld: WKContentWorld? { .defaultClient }
     var supportsBookmarks: Bool { true }
     var persistsProgress: Bool { true }
     var persistsPosition: Bool { true }
     var requiresEngineReadyForSpineNavigation: Bool { false }
     var managesScrollWindow: Bool { false }
-    var managesPagedChapter: Bool { false }
+    var managesPagedChapter: Bool { true }
     var handlesReadingModeToggle: Bool { false }
     var handlesStructuralReload: Bool { false }
-    var handlesPaginatedResize: Bool { false }
+    var handlesPaginatedResize: Bool { true }
 
     var onProgress: ((Int) -> Void)?
     var onPosition: ((_ resource: Int, _ offset: Int, _ fraction: Double) -> Void)?
@@ -45,24 +50,81 @@ final class FlowSurface: FlowingSurface {
         URL(string: "\(EPUBResourceSchemeHandler.scheme)://book/\(Self.flowResourcePath)")
     }
 
+    /// App-scheme URL for the paged document.
+    var pagedDocumentURL: URL? {
+        URL(string: "\(EPUBResourceSchemeHandler.scheme)://book/\(Self.pagedResourcePath)")
+    }
+
     /// Points the scheme handler at the package root and stores the prepared flow document.
     func attach(package: EPUBPackage, html: String) {
         schemeHandler.rootFolder = package.rootFolder
         schemeHandler.appResources[Self.flowResourcePath] = Data(html.utf8)
     }
 
+    /// Stores the prepared single-chapter paged document.
+    func attachPaged(package: EPUBPackage? = nil, html: String) {
+        if let package {
+            schemeHandler.rootFolder = package.rootFolder
+        }
+        schemeHandler.appResources[Self.pagedResourcePath] = Data(html.utf8)
+    }
+
     func install(into configuration: WKWebViewConfiguration) {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.setURLSchemeHandler(schemeHandler, forURLScheme: EPUBResourceSchemeHandler.scheme)
-
-        let script = WKUserScript(
-            source: EPUBParser.readerJS,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true,
-            in: .defaultClient
-        )
-        configuration.userContentController.addUserScript(script)
+        installScripts(mode: .scroll, into: configuration.userContentController)
         installMessageHandlers(into: configuration.userContentController)
+    }
+
+    /// Configures user scripts in `WKContentWorld.defaultClient` for the active reading mode.
+    func installScripts(
+        mode: ReadingMode,
+        cols: ColsPerScreen? = nil,
+        restore: RestorePosition? = nil,
+        into controller: WKUserContentController
+    ) {
+        presentationMode = mode
+        controller.removeAllUserScripts()
+        if mode == .scroll {
+            controller.addUserScript(
+                WKUserScript(
+                    source: EPUBParser.readerJS,
+                    injectionTime: .atDocumentEnd,
+                    forMainFrameOnly: true,
+                    in: .defaultClient
+                )
+            )
+        } else {
+            let paginatedBase = "window._qlPaginated = true;\n" + EPUBParser.readerJS + "\n" + PaginationJS.script
+            controller.addUserScript(
+                WKUserScript(
+                    source: paginatedBase,
+                    injectionTime: .atDocumentEnd,
+                    forMainFrameOnly: true,
+                    in: .defaultClient
+                )
+            )
+            let colsVal = cols?.rawValue ?? 1
+            let restoreJS = restore?.bootstrapJS ?? "window.qlScrollToColumn(0);"
+            let pagerBootstrap = """
+            (function () {
+              function start() {
+                window.qlSetup(\(colsVal));
+                \(restoreJS)
+                document.documentElement.style.visibility = 'visible';
+              }
+              if (document.readyState === 'complete') { start(); } else { window.addEventListener('load', start, { once: true }); }
+            })();
+            """
+            controller.addUserScript(
+                WKUserScript(
+                    source: pagerBootstrap,
+                    injectionTime: .atDocumentEnd,
+                    forMainFrameOnly: true,
+                    in: .defaultClient
+                )
+            )
+        }
     }
 
     private func installMessageHandlers(into controller: WKUserContentController) {
@@ -105,7 +167,10 @@ final class FlowSurface: FlowingSurface {
         paginationEngine: PaginationEngine?,
         colsPerScreen: ColsPerScreen
     ) -> Bool {
-        false
+        guard presentationMode == .paginated else { return false }
+        paginationEngine?.setColsPerScreen(colsPerScreen)
+        paginationEngine?.applyLayout(restorePosition: .start)
+        return true
     }
 
     func targetForPaginatedRestore(fallbackIndex: Int, count: Int) -> (index: Int, restore: RestorePosition)? {

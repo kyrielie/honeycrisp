@@ -255,4 +255,47 @@ enum FlowDocumentBuilder {
             hideImages: hideImages
         )
     }
+
+    /// Builds a single-chapter paged document for horizontal CSS multi-column pagination.
+    static func buildPagedDocument(
+        resource: Int,
+        package: EPUBPackage,
+        columnCSS: String,
+        options: ChapterTransformOptions = .init(),
+        cosmetics: ReaderCosmeticSettings = .default,
+        hideImages: Bool = false,
+        urlScheme: String? = defaultScheme
+    ) throws -> String {
+        let spineLookup = buildSpineLookup(spineURLs: package.spineURLs)
+        let section = try renderSection(
+            resource: resource,
+            package: package,
+            spineLookup: spineLookup,
+            options: options,
+            urlScheme: urlScheme
+        )
+        let languageAttribute = package.language.map { " lang=\"\($0)\"" } ?? ""
+        return """
+        <!doctype html>
+        <html\(languageAttribute)>
+        <head>
+            <meta charset=\"utf-8\">
+            <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+            <style id=\"honeycrisp-vars\">\(EPUBParser.readerVarsCSS(cosmetics))</style>
+            <style>\(EPUBParser.readerCSS)</style>
+            <style>\(columnCSS)</style>
+            <style>\(EPUBParser.imageVisibilityCSS(hideImages: hideImages))</style>
+            <style>
+            body { padding: 0 !important; }
+            html { visibility: hidden; }
+            </style>
+        </head>
+        <body>
+        <div id=\"content\">
+        \(section)
+        </div>
+        </body>
+        </html>
+        """
+    }
 }

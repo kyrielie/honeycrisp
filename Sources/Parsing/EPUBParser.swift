@@ -1,11 +1,9 @@
 // EPUBParser.swift
 // Parses EPUB files into structured content, adapted from the QuickLook plugin
 
-// swiftlint:disable file_length
 import Foundation
 import ZIPFoundation
 
-// swiftlint:disable:next type_body_length
 final class EPUBParser: NSObject {
 
     static func javaScriptStringLiteral(_ value: String) -> String? {
@@ -134,9 +132,20 @@ final class EPUBParser: NSObject {
         let titleNode = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='title']")).first as? XMLElement
         let authorNode = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='creator']")).first as? XMLElement
         let languageNode = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='language']")).first as? XMLElement
+        let publisherNode = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='publisher']")).first as? XMLElement
+        let identifierNode = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='identifier']")).first as? XMLElement
+        let dateNode = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='date']")).first as? XMLElement
+        let descriptionNode = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='description']")).first as? XMLElement
+        let subjectNodes = (try opf.nodes(forXPath: "//*[local-name()='metadata']/*[local-name()='subject']")) as? [XMLElement] ?? []
+        let subjects = subjectNodes.compactMap { $0.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+
         let bookTitle = titleNode?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let bookAuthor = authorNode?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let language = Self.sanitizedLanguageTag(languageNode?.stringValue)
+        let publisher = publisherNode?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identifier = identifierNode?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let publicationDate = dateNode?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bookDescription = descriptionNode?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
 
         var hrefByID: [String: String] = [:]
         var mediaTypeByID: [String: String] = [:]
@@ -195,7 +204,9 @@ final class EPUBParser: NSObject {
         return EPUBPackage(
             rootFolder: rootFolder, spineURLs: spineURLs, title: bookTitle, author: bookAuthor,
             coverURL: coverURL, manifest: manifest, spine: spineItems, version: version,
-            navigationURL: navigationURL, landmarks: landmarks, language: language)
+            navigationURL: navigationURL, landmarks: landmarks, language: language,
+            publisher: publisher, identifier: identifier, publicationDate: publicationDate,
+            bookDescription: bookDescription, subjects: subjects)
     }
 
     private static func resolve(_ href: String, relativeTo base: URL) -> URL {
@@ -270,86 +281,7 @@ final class EPUBParser: NSObject {
         return landmarks
     }
 
-    // MARK: - HTML building
-
-    /// Paginated-mode counterpart to buildScrollHTML: one spine item's HTML, with
-    /// the column layout CSS baked in up front (never injected after load via
-    /// evaluateJavaScript — that's what avoids an unstyled flash before
-    /// repagination). PaginationJS and the RestorePosition.bootstrapJS restore
-    /// call are baked in the same way, as an inline <script> at the end of
-    /// <body>, so the requested column is already on screen for the first
-    /// paint — see RestorePosition.bootstrapJS. Uses the same
-    /// extractedChapterBody helper as buildScrollHTML, so formatting behaviour
-    /// can't drift between the two rendering modes.
-    // swiftlint:disable:next function_parameter_count
-    func buildPageHTML(
-        from pkg: EPUBPackage,
-        spineIndex: Int,
-        viewportWidth: CGFloat,
-        viewportHeight: CGFloat,
-        colsPerScreen: ColsPerScreen,
-        cosmetics: ReaderCosmeticSettings,
-        restorePosition: RestorePosition,
-        maxWidth: CGFloat = 700,
-        paddingH: CGFloat = 24,
-        paddingV: CGFloat = 24,
-        formatFirstChapter: Bool = false,
-        removeParagraphIndents: Bool = false,
-        collapseSpacerParagraphs: Bool = false,
-        hideImages: Bool = false
-    ) throws -> String {
-        let languageAttribute = pkg.language.map { " lang=\"\($0)\"" } ?? ""
-        let base = pkg.rootFolder
-        let extracted = try Self.extractedChapterBody(
-            from: pkg, index: spineIndex, base: base,
-            formatFirstChapter: formatFirstChapter,
-            removeParagraphIndents: removeParagraphIndents,
-            collapseSpacerParagraphs: collapseSpacerParagraphs
-        )
-        let body = "\n<section class=\"ql-chapter\" id=\"chapter-\(spineIndex)\" data-chapter-index=\"\(spineIndex)\">\n"
-            + extracted
-            + "\n</section>\n"
-
-        let columnCSS = Self.paginatedColumnCSS(
-            viewportWidth: viewportWidth, viewportHeight: viewportHeight, colsPerScreen: colsPerScreen,
-            marginH: paddingH, marginV: paddingV, maxWidth: maxWidth
-        )
-
-        // PaginationJS + qlSetup + the restore call run synchronously here,
-        // inline, as the last thing parsed in <body> — before WKWebView gets
-        // an opportunity to paint. That's what makes the restore column the
-        // very first thing rendered instead of a Swift-driven post-load
-        // scroll (which always races an already-painted column 0). See
-        // RestorePosition.bootstrapJS and PaginationEngine.applyLayout, which
-        // now only reads back the result of this script, it doesn't scroll.
-        let paginationBootstrap = """
-        <script>
-        \(PaginationJS.script)
-        window.qlSetup(\(colsPerScreen.rawValue));
-        \(restorePosition.bootstrapJS)
-        </script>
-        """
-
-        return """
-        <!doctype html>
-        <html\(languageAttribute)>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style id="honeycrisp-vars">\(Self.readerVarsCSS(cosmetics))</style>
-            <style>\(Self.readerCSS)</style>
-            <style>\(columnCSS)</style>
-            <style>\(Self.imageVisibilityCSS(hideImages: hideImages))</style>
-        </head>
-        <body>
-        <div id="content">\(body)</div>
-        <script>window._qlPaginated = true;</script>
-        <script>\(Self.readerJS)</script>
-        \(paginationBootstrap)
-        </body>
-        </html>
-        """
-    }
+    // MARK: - CSS
 
     static func imageVisibilityCSS(hideImages: Bool) -> String {
         ReaderStyles.imageVisibilityCSS(hideImages: hideImages)
@@ -371,35 +303,6 @@ final class EPUBParser: NSObject {
             marginH: marginH,
             marginV: marginV,
             maxWidth: maxWidth
-        )
-    }
-
-    /// Extracts and prepares the `<body>` content of a single spine item: strips the
-    /// surrounding `<body>` tag, applies AO3 formatting / paragraph-indent stripping /
-    /// preface-heading stripping as requested, then rewrites resource URLs to absolute
-    /// file URLs. Shared by `buildScrollHTML` (all spine items, merged) and, in a future
-    /// paginated-mode HTML builder, a single spine item at a time — kept as one code path
-    /// so the two rendering modes can't drift apart on formatting behaviour.
-    private static func extractedChapterBody(
-        from pkg: EPUBPackage,
-        index: Int,
-        base: URL,
-        formatFirstChapter: Bool,
-        removeParagraphIndents: Bool,
-        collapseSpacerParagraphs: Bool = false
-    ) throws -> String {
-        _ = base
-        _ = removeParagraphIndents
-        let mediaType = pkg.spine.indices.contains(index) ? pkg.manifest[pkg.spine[index].manifestID]?.mediaType : nil
-        return try ChapterPipeline.render(
-            chapterAt: pkg.spineURLs[index],
-            mediaType: mediaType,
-            resource: index,
-            root: pkg.rootFolder,
-            options: ChapterTransformOptions(
-                formatAO3: formatFirstChapter,
-                markSpacers: collapseSpacerParagraphs
-            )
         )
     }
 

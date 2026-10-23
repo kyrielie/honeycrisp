@@ -314,6 +314,7 @@ Pass summary:
 - Pass 5: In-book anchor navigation and cross-chapter jumps record navigation history for footnote back-navigation; chapter sync on crossing chapter boundaries. Tested in `FlowLinkNavigationTests.swift`.
 - Pass 6: Deleted legacy merged document path (`buildScrollHTML` removed from `EPUBParser.swift`, `LegacyMergedSurface` removed from `FlowingSurface.swift`, `ReaderViewController` defaults directly to `FlowSurface`). Updated all baseline and parity tests to use `FlowDocumentBuilder.buildDocument`.
 - Pass 7: Split `EPUBParser.swift` by layer: `EPUBPackage.swift` (L1 Publication), `ChapterSearch.swift` (L2 Content), `ReaderCosmeticSettings.swift` (L3 Reader), `ReaderStyles.swift` (L3 Reader), `ReaderScripts.swift` (L3 Reader). Pure Foundation in L0-L2 with AppKit imports eliminated from parsing.
+- Pass 8: Ported paginated mode to `FlowSurface` (`FlowDocumentBuilder.buildPagedDocument`, `PaginationJS` and pager bootstrap in `WKContentWorld.defaultClient`, `__app/paged.html` via scheme handler, deleted legacy `buildPageHTML` and `_ql_reader.html` file writing).
 
 Exit: parity and restore tests green; no reference to the removed functions; INDEX and ARCHITECTURE
 updated.

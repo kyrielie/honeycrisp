@@ -80,22 +80,9 @@ enum EPUBAnchor {
 }
 
 extension RestorePosition {
-    /// JS statement that performs this restore. Baked by EPUBParser.
-    /// buildPageHTML into an inline <script> that runs synchronously during
-    /// HTML parse — before the WKWebView's first paint — so the correct
-    /// column is already on screen for the very first frame rendered.
-    ///
-    /// This replaces an earlier approach where PaginationEngine.applyLayout
-    /// drove the scroll itself from webView(_:didFinish:), via a Swift ->
-    /// evaluateJavaScript round trip. That happens after the document has
-    /// already had at least one opportunity to paint at column 0 (its
-    /// default scroll position), so hiding the webview and revealing it
-    /// after the fact couldn't reliably suppress the flash — WKWebView's
-    /// compositor runs out-of-process and isn't guaranteed to have caught up
-    /// to the scroll by the time the evaluateJavaScript completion handler
-    /// (and thus the reveal) runs. Scrolling inline, before parsing yields
-    /// control back to the run loop, removes the race entirely: there is no
-    /// wrong frame to flash because column 0 is never actually painted.
+    /// JS statement that performs this restore. Injected by the surface
+    /// into the client-world pager bootstrap before WKWebView paints, so the
+    /// correct column is already on screen when the page is revealed.
     var bootstrapJS: String {
         switch self {
         case .start:
@@ -171,10 +158,9 @@ final class PaginationEngine: NSObject {
 
     // MARK: Called from webView(_:didFinish:) — after CSS is already applied
 
-    /// Reads back the column/total that the inline bootstrap script (see
-    /// RestorePosition.bootstrapJS, embedded by EPUBParser.buildPageHTML)
-    /// already scrolled to during HTML parse. Does not perform any scrolling
-    /// itself — by the time didFinish fires and this runs, restore has
+    /// Reads back the column/total that the pager bootstrap script (see
+    /// RestorePosition.bootstrapJS) already scrolled to. Does not perform any
+    /// scrolling itself — by the time didFinish fires and this runs, restore has
     /// already happened.
     func applyLayout(restorePosition: RestorePosition) {
         applyLayout(restorePosition: restorePosition, attempt: 0)
@@ -298,8 +284,7 @@ final class PaginationEngine: NSObject {
 //    In webView(_:didFinish:), when currentMode == .paginated:
 //        paginationEngine.applyLayout(restorePosition: pendingRestorePosition)
 //    The actual restore scroll already happened by this point — it runs
-//    synchronously inline, during HTML parse, via a bootstrap <script> that
-//    EPUBParser.buildPageHTML embeds using RestorePosition.bootstrapJS.
+//    via the client-world pager bootstrap before first paint.
 //    applyLayout only reads back the resulting column/total.
 //
 // 3. KEY REPEAT SUPPRESSION

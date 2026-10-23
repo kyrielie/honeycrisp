@@ -141,7 +141,7 @@ Properties every implementation provides:
 - Cosmetic settings patch live without reload; structural settings re-render and restore the `Locator` (C8).
 - Bounded cost. The flow surface's cost grows with book size and is gated by roadmap M4a against the 2.2.1 figures and the owner's largest book. The chapter host's memory is bounded by its window (roadmap M3, M4).
 
-`FlowSurface` (default, roadmap M4a): one document with one `section.hc-chapter[data-resource]` per chapter, served by the scheme handler, content JavaScript off, app scripts in the client world. Ids are namespaced `hc-r{N}-{id}` and internal links are rewritten through a path-to-resource table. The book's styles are not loaded (C4, R21).
+`FlowSurface` (default, roadmap M4a): continuous flow (`__app/flow.html`) or single-chapter paginated documents (`__app/paged.html`) with `<section class="hc-chapter" data-resource="{N}">`, served by the scheme handler, content JavaScript off, app scripts in the client world (`WKContentWorld.defaultClient`). Ids are namespaced `hc-r{N}-{id}` and internal links are rewritten through a path-to-resource table. The book's styles are not loaded (C4, R21).
 
 `ChapterHostSurface` (built in roadmap M3 and M4; frozen, behind `HONEYCRISP_CHAPTER_HOST=1`; snapshot branch `chapter-engine`): the current chapter plus neighbors as isolated documents, one iframe per chapter inside a shell document, mounted near the viewport and evicted when far, XHTML chapters loaded as XML, the book's own styles kept. It has no history, search, speech, bookmarks, TOC jumps or links until a decision makes it selectable (R20).
 

@@ -46,6 +46,7 @@ private final class TOCRowCell: NSTableCellView {
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
+
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
@@ -75,8 +76,6 @@ private final class TOCRowCell: NSTableCellView {
         guard let item else { return }
         if backgroundStyle == .emphasized {
             titleLabel.textColor = .alternateSelectedControlTextColor
-        } else if isCurrent {
-            titleLabel.textColor = .controlAccentColor
         } else if item.isSelectable {
             titleLabel.textColor = .labelColor
         } else {
@@ -109,6 +108,7 @@ final class TOCPopupViewController: NSViewController, NSOutlineViewDataSource, N
         root.state = .active
         root.wantsLayer = true
         root.layer?.cornerRadius = 12
+        root.layer?.cornerCurve = .continuous
         root.layer?.masksToBounds = true
         root.layer?.borderColor = NSColor.separatorColor.cgColor
         root.layer?.borderWidth = 0.5
@@ -283,12 +283,20 @@ final class TOCPopupViewController: NSViewController, NSOutlineViewDataSource, N
     @objc private func outlineClicked(_ sender: Any?) {
         let row = outlineView.clickedRow
         guard row >= 0, let item = outlineView.item(atRow: row) as? TOCItem, item.isSelectable else { return }
+        if let spineIndex = item.spineIndex {
+            model.setCurrent(TOCLocation(spineIndex: spineIndex, fragment: item.fragment))
+            outlineView.reloadData()
+        }
         onSelect?(item.entry)
     }
 
     private func activateSelectedItem() {
         let row = outlineView.selectedRow
         guard row >= 0, let item = outlineView.item(atRow: row) as? TOCItem, item.isSelectable else { return }
+        if let spineIndex = item.spineIndex {
+            model.setCurrent(TOCLocation(spineIndex: spineIndex, fragment: item.fragment))
+            outlineView.reloadData()
+        }
         onSelect?(item.entry)
     }
 

@@ -3,7 +3,7 @@ import AppKit
 // MARK: - RebindableAction
 
 enum RebindableAction: String, CaseIterable, Codable {
-    case openFile, searchInBook, showTOC, toggleFloat, toggleReadingMode
+    case openFile, searchInBook, showTOC, toggleFloat, toggleReadingMode, bookInfo
 
     var displayName: String {
         switch self {
@@ -12,6 +12,7 @@ enum RebindableAction: String, CaseIterable, Codable {
         case .showTOC: "Show Table of Contents"
         case .toggleFloat: "Float on Top"
         case .toggleReadingMode: "Toggle Paginated Mode"
+        case .bookInfo: "Book Info"
         }
     }
 
@@ -22,6 +23,7 @@ enum RebindableAction: String, CaseIterable, Codable {
         case .showTOC: KeyBinding(key: "t", modifiers: [.command])
         case .toggleFloat: KeyBinding(key: "t", modifiers: [.command, .shift])
         case .toggleReadingMode: KeyBinding(key: "p", modifiers: [.command, .shift])
+        case .bookInfo: KeyBinding(key: "i", modifiers: [.command])
         }
     }
 }

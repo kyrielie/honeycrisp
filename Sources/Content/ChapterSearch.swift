@@ -83,4 +83,57 @@ enum ChapterSearch {
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// Splits continuous chapter text into sentence chunks with abbreviation protection.
+    static func speechChunks(from text: String) -> [String] {
+        guard !text.isEmpty else { return [] }
+        // Protect common abbreviations from breaking sentences
+        let abbreviations = [
+            "Mr.", "Mrs.", "Ms.", "Dr.", "Prof.", "Sr.", "Jr.", "vs.", "etc.", "e.g.", "i.e.", "approx.", "fig.",
+        ]
+        var protected = text
+        for (i, abbr) in abbreviations.enumerated() {
+            let token = "___HC_ABBR_\(i)___"
+            protected = protected.replacingOccurrences(of: abbr, with: token)
+        }
+
+        // Split on sentence-ending punctuation followed by whitespace, or paragraph line breaks
+        let pattern = #"(?<=[.?!])\s+|[\r\n]+"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return [text]
+        }
+
+        let nsString = protected as NSString
+        let matches = regex.matches(in: protected, range: NSRange(location: 0, length: nsString.length))
+        var chunks: [String] = []
+        var lastIndex = 0
+
+        for match in matches {
+            let chunkRange = NSRange(location: lastIndex, length: match.range.location - lastIndex)
+            if chunkRange.length > 0 {
+                var chunk = nsString.substring(with: chunkRange).trimmingCharacters(in: .whitespacesAndNewlines)
+                for (i, abbr) in abbreviations.enumerated() {
+                    let token = "___HC_ABBR_\(i)___"
+                    chunk = chunk.replacingOccurrences(of: token, with: abbr)
+                }
+                if !chunk.isEmpty {
+                    chunks.append(chunk)
+                }
+            }
+            lastIndex = match.range.location + match.range.length
+        }
+
+        if lastIndex < nsString.length {
+            var chunk = nsString.substring(from: lastIndex).trimmingCharacters(in: .whitespacesAndNewlines)
+            for (i, abbr) in abbreviations.enumerated() {
+                let token = "___HC_ABBR_\(i)___"
+                chunk = chunk.replacingOccurrences(of: token, with: abbr)
+            }
+            if !chunk.isEmpty {
+                chunks.append(chunk)
+            }
+        }
+
+        return chunks.isEmpty ? [text] : chunks
+    }
 }

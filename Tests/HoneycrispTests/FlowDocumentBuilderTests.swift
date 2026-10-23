@@ -161,4 +161,47 @@ final class FlowDocumentBuilderTests: XCTestCase {
         XCTAssertTrue(fullDoc.contains("data-resource=\"0\""))
         XCTAssertTrue(fullDoc.contains("data-resource=\"1\""))
     }
+
+    @MainActor
+    func testBuildPagedDocumentContainsColumnCSSAndNoInlineScripts() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let chURL = tempDir.appendingPathComponent("chapter1.xhtml")
+        try "<html><body><h1>Title</h1><p>Body text</p></body></html>".write(to: chURL, atomically: true, encoding: .utf8)
+
+        let manifest = ["chapter1.xhtml": EPUBManifestItem(id: "c1", href: "chapter1.xhtml", mediaType: "application/xhtml+xml", properties: [], url: chURL)]
+        let spine = [EPUBSpineItem(manifestID: "c1", url: chURL, isLinear: true)]
+        let pkg = EPUBPackage(
+            rootFolder: tempDir,
+            spineURLs: [chURL],
+            title: "Test",
+            author: "Author",
+            coverURL: nil,
+            manifest: manifest,
+            spine: spine,
+            language: "en"
+        )
+
+        let columnCSS = ":root { column-width: 300px; column-gap: 20px; }"
+        let pagedHTML = try FlowDocumentBuilder.buildPagedDocument(
+            resource: 0,
+            package: pkg,
+            columnCSS: columnCSS
+        )
+
+        XCTAssertTrue(pagedHTML.contains("column-width: 300px"))
+        XCTAssertTrue(pagedHTML.contains("visibility: hidden;"))
+        XCTAssertTrue(pagedHTML.contains("padding: 0 !important;"))
+        XCTAssertTrue(pagedHTML.contains("data-resource=\"0\""))
+        XCTAssertFalse(pagedHTML.contains("<script"))
+
+        let surface = FlowSurface()
+        surface.attachPaged(package: pkg, html: pagedHTML)
+        XCTAssertEqual(surface.pagedDocumentURL?.absoluteString, "honeycrisp-epub://book/__app/paged.html")
+        let servedData = surface.schemeHandler.appResources[FlowSurface.pagedResourcePath]
+        XCTAssertNotNil(servedData)
+        XCTAssertEqual(servedData, Data(pagedHTML.utf8))
+    }
 }
