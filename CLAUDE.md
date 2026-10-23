@@ -6,7 +6,7 @@ Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
 ## Documents (one of each)
 - `docs/FRAMEWORK.md`: target design, layers, contracts, admission rules. Read before any change to
   parsing, rendering, positions, styling, persistence or settings.
-- `docs/ROADMAP.md`: the only plan. Decisions R1 to R22, milestones M0 to M10 (M4a added), verify list.
+- `docs/ROADMAP.md`: the only plan. Decisions R1 to R23, milestones M0 to M10 (M2.1, M4a, M8.1 added), verify list.
 - `ARCHITECTURE.md`: what the code does today. `INDEX.md`: code map.
 - Superseded documents are deleted, not archived. A milestone is not done until the affected
   document is updated and its `Status:` line in the roadmap is changed. Do not add plan or survey

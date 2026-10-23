@@ -36,9 +36,8 @@ final class ReaderViewController: NSViewController {
 
     private var currentPackage: EPUBPackage?
     private var currentEPUBURL: URL?
-    /// Non-nil only while the chapter host spike is enabled (`ChapterHostFlag`); every branch on it is
-    /// flag-mode only and the merged-document path is untouched when it is nil.
-    private var chapterHost: ChapterHostSurface?
+    /// The active flowing surface implementation (FRAMEWORK contract C5).
+    private var surface: FlowingSurface!
     private var extractionWorkDirectories: [URL] = []
 
     // MARK: - Pagination state (Patch 0007)
@@ -50,9 +49,6 @@ final class ReaderViewController: NSViewController {
     private var paginationEngine: PaginationEngine?
     private var currentSpineIndex: Int = 0
     private var activeScrollSpineIndex: Int = 0
-    /// Flag mode only: where the next `renderHostedChapter` lands instead of the top of `activeScrollSpineIndex`.
-    /// In-session only, never persisted (ARCHITECTURE 4a).
-    private var pendingHostRestore: ChapterHostSurface.Restore?
     private var tocEntries: [TOCEntry] = []
     private var currentChapterTitle: String?
     private var pendingSearchTerm: String?
@@ -201,7 +197,27 @@ final class ReaderViewController: NSViewController {
             host.onPagerPosition = { [weak self] column, total in
                 self?.didReceivePositionUpdate(column: column, totalColumns: total)
             }
-            chapterHost = host
+            surface = host
+        } else if FlowSurfaceFlag.isEnabled {
+            let flow = FlowSurface()
+            flow.install(into: cfg)
+            flow.onProgress = { [weak self] pct in self?.didReceiveProgress(pct) }
+            flow.onPosition = { [weak self] offset, fraction in
+                self?.didReceivePosition(offset: offset, fraction: fraction)
+            }
+            flow.onPageInfo = { [weak self] page, totalPages, spineIndex, spineCount in
+                self?.didReceiveScrollPageInfo(
+                    page: page, totalPages: totalPages, spineIndex: spineIndex, spineCount: spineCount)
+            }
+            flow.onPageAction = { [weak self] forward in self?.didReceivePageAction(forward: forward) }
+            flow.onPositionUpdate = { [weak self] col, total in
+                self?.didReceivePositionUpdate(column: col, totalColumns: total)
+            }
+            surface = flow
+        } else {
+            let legacy = LegacyMergedSurface()
+            legacy.install(into: cfg)
+            surface = legacy
         }
 
         // Registered before the WKWebView is constructed — Ambrosia's invariant 6
@@ -221,8 +237,8 @@ final class ReaderViewController: NSViewController {
         webView.setValue(false, forKey: "drawsBackground")
         webView.readerViewController = self
 
-        // Flag mode: the pager runs in the client world (ChapterHostSurface.install), so the engine must too.
-        let pagerWorld: WKContentWorld? = chapterHost == nil ? nil : .defaultClient
+        // The pager runs in the client world for isolated surfaces, or in page context for merged.
+        let pagerWorld: WKContentWorld? = surface.pagerContentWorld
         paginationEngine = PaginationEngine(webView: webView, contentWorld: pagerWorld)
         paginationEngine?.spineDidLoad = { [weak self] totalCols in
             guard let self else { return }
@@ -568,11 +584,7 @@ final class ReaderViewController: NSViewController {
         case .scroll:
             renderScrollContent(pkg: pkg)
         case .paginated:
-            if chapterHost != nil {
-                // Flag mode: an in-memory restore only. `pendingPaginatedRestorePosition` comes from history.
-                let target = ChapterHostPaging.pagedTarget(
-                    for: pendingHostRestore, fallbackIndex: currentSpineIndex, count: pkg.spineURLs.count)
-                pendingHostRestore = nil
+            if let target = surface.targetForPaginatedRestore(fallbackIndex: currentSpineIndex, count: pkg.spineURLs.count) {
                 loadSpineItem(index: target.index, restorePosition: target.restore, pkg: pkg)
                 return
             }
@@ -589,17 +601,45 @@ final class ReaderViewController: NSViewController {
         host.attach(package: pkg, cosmetics: cosmetics)
         let index = min(max(activeScrollSpineIndex, 0), max(0, pkg.spineURLs.count - 1))
         do {
-            let restore = pendingHostRestore ?? .start
-            pendingHostRestore = nil
+            let restore = host.pendingRestore ?? .start
+            host.pendingRestore = nil
             try host.loadWindow(around: index, in: pkg, into: webView, restoring: restore)
         } catch {
             showError(error)
         }
     }
 
+    private func renderFlowContent(_ flow: FlowSurface, pkg: EPUBPackage) {
+        do {
+            let format = SettingsManager.shared.formatFirstChapter
+            let collapseSpacers = SettingsManager.shared.collapseSpacerParagraphs
+            let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, language: pkg.language)
+            lastBuiltCosmetics = cosmetics
+            let html = try FlowDocumentBuilder.buildDocument(
+                package: pkg,
+                options: ChapterTransformOptions(
+                    formatAO3: format,
+                    markSpacers: collapseSpacers
+                ),
+                cosmetics: cosmetics,
+                hideImages: SettingsManager.shared.hideImages
+            )
+            flow.attach(package: pkg, html: html)
+            if let flowURL = flow.documentURL {
+                webView.load(URLRequest(url: flowURL))
+            }
+        } catch {
+            showError(error)
+        }
+    }
+
     private func renderScrollContent(pkg: EPUBPackage) {
-        if let host = chapterHost {
+        if surface.managesScrollWindow, let host = surface as? ChapterHostSurface {
             renderHostedChapter(host, pkg: pkg)
+            return
+        }
+        if let flow = surface as? FlowSurface {
+            renderFlowContent(flow, pkg: pkg)
             return
         }
         do {
@@ -679,7 +719,7 @@ final class ReaderViewController: NSViewController {
         }
         currentSpineIndex = index
         updateCurrentChapter(for: pkg.spineURLs[index])
-        if let host = chapterHost {
+        if surface.managesPagedChapter, let host = surface as? ChapterHostSurface {
             loadHostedPagedChapter(host, index: index, restorePosition: restorePosition, pkg: pkg)
             return
         }
@@ -749,8 +789,8 @@ final class ReaderViewController: NSViewController {
         }
         engine.currentOffset { [weak self] offset in
             guard let self else { return }
-            if let offset {
-                self.pendingHostRestore = .position(
+            if let offset, let host = self.surface as? ChapterHostSurface {
+                host.pendingRestore = .position(
                     ChapterHostSurface.Position(resource: self.currentSpineIndex, offset: offset))
             }
             self.renderCurrentContent()
@@ -782,12 +822,25 @@ final class ReaderViewController: NSViewController {
         if currentMode == .paginated {
             loadSpineItem(index: spineIndex, restorePosition: offset > 0 ? .characterOffset(offset) : .start, pkg: pkg)
         } else if offset > 0 && chapterLocalOffset {
-            webView.evaluateJavaScript(
-                "window.honeycrispNavigateToChapterOffset(\(spineIndex), \(offset));", completionHandler: nil)
+            evaluateInSurfaceWorld(
+                "window.honeycrispNavigateToChapterOffset(\(spineIndex), \(offset));")
         } else if offset > 0 {
-            webView.evaluateJavaScript("window.honeycrispNavigateToOffset(\(offset));", completionHandler: nil)
+            evaluateInSurfaceWorld("window.honeycrispNavigateToOffset(\(offset));")
         } else {
-            webView.evaluateJavaScript("window.navigateToChapter(\(spineIndex));", completionHandler: nil)
+            evaluateInSurfaceWorld("window.navigateToChapter(\(spineIndex));")
+        }
+    }
+
+    private func evaluateInSurfaceWorld(_ script: String, completion: ((Any?, (any Error)?) -> Void)? = nil) {
+        if let world = surface.pagerContentWorld {
+            webView.evaluateJavaScript(script, in: nil, in: world) { result in
+                switch result {
+                case .success(let value): completion?(value, nil)
+                case .failure(let error): completion?(nil, error)
+                }
+            }
+        } else {
+            webView.evaluateJavaScript(script, completionHandler: completion)
         }
     }
 
@@ -815,7 +868,7 @@ final class ReaderViewController: NSViewController {
             + "var o=\(offsetFunction)?\(offsetFunction)():0;"
             + "var r=\(rangeFunction)?\(rangeFunction)(\(isScroll),\(spineIndex)):null;"
             + "return JSON.stringify({offset:o,range:r});})()"
-        webView.evaluateJavaScript(script) { result, _ in
+        evaluateInSurfaceWorld(script) { result, _ in
             var offset = 0
             var visible: ClosedRange<Int>?
             if let text = result as? String,
@@ -854,8 +907,8 @@ final class ReaderViewController: NSViewController {
 
     /// Adds a bookmark for the visible page, or removes the one that is already there.
     func toggleBookmarkAtCurrentPosition() {
-        // Flag mode has no page script to read a location from; it would store offset 0.
-        guard chapterHost == nil, let url = currentEPUBURL else { return }
+        // Surfaces without page scripts (e.g. chapter host) cannot read location and would store offset 0.
+        guard surface.supportsBookmarks, let url = currentEPUBURL else { return }
         let spineIndex = currentBookmarkSpineIndex
         readPageLocation(spineIndex: spineIndex) { [weak self] location in
             guard let self else { return }
@@ -924,7 +977,7 @@ final class ReaderViewController: NSViewController {
                 pendingFragment = fragment
                 navigate(to: index)
                 if currentMode == .scroll, let encoded = EPUBParser.javaScriptStringLiteral(fragment) {
-                    webView.evaluateJavaScript("window.navigateToFragment(\(encoded));", completionHandler: nil)
+                    evaluateInSurfaceWorld("window.navigateToFragment(\(encoded));")
                     pendingFragment = nil
                 }
             } else {
@@ -949,7 +1002,7 @@ final class ReaderViewController: NSViewController {
         if currentMode == .paginated, let pkg = currentPackage {
             loadSpineItem(index: index, restorePosition: .start, pkg: pkg)
         } else {
-            webView.evaluateJavaScript("window.navigateToChapter(\(index));", completionHandler: nil)
+            evaluateInSurfaceWorld("window.navigateToChapter(\(index));")
         }
     }
 
@@ -959,7 +1012,7 @@ final class ReaderViewController: NSViewController {
         if currentMode == .paginated, let pkg = currentPackage {
             loadSpineItem(index: index, restorePosition: .end, pkg: pkg)
         } else {
-            webView.evaluateJavaScript("window.navigateToChapterEnd(\(index));", completionHandler: nil)
+            evaluateInSurfaceWorld("window.navigateToChapterEnd(\(index));")
         }
     }
 
@@ -1007,7 +1060,7 @@ final class ReaderViewController: NSViewController {
         let generation = speechQueueGeneration
         let index = currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex
         speechNextSpineIndex = index + 1
-        webView.evaluateJavaScript("window.honeycrispCurrentSpeechText(\(index));") { [weak self] result, _ in
+        evaluateInSurfaceWorld("window.honeycrispCurrentSpeechText(\(index));") { [weak self] result, _ in
             guard let self, self.speechQueueGeneration == generation,
                 let text = result as? String, !text.isEmpty
             else { return }
@@ -1075,7 +1128,7 @@ final class ReaderViewController: NSViewController {
                 from: currentSpineIndex, forward: forward, count: pkg.spineURLs.count)
         else { return }
         // Flag mode: the engine is not ready while a chapter loads, which drops a second request.
-        if chapterHost != nil, paginationEngine?.isReady != true { return }
+        if surface.requiresEngineReadyForSpineNavigation, paginationEngine?.isReady != true { return }
         loadSpineItem(index: target.index, restorePosition: target.restore, pkg: pkg)
     }
 
@@ -1115,7 +1168,7 @@ final class ReaderViewController: NSViewController {
         let goingTo: ReadingMode = currentMode == .scroll ? .paginated : .scroll
         SettingsManager.shared.defaultReadingMode = goingTo
 
-        if let host = chapterHost {
+        if surface.handlesReadingModeToggle, let host = surface as? ChapterHostSurface {
             toggleHostedReadingMode(host, to: goingTo, pkg: pkg)
             return
         }
@@ -1169,7 +1222,7 @@ final class ReaderViewController: NSViewController {
                 guard self.currentMode == .scroll else { return }
                 let target = ChapterHostPaging.toPaged(from: position, activeIndex: self.activeScrollSpineIndex, count: count)
                 self.currentSpineIndex = target.index
-                self.pendingHostRestore = target.restore
+                host.pendingRestore = target.restore
                 self.currentMode = .paginated
                 self.applyScrollbarVisibility()
                 self.installScrollWheelMonitorIfNeeded()
@@ -1182,7 +1235,7 @@ final class ReaderViewController: NSViewController {
             guard let self, self.currentMode == .paginated else { return }
             let target = ChapterHostPaging.toScroll(index: self.currentSpineIndex, offset: offset, count: count)
             self.activeScrollSpineIndex = target.index
-            self.pendingHostRestore = target.restore
+            host.pendingRestore = target.restore
             self.currentMode = .scroll
             self.applyScrollbarVisibility()
             self.removeScrollWheelMonitor()
@@ -1292,7 +1345,7 @@ final class ReaderViewController: NSViewController {
             searchOverlay.isHidden = true
             searchButton?.state = .off
             searchDebounceTimer?.invalidate()
-            webView.evaluateJavaScript("window.searchText('')", completionHandler: nil)
+            evaluateInSurfaceWorld("window.searchText('')")
             searchBarVC.clear()
             view.window?.makeFirstResponder(webView)
         }
@@ -1338,28 +1391,14 @@ final class ReaderViewController: NSViewController {
     /// initial paint, so this can't drift from what a fresh load would produce.
     @objc private func applyCosmeticCSSUpdate() {
         let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, language: currentPackage?.language)
-        if let host = chapterHost {
-            // Flag mode: the page script and `#honeycrisp-vars` do not exist; patch every mounted chapter.
-            lastBuiltCosmetics = cosmetics
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                do { try await host.applyCosmetics(cosmetics, to: self.webView) } catch { self.showError(error) }
+        lastBuiltCosmetics = cosmetics
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.surface.applyCosmetics(cosmetics, to: self.webView, mode: self.currentMode)
+            } catch {
+                self.showError(error)
             }
-            return
-        }
-        let cssLiteral = Self.jsStringLiteral(EPUBParser.readerVarsCSS(cosmetics))
-        let js = """
-            (function() {
-              var el = document.getElementById('honeycrisp-vars');
-              if (el) el.textContent = \(cssLiteral);
-            })();
-            """
-        webView.evaluateJavaScript(js, completionHandler: nil)
-        if currentMode == .scroll {
-            // Font size/line height/max width/padding all reflow the document,
-            // which changes chapterHeight and therefore page/totalPages -- the
-            // scroll listener won't fire on its own here, so recompute explicitly.
-            webView.evaluateJavaScript("window.reportPageInfo && window.reportPageInfo();", completionHandler: nil)
         }
     }
 
@@ -1382,7 +1421,7 @@ final class ReaderViewController: NSViewController {
         structuralSettingsDebounceTimer?.invalidate()
         structuralSettingsDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
             // Flag mode: the position query below falls back to offset 0 and would overwrite the saved position.
-            if let self, let host = self.chapterHost {
+            if let self, self.surface.handlesStructuralReload, let host = self.surface as? ChapterHostSurface {
                 if case .paged = host.presentation {
                     self.reloadHostedPagedAtCurrentOffset()
                     return
@@ -1390,7 +1429,7 @@ final class ReaderViewController: NSViewController {
                 // Reopen where the reader is, in memory only: nothing is written to `HistoryManager`.
                 Task { @MainActor in
                     if let position = try? await host.firstVisiblePosition(in: self.webView) {
-                        self.pendingHostRestore = .position(position)
+                        host.pendingRestore = .position(position)
                     }
                     self.renderCurrentContent()
                 }
@@ -1436,7 +1475,7 @@ final class ReaderViewController: NSViewController {
 
     func didReceiveProgress(_ percent: Int) {
         // Flag mode writes no progress (roadmap M4: position and progress persistence is M5).
-        guard chapterHost == nil, let url = currentEPUBURL else { return }
+        guard surface.persistsProgress, let url = currentEPUBURL else { return }
         HistoryManager.shared.updateProgress(url: url, percent: percent)
     }
 
@@ -1479,9 +1518,8 @@ final class ReaderViewController: NSViewController {
     /// (via didReceivePositionUpdate), since PaginationJS's own scroll events don't
     /// drive readerJS's debounced-scroll save path the way scroll mode's do.
     func flushPositionSave() {
-        // Flag mode: the query below falls back to offset 0 when the page script is absent, which would
-        // overwrite the saved position every few seconds.
-        guard chapterHost == nil, let url = currentEPUBURL else { return }
+        // Surfaces that do not persist positions (e.g. chapter host) skip saving to avoid clobbering history.
+        guard surface.persistsPosition, let url = currentEPUBURL else { return }
         let spineIndex = currentMode == .scroll ? 0 : currentSpineIndex
         webView.evaluateJavaScript(
             "window.honeycrispCurrentPosition ? window.honeycrispCurrentPosition() : {offset: 0, fraction: 0}"
@@ -1800,7 +1838,7 @@ final class ReaderViewController: NSViewController {
             // layout pass fired before PaginationEngine.applyLayout finished its
             // own setup (isReady flips true only once that completes).
             guard self.paginationEngine?.isReady == true else { return }
-            if self.chapterHost != nil {
+            if self.surface.handlesPaginatedResize {
                 // Flag mode: only a changed geometry reloads, and it restores the exact offset.
                 if self.hostedPagedGeometry() != self.lastHostedPagedGeometry { self.reloadHostedPagedAtCurrentOffset() }
                 return
@@ -1915,7 +1953,7 @@ extension ReaderViewController: TOCSidebarDelegate {
                 pendingFragment = fragment
                 loadSpineItem(index: idx, restorePosition: .start, pkg: pkg)
             } else {
-                webView.evaluateJavaScript("window.navigateToFragment(\(encoded));", completionHandler: nil)
+                evaluateInSurfaceWorld("window.navigateToFragment(\(encoded));")
             }
         } else {
             navigate(to: idx)
@@ -1932,7 +1970,7 @@ extension ReaderViewController: SearchBarDelegate {
         searchDebounceTimer?.invalidate()
         pendingSearchTerm = term
         guard !term.isEmpty else {
-            webView.evaluateJavaScript("window.searchText('');", completionHandler: nil)
+            evaluateInSurfaceWorld("window.searchText('');")
             bar.showResults([], chapterTitles: [:])
             return
         }
@@ -1955,7 +1993,7 @@ extension ReaderViewController: SearchBarDelegate {
                     bar.showResults(results, chapterTitles: titleMap)
                     if !results.isEmpty { bar.selectResult(at: 0) }
                     guard let encoded = EPUBParser.javaScriptStringLiteral(term) else { return }
-                    self.webView.evaluateJavaScript("window.searchText(\(encoded));", completionHandler: nil)
+                    self.evaluateInSurfaceWorld("window.searchText(\(encoded));")
                 }
             }
         }
@@ -1983,7 +2021,7 @@ extension ReaderViewController: SearchBarDelegate {
         searchOverlay.isHidden = true
         searchButton?.state = .off
         searchDebounceTimer?.invalidate()
-        webView.evaluateJavaScript("window.searchText('')", completionHandler: nil)
+        evaluateInSurfaceWorld("window.searchText('')")
         pendingSearchTerm = nil
         bar.clear()
         view.window?.makeFirstResponder(webView)
@@ -2066,15 +2104,7 @@ extension ReaderViewController: WKNavigationDelegate {
             decisionHandler(.cancel)
             return
         }
-        // Flag mode, paged: a link to another chapter would replace the document behind the reader's back.
-        // Cross-chapter links are M5; same-document fragment jumps are left alone.
-        if let host = chapterHost, case .paged = host.presentation, action.navigationType == .linkActivated,
-            let target = action.request.url, ChapterHostPaging.changesDocument(from: webView.url, to: target)
-        {
-            decisionHandler(.cancel)
-            return
-        }
-        if chapterHost != nil, !ChapterHostSurface.allowsNavigation(to: action.request.url) {
+        if !surface.allowsNavigation(action: action, currentURL: webView.url) {
             decisionHandler(.cancel)
             return
         }
@@ -2082,12 +2112,9 @@ extension ReaderViewController: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if let host = chapterHost {
-            if case .paged = host.presentation {
-                // Read the column count and position back; the pager's own setup, restore and reveal ran on `load`.
-                paginationEngine?.setColsPerScreen(SettingsManager.shared.colsPerScreen)
-                paginationEngine?.applyLayout(restorePosition: .start)
-            }
+        if surface.didFinishNavigation(
+            in: webView, paginationEngine: paginationEngine, colsPerScreen: SettingsManager.shared.colsPerScreen
+        ) {
             refreshBookmarkButton()
             return
         }
@@ -2113,11 +2140,11 @@ extension ReaderViewController: WKNavigationDelegate {
             paginationEngine?.applyLayout(restorePosition: pendingPaginatedRestorePosition)
         }
         if let term = pendingSearchTerm, let encoded = EPUBParser.javaScriptStringLiteral(term) {
-            webView.evaluateJavaScript("window.searchText(\(encoded));", completionHandler: nil)
+            evaluateInSurfaceWorld("window.searchText(\(encoded));")
         }
         if let fragment = pendingFragment, let encoded = EPUBParser.javaScriptStringLiteral(fragment) {
             pendingFragment = nil
-            webView.evaluateJavaScript("window.navigateToFragment(\(encoded));", completionHandler: nil)
+            evaluateInSurfaceWorld("window.navigateToFragment(\(encoded));")
         }
         refreshBookmarkButton()
     }

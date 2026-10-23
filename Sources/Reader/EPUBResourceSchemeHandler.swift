@@ -95,14 +95,18 @@ final class EPUBResourceSchemeHandler: NSObject, WKURLSchemeHandler {
         "otf": "font/otf",
     ]
 
-    static func mimeType(for url: URL) -> String {
-        mimeTypes[url.pathExtension.lowercased()] ?? "application/octet-stream"
+    static func mimeType(for url: URL, isAppResource: Bool = false) -> String {
+        let ext = url.pathExtension.lowercased()
+        if isAppResource && (ext == "html" || ext == "htm") {
+            return "text/html"
+        }
+        return mimeTypes[ext] ?? "application/octet-stream"
     }
 
     private static func response(
-        for url: URL, fileURL: URL, byteCount: Int, extraHeaders: [String: String]
+        for url: URL, fileURL: URL, byteCount: Int, extraHeaders: [String: String], isAppResource: Bool = false
     ) -> URLResponse {
-        let mime = mimeType(for: fileURL)
+        let mime = mimeType(for: fileURL, isAppResource: isAppResource)
         let plain = URLResponse(
             url: url, mimeType: mime, expectedContentLength: byteCount, textEncodingName: "utf-8")
         guard !extraHeaders.isEmpty else { return plain }
@@ -119,7 +123,8 @@ final class EPUBResourceSchemeHandler: NSObject, WKURLSchemeHandler {
                 return
             }
             let response = Self.response(
-                for: url, fileURL: URL(fileURLWithPath: key), byteCount: data.count, extraHeaders: responseHeaders)
+                for: url, fileURL: URL(fileURLWithPath: key), byteCount: data.count,
+                extraHeaders: responseHeaders, isAppResource: true)
             urlSchemeTask.didReceive(response)
             urlSchemeTask.didReceive(data)
             urlSchemeTask.didFinish()

@@ -9,9 +9,15 @@ enum ChapterURLs {
         let standardizedRoot: URL
         let rootPath: String
         let rootPrefix: String
+        let scheme: String?
     }
 
-    static func rewrite(in body: Element, chapterURL: URL, root: URL) throws {
+    static func rewrite(
+        in body: Element,
+        chapterURL: URL,
+        root: URL,
+        scheme: String? = nil
+    ) throws {
         let baseDir = URL(fileURLWithPath: chapterURL.deletingLastPathComponent().path, isDirectory: true)
         let rootDir = URL(fileURLWithPath: root.path, isDirectory: true)
         let standardizedRoot = rootDir.resolvingSymlinksInPath().standardizedFileURL
@@ -22,7 +28,8 @@ enum ChapterURLs {
             baseDir: baseDir,
             standardizedRoot: standardizedRoot,
             rootPath: rootPath,
-            rootPrefix: rootPrefix
+            rootPrefix: rootPrefix,
+            scheme: scheme
         )
 
         let allElements = try body.getAllElements()
@@ -65,7 +72,19 @@ enum ChapterURLs {
             return
         }
 
-        var result = targetURL.absoluteString
+        var result: String
+        if let scheme = context.scheme {
+            let relativePath = String(targetPath.dropFirst(context.rootPath.count))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            var components = URLComponents()
+            components.scheme = scheme
+            components.host = "book"
+            components.path = "/" + relativePath
+            result = components.url?.absoluteString ?? targetURL.absoluteString
+        } else {
+            result = targetURL.absoluteString
+        }
+
         if let fragment = fragment {
             if let encoded = fragment.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) {
                 result += "#" + encoded

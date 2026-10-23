@@ -135,4 +135,28 @@ final class ChapterURLsTests: XCTestCase {
         let expected = root.appendingPathComponent("images").appendingPathComponent("my photo.png").absoluteString
         XCTAssertEqual(try img.attr("src"), expected)
     }
+
+    func testCustomSchemeEmitsAppSchemeURLs() throws {
+        let chapterURL = root.appendingPathComponent("OEBPS/text/ch1.xhtml")
+        let html = "<html><body><p><img src=\"../images/cover.jpg#fig1\"/></p></body></html>"
+        let doc = try ChapterMarkup.parse(html, syntax: .html)
+        let body = try ChapterMarkup.body(of: doc)
+
+        try ChapterURLs.rewrite(in: body, chapterURL: chapterURL, root: root, scheme: "honeycrisp-epub")
+
+        let img = try body.select("img").first()!
+        XCTAssertEqual(try img.attr("src"), "honeycrisp-epub://book/OEBPS/images/cover.jpg#fig1")
+    }
+
+    func testCustomSchemePercentEncodesSpaceInPath() throws {
+        let chapterURL = root.appendingPathComponent("ch1.xhtml")
+        let html = "<html><body><p><img src=\"images/my photo.png\"/></p></body></html>"
+        let doc = try ChapterMarkup.parse(html, syntax: .html)
+        let body = try ChapterMarkup.body(of: doc)
+
+        try ChapterURLs.rewrite(in: body, chapterURL: chapterURL, root: root, scheme: "honeycrisp-epub")
+
+        let img = try body.select("img").first()!
+        XCTAssertEqual(try img.attr("src"), "honeycrisp-epub://book/images/my%20photo.png")
+    }
 }

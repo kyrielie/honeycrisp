@@ -38,6 +38,9 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
   `validateMenuItem` (l.519-633).
 
 ### Reader (`Sources/Reader`)
+- `FlowingSurface.swift` (142): `protocol FlowingSurface` (L3 surface seam, FRAMEWORK C5), `LegacyMergedSurface` (2.2.1 merged-document adapter), and `extension ChapterHostSurface: FlowingSurface`.
+- `FlowDocumentBuilder.swift` (246): `FlowSurfaceFlag`, `FlowDocumentBuilder` (multi-chapter flow document builder, `SectionContext`, element ID namespacing `hc-r{N}-{id}`, internal link rewriting, `wrapSections`).
+- `FlowSurface.swift` (187): `FlowSurface` (flowing reader surface served under `honeycrisp-epub://`, roadmap M4a default candidate): `allowsContentJavaScript = false`, client-world user scripts and message handlers, strict CSP headers, in-book navigation link policy.
 - `ReaderWindowController.swift` (147): `setupWindow`, `loadEPUB(at:)`, `showOpenPanel`,
   `loadRecent`, `toggleFloat`, `windowWillClose` flushes position. Also `ReaderWindow` (key forwarding).
 - `ReaderViewController.swift` (2487): the reading surface. See section map below.
@@ -48,7 +51,7 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 - `PaginationJS.swift` (393): JS for paginated mode: column snap, boundaries, char-offset seek.
   Posts `pageAction` and `positionUpdate`. `qlOffsetAtCurrentColumn` (M4 pass 7.2b) returns the offset of the first text on the current page, the inverse of `qlNavigateToOffset`.
 - `EPUBDropTargetView.swift` (43): drag and drop of `.epub` files.
-- `EPUBResourceSchemeHandler.swift` (163): `honeycrisp-epub://book/...` scheme handler (containment, MIME, optional response headers, `ActiveTaskSet`, `/__app/` app resources via `appResources`, markup `transform` hook). Wired only through `ChapterHostSurface` (flag mode, roadmap M3).
+- `EPUBResourceSchemeHandler.swift` (173): `honeycrisp-epub://book/...` scheme handler (containment, MIME with `text/html` app resource override for flow documents, optional response headers, `ActiveTaskSet`, `/__app/` app resources via `appResources`, markup `transform` hook). Wired for `ChapterHostSurface` and `FlowSurface`.
 - `ServedChapter.swift` (103): pure `ServedChapter.prepare`: inserts the host stylesheet link last in `<head>`, inlines the settings-dependent user block as `<style id="honeycrisp-user">`, adds a missing root `lang`; never edits the body (C2). Used by `ChapterHostSurface` (flag mode only).
 - `ChapterHostCSS.swift` (117): `ChapterHostCSS.stylesheet` (static, served as `__app/reader.css`: reset in `@layer app-reset`, user-owned properties with `!important`) and `userBlock(_:)` (variables from `EPUBParser.readerVarsCSS` plus the optional alignment, hyphenation and indent rules only while set). Roadmap M3, contract C4. M4 adds `pagedBlock(columnCSS:)`, `pagerBootstrap(cols:restore:)` and `ChapterHostPagedGeometry` (paged presentation).
 - `ChapterHostSurface.swift` (380): `ChapterHostFlag` (`HONEYCRISP_CHAPTER_HOST=1`, not persisted) and `ChapterHostSurface`: `install(into:)` (content JS off, scheme handler, client-world script), `attach(package:cosmetics:)`, `updateServedCosmetics`, `applyCosmetics(_:to:)` (live patch, no reload), `Position`, `Restore`, `onPositionChange`, `firstVisiblePosition`, `scroll(to:in:)`, `load(resource:...)`, `loadPaged(resource:...)` (one chapter as a paged top-level document, geometry stored, scripts re-added per load), `Presentation`, `onPageAction`, `onPagerPosition`, `loadWindow(around:...restoring:)` (a slot per spine item, three mounted), pure `windowIndices` and `estimatedHeight(byteCount:viewportHeight:pixelsPerByte:)`, `chapterURL`, `chapterPath`, `allowsNavigation`. Flag mode is a read-only viewer (ARCHITECTURE 4a).

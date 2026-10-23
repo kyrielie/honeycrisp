@@ -1,4 +1,5 @@
 import Foundation
+import WebKit
 import XCTest
 @testable import Honeycrisp
 
@@ -77,4 +78,50 @@ final class EPUBResourceSchemeHandlerTests: XCTestCase {
         XCTAssertFalse(transforms("Images/pic.png"))
         XCTAssertFalse(transforms("Fonts/book.woff2"))
     }
+
+    func testAppResourceMimeOverrideForHTML() {
+        let flowURL = URL(fileURLWithPath: "__app/flow.html")
+        let htmURL = URL(fileURLWithPath: "__app/index.htm")
+        let bookHTML = URL(fileURLWithPath: "Text/chapter.html")
+        let xhtmlURL = URL(fileURLWithPath: "__app/chapter.xhtml")
+
+        XCTAssertEqual(EPUBResourceSchemeHandler.mimeType(for: flowURL, isAppResource: true), "text/html")
+        XCTAssertEqual(EPUBResourceSchemeHandler.mimeType(for: htmURL, isAppResource: true), "text/html")
+        XCTAssertEqual(EPUBResourceSchemeHandler.mimeType(for: bookHTML, isAppResource: false), "application/xhtml+xml")
+        XCTAssertEqual(EPUBResourceSchemeHandler.mimeType(for: xhtmlURL, isAppResource: true), "application/xhtml+xml")
+    }
+
+    @MainActor
+    func testAppResourceHtmlWithVoidTagsAndEntitiesLoadsInWebView() throws {
+        let handler = EPUBResourceSchemeHandler(rootFolder: FileManager.default.temporaryDirectory)
+        let html = "<!doctype html><html><body><p>Hello<br>World&nbsp;Test</p></body></html>"
+        handler.appResources["__app/flow.html"] = Data(html.utf8)
+
+        let config = WKWebViewConfiguration()
+        config.setURLSchemeHandler(handler, forURLScheme: EPUBResourceSchemeHandler.scheme)
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 300, height: 300), configuration: config)
+
+        let loaded = expectation(description: "Flow HTML loaded")
+        let delegate = NavigationWatcher { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+
+        webView.load(URLRequest(url: URL(string: "honeycrisp-epub://book/__app/flow.html")!))
+        wait(for: [loaded], timeout: 5.0)
+
+        let textExpectation = expectation(description: "Read body text")
+        webView.evaluateJavaScript("document.body.innerText") { result, _ in
+            let text = result as? String ?? ""
+            XCTAssertTrue(text.contains("Hello"), "Loaded text should contain Hello")
+            XCTAssertTrue(text.contains("World"), "Loaded text should contain World")
+            textExpectation.fulfill()
+        }
+        wait(for: [textExpectation], timeout: 5.0)
+        _ = delegate
+    }
+}
+
+private final class NavigationWatcher: NSObject, WKNavigationDelegate {
+    let onFinish: () -> Void
+    init(onFinish: @escaping () -> Void) { self.onFinish = onFinish }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { onFinish() }
 }

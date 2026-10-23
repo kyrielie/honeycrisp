@@ -95,6 +95,25 @@ struct ReaderCosmeticSettings: Equatable {
     var paragraphIndent: Double?
     var boldWeight: ThemeBoldWeight = .book
 
+    /// Default reader cosmetics matching the standard light theme.
+    static var `default`: ReaderCosmeticSettings {
+        ReaderCosmeticSettings(
+            fontSizePercent: 100,
+            fontFamily: "Georgia, serif",
+            backgroundCSS: "#ffffff",
+            textCSS: "#000000",
+            linkCSS: "#0068da",
+            hitBackground: "#ffee58",
+            hitText: "#000000",
+            hitActiveBackground: "#ffa000",
+            hitActiveText: "#000000",
+            lineHeight: 1.6,
+            maxWidth: 700,
+            paddingH: 24,
+            allowLinkClicks: true
+        )
+    }
+
     /// Every value passes through `ReaderCSSSanitizer`, so the initial render and the live patch both
     /// get valid CSS no matter what is persisted. Hit colors derive from the sanitized page colors.
     static func current(from settings: SettingsManager, language: String? = nil) -> ReaderCosmeticSettings {
@@ -594,7 +613,7 @@ final class EPUBParser: NSObject {
         """
     }
 
-    private static func imageVisibilityCSS(hideImages: Bool) -> String {
+    static func imageVisibilityCSS(hideImages: Bool) -> String {
         guard hideImages else { return "" }
         return "img, picture, svg image { display: none !important; }"
     }
@@ -835,7 +854,7 @@ final class EPUBParser: NSObject {
     // ── Chapter navigation ────────────────────────────────────────────────────────
 
     window.navigateToChapter = function(idx) {
-      var sections = document.querySelectorAll('.ql-chapter');
+      var sections = document.querySelectorAll('.hc-chapter, .ql-chapter');
       if (window._qlPaginated) {
         if (idx >= 0 && idx < sections.length) sections[idx].scrollIntoView({ behavior: 'smooth', block: 'start' });
       } else if (idx >= 0 && idx < sections.length) {
@@ -853,12 +872,12 @@ final class EPUBParser: NSObject {
     };
 
     window.navigateToChapterEnd = function(idx) {
-      var section = document.getElementById('chapter-' + idx);
+      var section = document.getElementById('hc-r' + idx) || document.getElementById('chapter-' + idx);
       if (section) section.scrollIntoView({ behavior: 'smooth', block: 'end' });
     };
 
     window.honeycrispCurrentSpeechText = function(spineIndex) {
-      var section = document.getElementById('chapter-' + spineIndex);
+      var section = document.getElementById('hc-r' + spineIndex) || document.getElementById('chapter-' + spineIndex);
       if (!section) return '';
       var selection = window.getSelection();
       if (selection && !selection.isCollapsed && selection.toString().trim()) return selection.toString();
@@ -934,7 +953,7 @@ final class EPUBParser: NSObject {
     };
 
     window.honeycrispCurrentChapterCharacterOffset = function() {
-      var sections = document.querySelectorAll('.ql-chapter');
+      var sections = document.querySelectorAll('.hc-chapter, .ql-chapter');
       var section = sections[window.honeycrispPageInfo().spineIndex];
       if (!section) return 0;
       var x = Math.round(window.innerWidth / 2);
@@ -979,7 +998,7 @@ final class EPUBParser: NSObject {
     window.honeycrispVisibleCharacterRange = function(scrollMode, spineIndex) {
       var root = document.body;
       if (scrollMode) {
-        root = document.getElementById('chapter-' + spineIndex);
+        root = document.getElementById('hc-r' + spineIndex) || document.getElementById('chapter-' + spineIndex);
         if (!root) return null;
       }
       var viewW = window.innerWidth, viewH = window.innerHeight;
@@ -1042,7 +1061,7 @@ final class EPUBParser: NSObject {
     };
 
     window.honeycrispNavigateToChapterOffset = function(spineIndex, targetOffset) {
-      var section = document.getElementById('chapter-' + spineIndex);
+      var section = document.getElementById('hc-r' + spineIndex) || document.getElementById('chapter-' + spineIndex);
       if (!section) return;
       var walker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT, null);
       var count = 0, node, lastNode = null;
@@ -1074,7 +1093,7 @@ final class EPUBParser: NSObject {
     // was last persisted to HistoryEntry, which can be stale if the user
     // toggles modes before the debounced position save has flushed.
     window.honeycrispNavigateToChapterFraction = function(spineIndex, fraction) {
-      var section = document.getElementById('chapter-' + spineIndex);
+      var section = document.getElementById('hc-r' + spineIndex) || document.getElementById('chapter-' + spineIndex);
       if (!section) return;
       var rect = section.getBoundingClientRect();
       var top = rect.top + window.scrollY;
@@ -1131,7 +1150,7 @@ final class EPUBParser: NSObject {
     // alongside for callers that want chapter position separately.
 
     window.honeycrispPageInfo = function() {
-      var sections = document.querySelectorAll('.ql-chapter');
+      var sections = document.querySelectorAll('.hc-chapter, .ql-chapter');
       var viewTop  = window.scrollY;
       var winH     = Math.max(1, window.innerHeight);
       var docHeight = Math.max(1, document.documentElement.scrollHeight);
@@ -1297,8 +1316,8 @@ final class EPUBParser: NSObject {
     b, strong { font-weight: var(--reader-bold-weight); }
 
     #content { width: 100%; max-width: var(--reader-max-width); margin: 0 auto; padding: 28px var(--reader-padding-h) 48px; }
-    .ql-chapter { margin: 40px 0; }
-    .ql-chapter + .ql-chapter {
+    .ql-chapter, .hc-chapter { margin: 40px 0; }
+    .ql-chapter + .ql-chapter, .hc-chapter + .hc-chapter {
         border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
         padding-top: 40px;
     }

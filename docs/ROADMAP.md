@@ -61,6 +61,7 @@ Resolved here as recommendations; reverse any by editing this table and the affe
 | R20 | One content pipeline (L2: SwiftSoup, EPUB XHTML parsed as XML, one canonical HTML output) feeds two implementations of `FlowingSurface`. `FlowSurface` is the default: the whole book as one document with a `section.hc-chapter[data-resource]` per chapter, served by the scheme handler, content JavaScript off. `ChapterHostSurface` (M3, M4) keeps its iframe-per-chapter windowing, is frozen at bug fixes and stays behind `HONEYCRISP_CHAPTER_HOST=1`. Positions are `(resource, offset)` in both. Engine selection stays a flag; choosing by book size or by a setting is deferred because it brushes the per-book mode non-goal, and needs a decision. The chapter host snapshot is branch `chapter-engine` (91c0dfd). | The M3 adopt decision rested on synthetic fixtures. The owner reports the largest real book (4.07M words) usable in the merged document; isolation matters mainly for books whose meaning depends on their CSS, which the fanfiction samples are not; and the windowing code is the costliest and riskiest part. One pipeline and one position model keep two surfaces cheap. Flag mode has no history, search, speech or bookmarks, so it cannot be the default yet. |
 | R21 | The flow surface does not load the book's stylesheets. The pipeline harvests simple rules (`.class`, `#id`, `tag`, `tag.class` selectors) and applies a whitelist as inline style on matching elements: `display:none` (as `hidden`), italic, bold, underline and line-through, centered or right alignment, monospace. Geometry (margins, indent, justification, width) stays with the user layer (C4). Elements are hidden, never deleted, because the offset walk counts hidden text (C2). Cascade order is source order; specificity is not modeled. Amends R1 for that surface. | Generator CSS carries a small amount of meaning (AO3 and FicLab hide elements and define underline, strike and alignment classes) and nothing else in the fanfiction samples needed book CSS. Loading it would need per-chapter isolation. Inline style attributes already survive. |
 | R22 | Single-file sources (HTML, TXT, Markdown, legacy MOBI) are split into chapters at L0: `<article>` or generator containers first, then headings, then `mbp:pagebreak` for MOBI, then a size cap at paragraph boundaries; a failed split degrades to one chapter. The Markdown parser choice stays open (M7.1); a small in-house converter for the fanfiction subset is the default proposal. External `http(s)` images are not loaded by default; whether a setting enables them is open and needs a decision. | The samples include single-file HTML, TXT and legacy MOBI whose only chapter signals are those; one Fimfiction HTML hotlinks its cover image. |
+| R23 | One table of contents UI: the centered popup (`TOCPopupViewController`, opened by the toolbar button and the View menu item). The sidebar (`TOCSidebarViewController`), its `NSSplitView` host and `TOCSidebarDelegate` are deleted. The popup gains a filter field, keyboard navigation (arrows, Return, Escape) and a key panel. Rows resolve to spine indices once, in a pure `TOCModel` with stable item identity; the current entry is derived from `(spineIndex, fragment)`, not from a file path alone. Resolves the open question in M8 item 4. | Two UIs existed and the sidebar was unreachable (collapsed at load, never toggled). The popup is what users actually see, and it is the Rede-style overlay M8 names as the model. A pure model fixes identity, nested reveal and wrong-current-entry bugs once and is testable without AppKit. TOC jumps for the flow surface stay in M5; the model keys on spine index and fragment so it survives the position model (`Locator`) and non-EPUB sources (M7). |
 
 ## 3. Milestones
 
@@ -353,11 +354,38 @@ Model: Rede's UI, adapted to AppKit and macOS 13. Items in priority order:
    Settings.
 3. Settings theme editor: pin the preview above the scroll area; "Preview as Light/Dark" toggle;
    coalesce color-well writes (UI side; the disk-write debounce belongs to M2.1).
-4. Decide: overlay Contents drawer versus the existing sidebar; small page caption.
+4. Contents: decided, one popup (R23, milestone M8.1); small page caption.
 5. Dark and light follow the system by default (the setting exists); verify every surface.
 All chrome reads from the chrome tokens (C10).
 
 Exit: no hardcoded materials or bar colors outside the chrome definitions.
+
+### M8.1. Table of contents (M, parallel track)
+
+Status: not started. Decision R23. Handoff plan: `toc-plan.md` (outside the repo). Independent of the pipeline milestones (M3 to M6);
+touches `ReaderViewController` only in the TOC host region, the `TOCSidebarDelegate` extension, `updateCurrentChapter` and the
+`NSSplitView` setup, none of which contain `chapterHost` branches. Does not touch offsets (no `currentLayout` bump) or any
+persisted format (`TOCEntry` is not stored).
+
+Findings this milestone fixes (Verified in code unless marked): the sidebar is built then collapsed and never shown; navigation fires
+only from a mouse click (`clickedRow`); `TOCEntry` is a struct used as an `NSOutlineView` item; only level 0 is expanded and the
+current-row lookup scans visible rows only; "current" is matched by file path, so several entries in one file collide; entries whose
+file is not in the spine are silent dead clicks; titles can carry interior newlines; the spine-fallback titles come from filenames
+("Part0001"); the regex nav fallback takes every anchor, including landmarks and page-list; `findNav` accepts any file whose name
+contains "nav". Unverified until run: the borderless panel's key status and dismissal.
+
+Passes:
+1. `TOCModel` (pure Swift, no AppKit): stable class items, spine resolution once, current-entry rule, expansion state, filter. Tests.
+2. Popup rebuilt on the model: key panel, filter field, keyboard navigation, current row revealed and selected, `AppDelegate.readerVC()`
+   resolves through a child panel, `ReaderViewController` navigates from `TOCEntry` through one method. Sidebar still present, unused by the popup.
+3. Delete the sidebar, its split view and delegate; docs (`ARCHITECTURE.md`, `INDEX.md`, `README.md`, `site/index.html`).
+4. Parser fallbacks (`TOCParser`): spine-title fallback, nav fallback scope, `findNav` filename test, dead `tocNodes` removed.
+
+Out of scope: TOC jumps in the chapter host (M5), anchor-level current tracking (needs `Locator`, M5), wrapped multi-line rows,
+a persistent drawer.
+
+Exit: one TOC UI; type-to-filter and Return work from the keyboard; a nested current chapter is revealed and selected on open; entries
+outside the spine cannot be clicked; the selection and filter rules are covered by tests; `./test.sh` passes; docs list one TOC UI.
 
 ### M9. Reader features (M each, after M5)
 
@@ -404,9 +432,10 @@ M0 -> M1 -> M3 -> M6 -> M4a -> M5 -> M7 (2, 3, 4) -> M9
         M4 (windowed chapter host) paused (R20)
         \-> M2, M2.1 (parallel, after M0; M2.1 needs the keep-set commit)
         \-> M8 (parallel, after M0)   M10 later
+        \-> M8.1 (TOC, parallel, after M0; R23)
 ```
 
-M1 gates M3 (the harness is how the spike is judged). M3's outcome (revised by R20) gates M6 and M4a; M4 is paused. M2, M2.1 and M8 touch
+M1 gates M3 (the harness is how the spike is judged). M3's outcome (revised by R20) gates M6 and M4a; M4 is paused. M2, M2.1, M8 and M8.1 touch
 settings and chrome, not the pipeline, so they can fill gaps.
 
 ## 5. Not planned
@@ -437,6 +466,11 @@ be reopened by editing this file.
 - M2.1: whether the Theme menu rebuilds on `settingsChangedNotification`; whether any Settings UI reorders
   themes (grep `SettingsWindowController`); that theme Export through the save panel works under
   `ENABLE_USER_SELECTED_FILES: readonly`.
+- M8.1 (R23): whether a borderless `NSPanel` subclass with `canBecomeKey` true takes keyboard input and keeps the reader window as `parent`; whether
+  clicking the toolbar toggle while the panel is key closes it without reopening (resign-key close versus the button action order);
+  `NSWindow.parent` for a child panel inside `AppDelegate.readerVC()`; Escape behavior of `NSSearchField` against the delegate command
+  `cancelOperation:`; that clicking a disclosure triangle does not fire the outline view's action; `NSOutlineView` expansion with class items
+  across `reloadData`; whether the toolbar toggle state survives a resign-key close.
 
 ## 6a. Old identifiers
 

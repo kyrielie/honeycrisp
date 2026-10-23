@@ -45,7 +45,8 @@ enum ChapterPipeline {
         mediaType: String?,
         resource: Int,
         root: URL,
-        options: ChapterTransformOptions = .init()
+        options: ChapterTransformOptions = .init(),
+        urlScheme: String? = nil
     ) throws -> String {
         guard let data = try? Data(contentsOf: url) else {
             return ""
@@ -66,7 +67,8 @@ enum ChapterPipeline {
         try ChapterURLs.rewrite(
             in: body,
             chapterURL: url,
-            root: root
+            root: root,
+            scheme: urlScheme
         )
         return try ChapterMarkup.bodyHTML(of: body)
     }

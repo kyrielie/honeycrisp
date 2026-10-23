@@ -57,7 +57,7 @@ enum ColsPerScreen: Int, CaseIterable {
 // model stores an exact UTF-16 offset and this case is how paginated mode
 // honors it).
 
-enum RestorePosition {
+enum RestorePosition: Equatable {
     case start  // column 0
     case end  // last column
     case fraction(Double)  // 0.0–1.0, saved progress

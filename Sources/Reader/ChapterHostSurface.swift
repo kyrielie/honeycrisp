@@ -84,6 +84,9 @@ final class ChapterHostSurface {
         case fraction(resource: Int, fraction: Double)
     }
 
+    /// In-memory pending restore target for chapter host navigation or structural reloads.
+    var pendingRestore: Restore?
+
     /// Decodes one `hostPosition` message (a JSON string of four integers); anything else is ignored.
     func receivePosition(_ body: Any) {
         guard let json = body as? String,
