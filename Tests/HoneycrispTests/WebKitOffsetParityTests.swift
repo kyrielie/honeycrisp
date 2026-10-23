@@ -62,17 +62,11 @@ final class WebKitOffsetParityTests: XCTestCase {
             .absoluteString
         let secondChapter = package.rootFolder.appendingPathComponent("Text/chapter 2.xhtml").absoluteString
 
-        XCTExpectFailure("relative resources should resolve from the nested chapter directory") {
-            XCTAssertTrue(html.contains("src=\"\(nestedImage)\""))
-        }
-        XCTExpectFailure("single-quoted and percent-encoded resource attributes are not rewritten yet") {
-            XCTAssertTrue(html.contains("src='\(encodedImage)'"))
-        }
-        XCTExpectFailure("cross-chapter hrefs should resolve to the second chapter") {
-            XCTAssertTrue(html.contains("href=\"\(secondChapter)#target\""))
-        }
+        XCTAssertTrue(html.contains("src=\"\(nestedImage)\""))
+        XCTAssertTrue(html.contains("src=\"\(encodedImage)\""))
+        XCTAssertTrue(html.contains("href=\"\(secondChapter)#target\""))
         XCTAssertTrue(html.contains("href=\"#local-target\""))
-        XCTAssertTrue(html.contains("<a id=\"self-closing\"/>ANCHOR_MARKER"))
+        XCTAssertTrue(html.contains("<a id=\"self-closing\"></a>ANCHOR_MARKER"))
     }
 
     func testPublisherClassStylesRemainInFixtureDocument() async throws {

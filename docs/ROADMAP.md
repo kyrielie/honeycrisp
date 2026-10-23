@@ -43,7 +43,7 @@ Resolved here as recommendations; reverse any by editing this table and the affe
 | R2 | Chapters become separate documents inside one `WKWebView`, mounted as a window (FRAMEWORK C5). Construction (iframe per chapter) is confirmed by spike M3, not assumed. Amended by R20: this is the chapter host, retained behind the surface seam and no longer the default. | Keeping book CSS requires isolation per chapter. The same structure gives continuous scroll without loading the whole book. |
 | R3 | Resources are served by a scheme handler, from the unpacked folder first. Lazy zip reads with an entry cache come later if needed. | Removes `rewriteResourceURLs`, gives path containment, MIME control, and the place to inject style and `lang`. About 40 to 60 lines in the references. |
 | R4 | Build continuous scroll ourselves. Do not adopt foliate-js, Readium, MuPDF or EPUBKit. | None of the references provide continuous scroll across chapters in a DOM reader; foliate-js replaces the position, pagination and search code. Under R20 the default continuous scroll is the browser's own scroll over one document; the windowing code belongs to the chapter host. |
-| R5 | SwiftSoup (MIT; pin an exact version after verifying it builds under this project) replaces regex handling of body, style, URLs and active content. Foundation `XMLDocument` stays for OPF and TOC. No Kanna, AEXML, Fuzi. | Regex is the source of the confirmed URL and tag bugs. Gated by the offset parity test (C2). Under R20 it is the one content pipeline for every surface and moves ahead of M4a and M5; EPUB XHTML is parsed as XML and serialized as HTML. |
+| R5 | SwiftSoup (MIT; pin an exact version after verifying it builds under this project) replaces regex handling of body, style, URLs and active content. Foundation `XMLDocument` stays for OPF and TOC. No Kanna, AEXML, Fuzi. | Regex is the source of the confirmed URL and tag bugs. Gated by the offset parity test (C2). Under R20 it is the one content pipeline for every surface and moves ahead of M4a and M5; EPUB XHTML is parsed as XML and serialized as HTML. Adopted on owner instruction before the spike result was recorded; confirmed by the first green `./test.sh` run. |
 | R6 | Two surface kinds: flowing (WebKit) and paged (PDFKit, images). Normalize flowing formats to chapters; do not force PDF or CBZ into chapters. | Matches how each format is actually read; keeps capabilities honest (C9). |
 | R7 | Formats, in order: HTML, Markdown and plain text, PDF, CBZ, MOBI/AZW3. HTML, Markdown and plain text are single-file sources that L0 splits into chapters (R22). | Cost and dependency order. HTML, TXT, EPUB, MOBI and AZW3 all appear in the local fanfiction samples. |
 | R8 | PDF reflow: no. | Different product; PDFKit search and selection cover the need. Closes old D6. |
@@ -315,8 +315,7 @@ updated.
 
 ### M6. Content pipeline on SwiftSoup (M)
 
-Status: not started (spike only: `SwiftSoupSpikeTests`, test-target dependency, outcome pending; the
-R5 decision is recorded after the owner runs it). Moved ahead of M4a and M5 by R20: it is the content pipeline both surfaces use.
+Status: complete. Moved ahead of M4a and M5 by R20: it is the content pipeline both surfaces use. Throughput recorded on arm64 (8 active cores): single 150 KB chapter render 60.4 ms; 300 chapters renderAll sequential 1745.0 ms, concurrent 1323.9 ms; 300 chapters search 1239.1 ms; 2,000-page buildScrollHTML 408.8 ms.
 
 Move body extraction, active-content removal, AO3 formatting, spacer tagging, preface hiding, URL rewriting and text extraction to
 SwiftSoup (`ChapterPipeline`, new files under `Sources/Content/`). The paragraph-indent transform is not ported: `removeParagraphIndents` becomes a no-op until M4a

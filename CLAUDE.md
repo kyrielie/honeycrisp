@@ -44,7 +44,7 @@ Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
 - `Package.swift` is a secondary SwiftPM entry point with no test target; CI does not use it.
 - Targets: macOS 13.0, Swift 5.9 (the test target declares macOS 14.0 in `project.yml`). Gate newer
   platform APIs with `#available`; do not write macOS 26 (Liquid Glass) code until it can be tested
-  (roadmap R16, M10). Only app dependency: ZIPFoundation (`from: 0.9.0`, resolved 0.9.20). SwiftSoup 2.14.3 is a test-target-only spike (roadmap R5, M6); not linked into the app.
+  (roadmap R16, M10). App dependencies: ZIPFoundation (`from: 0.9.0`, resolved 0.9.20), SwiftSoup (`exactVersion: 2.14.3`, R5 adopted: app and test targets).
 - CI (`.github/workflows/`): `tests.yml` on push to main and PRs; `build-dmg.yml` and `release.yml`
   are manual. Releases are ad-hoc signed, not notarized; version comes from the tag.
 - `Assets.xcassets/` exists in the repo but is stripped from upload zips by `make_upload_zip.sh`.
@@ -59,11 +59,11 @@ Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
   `SettingsManager` setters, not raw `UserDefaults` writes, so notifications fire.
 - Settings notifications: `.readerCosmeticSettingsChanged` is a live CSS-variable patch with no
   reload; `.readerStructuralSettingsChanged` re-renders the current content. Pick the right one.
-- Scroll and paginated modes share `extractedChapterBody` and `readerVarsCSS` in `EPUBParser`.
-  Keep them shared so the modes cannot drift. This becomes "one content pipeline" at roadmap M6 and M4a (R20).
+- Scroll and paginated modes share `ChapterPipeline` in `Sources/Content/` and `readerVarsCSS` in `EPUBParser`.
+  Keep them shared so the modes cannot drift. This is the one content pipeline established at roadmap M6 (R20).
 - Offsets have one definition (FRAMEWORK C2): the page script's text-node walk, which counts hidden text. Hide elements, never delete them. Any change to what
-  `extractedChapterBody`, indent stripping, preface stripping or AO3 formatting emit changes
-  offsets: bump `EPUBAnchor.currentLayout` and run the parity test once it exists (roadmap M1).
+  `ChapterPipeline`, `ChapterText` or chapter transforms emit changes
+  offsets: bump `EPUBAnchor.currentLayout` and run the parity test (roadmap M6/M1).
 - Swift to JS bridge: handlers `progressHandler`, `positionHandler`, `pageAction`, `positionUpdate`,
   `pageInfoHandler` are registered in `ReaderViewController.loadView`; JS lives in
   `EPUBParser.readerJS` and `PaginationJS`. A rename must change both sides.

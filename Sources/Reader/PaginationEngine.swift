@@ -68,13 +68,13 @@ enum RestorePosition {
 //
 // Saved character offsets (HistoryEntry, ReadingBookmark) are only meaningful against the text
 // extraction that produced them. Bump `currentLayout` whenever a change alters character offsets:
-// anything touching `extractedChapterBody`, `searchableText`, indent stripping, preface stripping, or
-// first-chapter formatting. See ARCHITECTURE.md section 5a. Stored data without the field was written
+// anything touching `ChapterPipeline`, `ChapterText`, and the chapter transforms.
+// See ARCHITECTURE.md section 5a. Stored data without the field was written
 // before it existed and is `legacyLayout`.
 
 enum EPUBAnchor {
     /// Layout of the text extraction in this build.
-    static let currentLayout = 1
+    static let currentLayout = 2
     /// Layout assumed for stored data that predates the `anchorLayout` field.
     static let legacyLayout = 1
 }

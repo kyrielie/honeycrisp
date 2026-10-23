@@ -11,7 +11,7 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 | Path | Purpose |
 |---|---|
 | `project.yml` | XcodeGen source of truth: targets, sandbox, signing settings, scheme |
-| `Package.swift` | Secondary SwiftPM entry (`Sources` path, ZIPFoundation, macOS 13); no tests |
+| `Package.swift` | Secondary SwiftPM entry (`Sources` path, ZIPFoundation, SwiftSoup, macOS 13); no tests |
 | `Honeycrisp/Info.plist` | EPUB document type and `org.idpf.epub-container` UTI declaration |
 | `Sources/EPUBReader.entitlements` | Bookmarks app-scope entitlement (excluded from compiled sources) |
 | `Assets.xcassets/` | App icon and accent color (in repo, not in upload zips) |
@@ -40,9 +40,9 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 ### Reader (`Sources/Reader`)
 - `ReaderWindowController.swift` (147): `setupWindow`, `loadEPUB(at:)`, `showOpenPanel`,
   `loadRecent`, `toggleFloat`, `windowWillClose` flushes position. Also `ReaderWindow` (key forwarding).
-- `ReaderViewController.swift` (2485): the reading surface. See section map below.
+- `ReaderViewController.swift` (2487): the reading surface. See section map below.
 - `PaginationEngine.swift` (321): `ColsPerScreen` (l.38), `RestorePosition` (l.60,
-  `.start/.end/.fraction/.characterOffset`), `EPUBAnchor` (l.75; `currentLayout`, `legacyLayout`),
+  `.start/.end/.fraction/.characterOffset`), `EPUBAnchor` (l.75; `currentLayout = 2`, `legacyLayout = 1`),
   `PaginationEngine` (l.116, Swift driver of column layout; `currentOffset`, `invalidate`). Bump `currentLayout` when offsets change
   (ARCHITECTURE.md 5a). `Locator.flowRestoreTarget` compares a saved layout with `currentLayout`.
 - `PaginationJS.swift` (393): JS for paginated mode: column snap, boundaries, char-offset seek.
@@ -57,8 +57,16 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 - `ChapterHostPaging.swift` (95): pure `ChapterHostPaging` for paginated mode on the host (M4 pass 7): `handoff(from:forward:count:)` (next chapter at its start, previous at its end, nil at book edges), `restore(for:)` (a scroll-window `Position` as an exact `RestorePosition.characterOffset`), `geometry(viewport:cols:paddingH:paddingV:maxWidth:)`. `changesDocument(from:to:)` (link policy), `pagedTarget(for:fallbackIndex:count:)` (the in-memory restore of a flag-mode paged load), `toPaged(from:activeIndex:count:)` and `toScroll(index:offset:count:)` (the exact-offset restores of the mode toggle). Called by `ReaderViewController.renderCurrentContent`, `navigateSpine`, `loadHostedPagedChapter` and `toggleHostedReadingMode`.
 - `ChapterHostHandlers.swift` (35): `ChapterHostPositionHandler` (client-world `hostPosition`) and `ChapterHostPagerHandler` (client-world `pageAction` and `positionUpdate`), forwarding to `ChapterHostSurface.receive*`.
 
+### Content (`Sources/Content`)
+- `ChapterDecoder.swift` (209): pure byte decoding (BOM, XML declaration, meta charset, UTF-8, windows-1252/iso-8859-1 fallback).
+- `ChapterMarkup.swift` (102): syntax mapping, XML/HTML parsing, active content removal, body HTML serialization.
+- `ChapterText.swift` (81): text extraction matching WebKit TreeWalker, hidden ranges detection.
+- `ChapterTransforms.swift` (102): AO3 formatting, spacer paragraph marking, and preface heading hiding in the DOM.
+- `ChapterURLs.swift` (94): DOM URL rewriting (resolving against chapter directory, containment in root, scheme URLs and fragments preserved).
+- `ChapterPipeline.swift` (107): pipeline facade for decoding, parsing, transforms, URL rewriting into served body HTML and text, and concurrent batch processing (`renderAll`).
+
 ### Parsing (`Sources/Parsing`)
-- `EPUBParser.swift` (1460): models, unzip, OPF, DRM, search, HTML and CSS building, `readerJS`.
+- `EPUBParser.swift` (1338): models, unzip, OPF, DRM, search, HTML and CSS building, `readerJS`.
   See section map below.
 - `TOCParser.swift` (335): `TOCEntry`, `TOCNode`, `TOCParser` (`parseTOC`, `tocNodes`,
   `startReadingNode`, `firstSpineIndex(afterCoverIn:)`); EPUB3 nav (`parseNav`), NCX (`parseNCX`),
@@ -103,6 +111,8 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
   colors normalized to `#rrggbb`, font stacks limited to quoted or bare names, numeric clamps
   matching the `SettingsManager` setters). Invalid input returns the fallback, never a partial
   value. Applied in `ReaderCosmeticSettings.current(from:)`.
+- `ChapterTransformSettings.swift` (11): extension `ChapterTransformOptions.current(from:)` reading
+  `formatFirstChapter` and `collapseSpacerParagraphs` to bridge user preferences into L2 pipeline options.
 
 ## Large-file section maps
 
@@ -132,11 +142,10 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 | Lines | Content |
 |---|---|
 | 9-144 | `EPUBPackage`, `EPUBManifestItem`, `EPUBSpineItem`, `EPUBLandmark`, `BookSearchResult`, `ReaderCosmeticSettings` (`current(from:)`), `EPUBParseError` (incl. `.drmProtected`) |
-| 145-456 | `EPUBParser`: `javaScriptStringLiteral`, `unpackEPUB`, `isDRMProtected(extractedRoot:)`, `parsePackage`, `searchResults`, `speechText`, `searchableText`, `parseOPF`, `sanitizedLanguageTag`, `parseLandmarks` |
-| 457-777 | HTML building: `buildScrollHTML`, `buildPageHTML`, `imageVisibilityCSS`, `paginatedColumnCSS`, `extractedChapterBody`, `stripLeadingIndentWhitespace`, `markSpacerParagraphs`, `stripPrefaceHeading` |
-| 778-828 | `MARK: First Chapter Formatting Quirk` (`applyFirstChapterFormatting`), then `extractBody` and `rewriteResourceURLs` (regex URL rewriting) |
-| 829-1306 | `readerJS` string: progress, position, page info, chapter navigation, auto-scroll, search |
-| 1307-1460 | CSS: `readerVarsCSS` turns `ReaderCosmeticSettings` into CSS variables; `readerCSS`; a private `String` extension (l.1445) |
+| 145-456 | `EPUBParser`: `javaScriptStringLiteral`, `unpackEPUB`, `isDRMProtected(extractedRoot:)`, `parsePackage`, `searchResults`, `speechText`, `parseOPF`, `sanitizedLanguageTag`, `parseLandmarks` |
+| 457-710 | HTML building: `buildScrollHTML`, `buildPageHTML`, `imageVisibilityCSS`, `paginatedColumnCSS`, `extractedChapterBody` (delegating to `ChapterPipeline.render`) |
+| 711-1188 | `readerJS` string: progress, position, page info, chapter navigation, auto-scroll, search |
+| 1189-1338 | CSS: `readerVarsCSS` turns `ReaderCosmeticSettings` into CSS variables; `readerCSS` |
 
 ### `Settings/SettingsManager.swift`
 | Lines | Content |
@@ -177,7 +186,7 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 | Add a rebindable shortcut | `RebindableAction` in `KeyBinding.swift`; `AppDelegate.syncMenuShortcuts`; `ShortcutsSettingsViewController` |
 | Add a user setting | Property in `SettingsManager` (call `notifyCosmeticChange` or `notifyStructuralChange`); include in `resetReaderToDefaults` and `resetAllToDefaults`; control in the right pane in `SettingsWindowController`; if it affects rendering, extend `ReaderCosmeticSettings` and `readerVarsCSS` |
 | Change reader typography or CSS | `EPUBParser` CSS region (`readerVarsCSS`, `readerCSS`), `paginatedColumnCSS`, `Theme` model |
-| Change how a chapter's HTML is cleaned | `extractedChapterBody`, `extractBody`, `rewriteResourceURLs`, `applyFirstChapterFormatting` (any change shifts offsets: see CLAUDE.md invariants) |
+| Change how a chapter's HTML is cleaned | `ChapterPipeline`, `ChapterMarkup`, `ChapterTransforms`, `ChapterURLs` (any change shifts offsets: see CLAUDE.md invariants) |
 | Page turning or column layout | `PaginationEngine`, `PaginationJS`, `ReaderViewController` scroll-wheel, key monitor and resize regions |
 | Saved position and progress | `HistoryManager`, `RestorePosition`, `ReaderViewController` position save and restore region, `scrollRestoreBootstrapJS` |
 | Table of contents or Start Reading | `TOCParser`, `Sidebar/TOC*`, `ReaderViewController` TOC sidebar host region |
@@ -197,6 +206,16 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 
 | File | Covers |
 |---|---|
+| `ChapterDecoderTests.swift` | byte decoding (BOM, XML declaration, meta charset, UTF-8, windows-1252 fallback) |
+| `ChapterMarkupTests.swift` | XML/HTML parsing, active content removal, serialization |
+| `ChapterTextTests.swift` | entity decoding, supplementary characters, whitespace, hidden ranges |
+| `ChapterTransformsTests.swift` | AO3 TOC heading and calibre2 bold styling, spacer paragraphs, preface heading hiding |
+| `ChapterURLsTests.swift` | relative and root URL resolution, containment, fragment preservation, scheme preservation |
+| `ChapterPipelineTests.swift` | end-to-end chapter render, active content removal, transform options, XML to HTML fallback |
+| `ChapterPipelineConcurrencyTests.swift` | concurrent render byte identity to sequential, lowest index error rethrown, index order preservation |
+| `ChapterPipelineThroughputTests.swift` | benchmark measurements written to pipeline-throughput.txt across single chapter, 300 chapters and 2,000 pages |
+| `ChapterPipelineParityTests.swift` | WebKit TreeWalker text and marker offset parity across fixtures |
+| `ChapterFixtures.swift` | synthetic test fixture definitions |
 | `EPUBParserTests.swift` | package and spine parsing, landmarks, search offsets, JS string escaping, DRM rules (LCP file, LCP and ADEPT markers, unknown algorithm; font-obfuscation-only and empty manifests open), missing container, unpack |
 | `TOCParserTests.swift` | NCX, EPUB3 nav, nested hierarchy, Start Reading, missing-TOC fallback |
 | `HistoryManagerTests.swift` | record, progress and position persistence, clamping, cap, clear, reload, bad-element survival, whole-blob quarantine, unreadable elements and the cap |
@@ -231,7 +250,7 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 | `ReaderBaselinePagedTests.swift` (M4 pass 7.6) | paged memory: 20 consecutive chapters of the 2,000-page fixture reached through the real edge hand-off, median of each run's maximum WebContent footprint, at most 30 MB, writes `host-paged-2000-pages.txt` |
 | `SyntheticBook.swift` | deterministic synthetic EPUB folder generator (nested `Text/` and `Styles/`, relative images, class-only italics), shared by the baseline tests |
 | `Diagnostics.swift` | `TestDiagnostics.write(_:lines:)`: writes test measurements to `<repo>/build/diagnostics/` (gitignored); a failed write fails the test |
-| `SwiftSoupSpikeTests.swift` (spike, roadmap M6/R5) | SwiftSoup 2.14.3 on synthetic XHTML: XML serialization, text-node offsets versus `searchResults`, known `&amp;lt;` double-decode drift (expected failure), active-content removal, spacer detection parity, 1 MB parse time; test-target dependency only |
+| `ChapterSearchTests.swift` | search and speech offsets with AO3 transforms, hidden preface and TOC heading filtering, double-encoded ampersand exactness, limit across chapters |
 | `SpacerParagraphTests.swift` | spacer paragraphs tagged only when the setting is on, real paragraphs and `<pre>` untouched, text nodes unchanged, tag case kept |
 | `SettingsManagerThemeTests.swift` | seed keys, Codable round trip, seed-key migration, reset and customized check by identity, delete protection (isolated `UserDefaults` suite) |
 

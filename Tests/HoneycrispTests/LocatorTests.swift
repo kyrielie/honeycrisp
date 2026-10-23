@@ -8,6 +8,14 @@ final class LocatorTests: XCTestCase {
         XCTAssertEqual(locator.flowRestoreTarget, .offset(resource: 2, offset: 412))
     }
 
+    func testSavedLayoutOneRestoresByFractionAndLayoutTwoByOffset() {
+        let layout1 = Locator.flow(resource: 2, offset: 412, layout: 1, fraction: 0.8)
+        XCTAssertEqual(layout1.flowRestoreTarget, .fraction(resource: 2, fraction: 0.8))
+
+        let layout2 = Locator.flow(resource: 2, offset: 412, layout: 2, fraction: 0.8)
+        XCTAssertEqual(layout2.flowRestoreTarget, .offset(resource: 2, offset: 412))
+    }
+
     func testMismatchedLayoutRestoresByClampedFraction() {
         let locator = Locator.flow(resource: 3, offset: 412, layout: EPUBAnchor.currentLayout - 1, fraction: 1.4)
         XCTAssertEqual(locator.flowRestoreTarget, .fraction(resource: 3, fraction: 1))

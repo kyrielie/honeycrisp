@@ -244,21 +244,42 @@ final class EPUBParser: NSObject {
         throw EPUBParseError.opfNotFound
     }
 
-    func searchResults(for term: String, in package: EPUBPackage, limit: Int = 250) -> [BookSearchResult] {
+    func searchResults(
+        for term: String,
+        in package: EPUBPackage,
+        limit: Int = 250,
+        options: ChapterTransformOptions = .init()
+    ) -> [BookSearchResult] {
         let query = term.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return [] }
         var results: [BookSearchResult] = []
-        for index in package.spineURLs.indices {
-            guard let html = try? Self.extractedChapterBody(
-                from: package, index: index, base: package.rootFolder,
-                formatFirstChapter: false, removeParagraphIndents: false
-            ) else { continue }
-            let text = Self.searchableText(fromHTML: html)
-            let nsText = text as NSString
+        let texts = (try? ChapterPipeline.renderAll(count: package.spineURLs.count) { index -> ChapterText? in
+            let url = package.spineURLs[index]
+            let mediaType = package.spine.indices.contains(index) ? package.manifest[package.spine[index].manifestID]?.mediaType : nil
+            return try? ChapterPipeline.text(
+                chapterAt: url,
+                mediaType: mediaType,
+                resource: index,
+                root: package.rootFolder,
+                options: options
+            )
+        }) ?? []
+
+        for (index, maybeText) in texts.enumerated() {
+            guard let text = maybeText else { continue }
+            let nsText = text.string as NSString
             var searchRange = NSRange(location: 0, length: nsText.length)
             while searchRange.length > 0 && results.count < limit {
                 let match = nsText.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], range: searchRange)
                 guard match.location != NSNotFound else { break }
+                let nextLocation = NSMaxRange(match)
+                searchRange = NSRange(location: nextLocation, length: nsText.length - nextLocation)
+
+                let intersectsHidden = text.hiddenRanges.contains { hidden in
+                    NSIntersectionRange(match, hidden).length > 0
+                }
+                if intersectsHidden { continue }
+
                 let before = max(0, match.location - 65)
                 let after = min(nsText.length, NSMaxRange(match) + 90)
                 var excerpt = nsText.substring(with: NSRange(location: before, length: after - before))
@@ -267,46 +288,34 @@ final class EPUBParser: NSObject {
                 if before > 0 { excerpt = "…" + excerpt }
                 if after < nsText.length { excerpt += "…" }
                 results.append(BookSearchResult(spineIndex: index, characterOffset: match.location, excerpt: excerpt))
-                let nextLocation = NSMaxRange(match)
-                searchRange = NSRange(location: nextLocation, length: nsText.length - nextLocation)
             }
             if results.count >= limit { break }
         }
         return results
     }
 
-    func speechText(in package: EPUBPackage, at index: Int) -> String? {
-        guard package.spineURLs.indices.contains(index),
-              let html = try? Self.extractedChapterBody(
-                from: package,
-                index: index,
-                base: package.rootFolder,
-                formatFirstChapter: false,
-                removeParagraphIndents: false
-              ) else { return nil }
-        let text = Self.searchableText(fromHTML: html)
-        return text.isEmpty ? nil : text
-    }
+    func speechText(
+        in package: EPUBPackage,
+        at index: Int,
+        options: ChapterTransformOptions = .init()
+    ) -> String? {
+        guard package.spineURLs.indices.contains(index) else { return nil }
+        let url = package.spineURLs[index]
+        let mediaType = package.spine.indices.contains(index) ? package.manifest[package.spine[index].manifestID]?.mediaType : nil
+        guard let text = try? ChapterPipeline.text(
+            chapterAt: url,
+            mediaType: mediaType,
+            resource: index,
+            root: package.rootFolder,
+            options: options
+        ) else { return nil }
 
-    private static func searchableText(fromHTML html: String) -> String {
-        var text = html.replacingOccurrences(of: #"(?is)<(script|style)[^>]*>.*?</\1>"#, with: "", options: .regularExpression)
-        text = text.replacingOccurrences(of: #"(?s)<[^>]+>"#, with: "", options: .regularExpression)
-        let entities: [(String, String)] = [
-            ("&nbsp;", "\u{00a0}"), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
-            ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
-        ]
-        for (entity, value) in entities { text = text.replacingOccurrences(of: entity, with: value, options: .caseInsensitive) }
-        text = text.replacingOccurrences(of: #"&#(\d+);"#, with: { _, matched in
-            let digits = matched.dropFirst(2).dropLast()
-            guard let value = UInt32(digits), let scalar = UnicodeScalar(value) else { return "" }
-            return String(scalar)
-        })
-        text = text.replacingOccurrences(of: #"&#x([0-9a-f]+);"#, with: { _, matched in
-            let digits = matched.dropFirst(3).dropLast()
-            guard let value = UInt32(digits, radix: 16), let scalar = UnicodeScalar(value) else { return "" }
-            return String(scalar)
-        })
-        return text
+        let mutable = NSMutableString(string: text.string)
+        for hidden in text.hiddenRanges.reversed() where hidden.location + hidden.length <= mutable.length {
+            mutable.replaceCharacters(in: hidden, with: "")
+        }
+        let result = mutable as String
+        return result.isEmpty ? nil : result
     }
 
     // swiftlint:disable:next cyclomatic_complexity function_body_length
@@ -472,13 +481,15 @@ final class EPUBParser: NSObject {
         let languageAttribute = pkg.language.map { " lang=\"\($0)\"" } ?? ""
         var body = ""
         let base = pkg.rootFolder
-        for i in pkg.spineURLs.indices {
-            let extracted = try Self.extractedChapterBody(
+        let bodies = try ChapterPipeline.renderAll(count: pkg.spineURLs.count) { i in
+            try Self.extractedChapterBody(
                 from: pkg, index: i, base: base,
                 formatFirstChapter: formatFirstChapter,
                 removeParagraphIndents: removeParagraphIndents,
                 collapseSpacerParagraphs: collapseSpacerParagraphs
             )
+        }
+        for (i, extracted) in bodies.enumerated() {
             body += "\n<section class=\"ql-chapter\" id=\"chapter-\(i)\" data-chapter-index=\"\(i)\">\n"
                  + extracted
                  + "\n</section>\n"
@@ -694,136 +705,19 @@ final class EPUBParser: NSObject {
         removeParagraphIndents: Bool,
         collapseSpacerParagraphs: Bool = false
     ) throws -> String {
-        let url = pkg.spineURLs[index]
-        let data = try Data(contentsOf: url)
-        let src = String(data: data, encoding: .utf8) ?? (String(data: data, encoding: .isoLatin1) ?? "")
-        var extracted = Self.extractBody(html: src)
-
-        // Apply AO3 formatting to ALL chapters when enabled
-        if formatFirstChapter {
-            extracted = Self.applyFirstChapterFormatting(to: extracted)
-        }
-
-        if removeParagraphIndents {
-            extracted = Self.stripLeadingIndentWhitespace(extracted)
-        }
-
-        if collapseSpacerParagraphs {
-            extracted = Self.markSpacerParagraphs(extracted)
-        }
-
-        // AO3 EPUBs emit a redundant "Preface" heading on the first spine item;
-        // the spine item is the preface by definition once rendered here.
-        if index == 0 {
-            extracted = Self.stripPrefaceHeading(extracted)
-        }
-
-        return Self.rewriteResourceURLs(in: extracted, base: base)
-    }
-
-    /// Strips leading space/tab runs immediately inside paragraph-like elements — the
-    /// literal-whitespace equivalent of a `text-indent: 0` CSS override, for books that
-    /// fake first-line indentation with actual whitespace characters rather than CSS.
-    /// Scoped to `p, div, li` plus headings/blockquote/table cells, since those are
-    /// equally plausible homes for a converted-from-plaintext indent. Deliberately does
-    /// not touch `&nbsp;`-based fake indents — a different, separate pattern.
-    private static func stripLeadingIndentWhitespace(_ html: String) -> String {
-        html.replacingOccurrences(
-            of: #"(?i)(<(?:p|div|li|h[1-6]|blockquote|td|th)[^>]*>)[ \t]+"#,
-            with: "$1", options: .regularExpression)
-    }
-
-    /// Matches a `<p>` whose whole content is whitespace, `&nbsp;` (named or numeric) or `<br>`.
-    /// `<p\b` keeps `<pre>` and `<param>` out. Calibre and AO3 conversions emit one of these
-    /// between every pair of real paragraphs.
-    private static let spacerParagraphPattern =
-        #"<p\b[^>]*>(?:\s|&nbsp;|&#160;|&#[xX][aA]0;|<br\s*/?>)+</p>"#
-
-    /// Adds the `ql-spacer` class to spacer paragraphs (see `spacerParagraphPattern`). `readerCSS`
-    /// then collapses them to zero height, so the paragraph spacing setting is the only gap left.
-    /// Tag, not delete: the text nodes stay, so character offsets, search and speech text, and
-    /// saved positions are unchanged. Merges into an existing `class` attribute.
-    private static func markSpacerParagraphs(_ html: String) -> String {
-        guard let regex = try? NSRegularExpression(pattern: spacerParagraphPattern, options: [.caseInsensitive])
-        else { return html }
-        let result = NSMutableString(string: html)
-        // Reverse order so earlier ranges stay valid while replacing.
-        for match in regex.matches(in: html, range: NSRange(location: 0, length: result.length)).reversed() {
-            let matched = result.substring(with: match.range)
-            guard let close = matched.firstIndex(of: ">") else { continue }
-            let opening = matched.prefix(2)  // "<p" or "<P": keep the book's tag case
-            let attributes = String(matched[matched.index(matched.startIndex, offsetBy: 2)..<close])
-            let rest = matched[matched.index(after: close)...]
-            let newAttributes: String
-            if attributes.range(of: #"(?i)(?<![\w-])class\s*="#, options: .regularExpression) != nil {
-                newAttributes = attributes.replacingOccurrences(
-                    of: #"(?i)(?<![\w-])class\s*=\s*(["'])"#, with: "class=$1ql-spacer ", options: .regularExpression)
-            } else {
-                newAttributes = attributes + " class=\"ql-spacer\""
-            }
-            result.replaceCharacters(in: match.range, with: "\(opening)\(newAttributes)>\(rest)")
-        }
-        return result as String
-    }
-
-    /// Strips a redundant "Preface" heading (AO3 uses <h2 class="toc-heading"> in
-    /// practice, but the level varies; match h1-h6 with a backreference so only the
-    /// matching close tag is eaten). Only ever applied to spine index 0.
-    private static func stripPrefaceHeading(_ html: String) -> String {
-        html.replacingOccurrences(
-            of: #"<(h[1-6])[^>]*>\s*[Pp]reface\s*</\1>"#,
-            with: "", options: .regularExpression)
-    }
-
-    // MARK: - First Chapter Formatting Quirk
-
-    /// Hides `.toc-heading` h2 blocks and upsizes `.calibre2` bold elements to h2-scale.
-    private static func applyFirstChapterFormatting(to html: String) -> String {
-        // Hide toc-heading h2
-        var result = html.replacingOccurrences(
-            of: #"<h2[^>]*class="[^"]*toc-heading[^"]*"[^>]*>[\s\S]*?<\/h2>"#,
-            with: "",
-            options: .regularExpression
+        _ = base
+        _ = removeParagraphIndents
+        let mediaType = pkg.spine.indices.contains(index) ? pkg.manifest[pkg.spine[index].manifestID]?.mediaType : nil
+        return try ChapterPipeline.render(
+            chapterAt: pkg.spineURLs[index],
+            mediaType: mediaType,
+            resource: index,
+            root: pkg.rootFolder,
+            options: ChapterTransformOptions(
+                formatAO3: formatFirstChapter,
+                markSpacers: collapseSpacerParagraphs
+            )
         )
-        // Upsize calibre2 bold to h2 equivalent via inline style injection
-        result = result.replacingOccurrences(
-            of: #"(<b[^>]*class="[^"]*calibre2[^"]*"[^>]*)(>)"#,
-            with: #"$1 style="font-size:1.5em;font-weight:700;display:block;margin:0.5em 0;"$2"#,
-            options: .regularExpression
-        )
-        return result
-    }
-
-    private static func extractBody(html: String) -> String {
-        guard let start = html.range(of: "<body", options: .caseInsensitive),
-              let gt = html[start.lowerBound...].firstIndex(of: ">"),
-              let end = html.range(of: "</body>", options: .caseInsensitive)
-        else { return html }
-        return String(html[html.index(after: gt)..<end.lowerBound])
-    }
-
-    private static func rewriteResourceURLs(in html: String, base: URL) -> String {
-        let patterns = ["src=\"([^\"]+)\"", "href=\"([^\"]+)\""]
-        var out = html
-        for candidate in patterns {
-            out = out.replacingOccurrences(of: candidate) { match, matched in
-                let whole = match.range
-                let cap = match.range(at: 1)
-                let capInMatch = NSRange(location: cap.location - whole.location, length: cap.length)
-                let nsMatched = matched as NSString
-                let val = nsMatched.substring(with: capInMatch)
-
-                if val.hasPrefix("http") || val.hasPrefix("file:") || val.hasPrefix("data:") ||
-                   val.hasPrefix("#") || val.hasPrefix("mailto:") || val.hasPrefix("javascript:") {
-                    return matched
-                }
-
-                let local = val.hasPrefix("/") ? String(val.dropFirst()) : val
-                let abs = URL(fileURLWithPath: local, relativeTo: base).standardizedFileURL.absoluteString
-                return nsMatched.replacingCharacters(in: capInMatch, with: abs)
-            }
-        }
-        return out
     }
 
     // MARK: - JS injected into reader page (progress reporting + TOC navigation)
@@ -1395,9 +1289,10 @@ final class EPUBParser: NSObject {
         text-indent: var(--reader-paragraph-indent);
     }
 
-    /* Empty spacer paragraphs tagged by markSpacerParagraphs (opt-in setting). The text node stays
+    /* Empty spacer paragraphs tagged by the spacer paragraph transform (opt-in setting). The text node stays
        in the DOM; only its box collapses. No display, white-space or line-height override. */
     p.ql-spacer { margin-block: 0 !important; height: 0; overflow: hidden; }
+    [hidden] { display: none !important; }
 
     b, strong { font-weight: var(--reader-bold-weight); }
 
@@ -1440,21 +1335,4 @@ final class EPUBParser: NSObject {
 
     img, svg { color: unset !important; }
     """
-}
-
-private extension String {
-    func replacingOccurrences(of pattern: String, with transform: (_ match: NSTextCheckingResult, _ matched: String) -> String) -> String {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return self }
-        var result = self
-        var delta = 0
-        let originalNSString = self as NSString
-        for match in regex.matches(in: self, range: NSRange(startIndex..., in: self)) {
-            let matched = originalNSString.substring(with: match.range)
-            let replacement = transform(match, matched)
-            let adjustedRange = NSRange(location: match.range.location + delta, length: match.range.length)
-            result = (result as NSString).replacingCharacters(in: adjustedRange, with: replacement)
-            delta += replacement.count - match.range.length
-        }
-        return result
-    }
 }

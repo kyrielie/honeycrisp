@@ -1948,7 +1948,8 @@ extension ReaderViewController: SearchBarDelegate {
                     return (index, chapter)
                 })
             DispatchQueue.global(qos: .userInitiated).async {
-                let results = EPUBParser().searchResults(for: term, in: package)
+                let options = ChapterTransformOptions.current(from: SettingsManager.shared)
+                let results = EPUBParser().searchResults(for: term, in: package, options: options)
                 DispatchQueue.main.async { [weak self, weak bar] in
                     guard let self, let bar, self.pendingSearchTerm == term else { return }
                     bar.showResults(results, chapterTitles: titleMap)
@@ -2023,10 +2024,11 @@ extension ReaderViewController: AVSpeechSynthesizerDelegate {
         let generation = speechQueueGeneration
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let parser = EPUBParser()
+            let options = ChapterTransformOptions.current(from: SettingsManager.shared)
             var candidate = nextIndex
             var text: String?
             while package.spineURLs.indices.contains(candidate), text == nil {
-                text = parser.speechText(in: package, at: candidate)
+                text = parser.speechText(in: package, at: candidate, options: options)
                 if text == nil { candidate += 1 }
             }
             let followingIndex = candidate + 1

@@ -1,9 +1,9 @@
 import Foundation
+import SwiftSoup
 import XCTest
 @testable import Honeycrisp
 
-/// Spacer-paragraph collapsing: string-level checks on the built scroll HTML. Whether WebKit renders
-/// the collapsed boxes at zero height needs a manual check on a synthetic fixture.
+/// Spacer-paragraph collapsing: checks on the built scroll HTML.
 final class SpacerParagraphTests: XCTestCase {
     private var temporaryDirectory: URL!
 
@@ -25,52 +25,55 @@ final class SpacerParagraphTests: XCTestCase {
 
     func testSpacerParagraphsAreTaggedWhenEnabled() throws {
         let html = try builtHTML(collapse: true)
+        let doc = try Parser.htmlParser().parseInput(html, "")
+        let spacers = try doc.select("p.ql-spacer")
+        XCTAssertEqual(spacers.size(), 7)
 
-        XCTAssertTrue(html.contains("<p class=\"ql-spacer calibre7\">\(nbsp)</p>"))
-        XCTAssertTrue(html.contains("<p class='ql-spacer calibre7'>&#160;</p>"))
-        XCTAssertTrue(html.contains("<p class=\"ql-spacer\">&nbsp;</p>"))
-        XCTAssertTrue(html.contains("<p class=\"ql-spacer\"> \n</p>"))
-        XCTAssertTrue(html.contains("<p class=\"ql-spacer\"><br/></p>"))
-        XCTAssertTrue(html.contains("<P class=\"ql-spacer\">&#xA0;</P>"))  // tag case preserved
-        XCTAssertEqual(html.components(separatedBy: "class=\"ql-spacer").count - 1
-                       + html.components(separatedBy: "class='ql-spacer").count - 1, 7)
+        let calibre7Spacers = try doc.select("p.calibre7.ql-spacer")
+        XCTAssertEqual(calibre7Spacers.size(), 2)
+        for spacer in calibre7Spacers {
+            XCTAssertEqual(try spacer.attr("class"), "ql-spacer calibre7")
+        }
     }
 
     func testRealParagraphsAndNonParagraphElementsAreNotTagged() throws {
         let html = try builtHTML(collapse: true)
+        let doc = try Parser.htmlParser().parseInput(html, "")
 
-        XCTAssertTrue(html.contains("<p class=\"calibre7\">Real text.\(nbsp)</p>"))
-        XCTAssertTrue(html.contains("<p>&nbsp;x</p>"))
-        XCTAssertTrue(html.contains("<pre>\(nbsp)</pre>"))
-        XCTAssertTrue(html.contains("<p data-class=\"keep\">&nbsp;x</p>"))
+        let realParagraphs = try doc.select("p:not(.ql-spacer)")
+        XCTAssertEqual(realParagraphs.size(), 3)
+
+        let pre = try doc.select("pre.ql-spacer")
+        XCTAssertEqual(pre.size(), 0)
+
+        let htmlDisabled = try builtHTML(collapse: false)
+        let docDisabled = try Parser.htmlParser().parseInput(htmlDisabled, "")
+        let zeroSpacers = try docDisabled.select("p.ql-spacer")
+        XCTAssertEqual(zeroSpacers.size(), 0)
     }
 
     func testDataClassAttributeIsNotMistakenForClass() throws {
         let html = try builtHTML(collapse: true)
-
-        XCTAssertTrue(html.contains("<p data-class=\"keep\" class=\"ql-spacer\">&nbsp;</p>"))
+        let doc = try Parser.htmlParser().parseInput(html, "")
+        let dataClassSpacer = try doc.select("p[data-class=keep].ql-spacer")
+        XCTAssertEqual(dataClassSpacer.size(), 1)
     }
 
     func testSpacerTextNodesSurviveSoOffsetsAreUnchanged() throws {
         let off = try builtHTML(collapse: false)
         let on = try builtHTML(collapse: true)
 
-        func visibleText(_ html: String) -> String {
-            html.replacingOccurrences(of: " class=\"ql-spacer\"", with: "")
-                .replacingOccurrences(of: "ql-spacer ", with: "")
-                .replacingOccurrences(of: " class='ql-spacer'", with: "")
-        }
-        let bodyOff = off.components(separatedBy: "<section").dropFirst().joined()
-        let bodyOn = on.components(separatedBy: "<section").dropFirst().joined()
-        XCTAssertEqual(visibleText(bodyOn), bodyOff)
+        let docOff = try Parser.htmlParser().parseInput(off, "")
+        let docOn = try Parser.htmlParser().parseInput(on, "")
+
+        XCTAssertEqual(try docOff.body()?.text(), try docOn.body()?.text())
     }
 
     func testNothingIsTaggedByDefault() throws {
         let html = try builtHTML(collapse: false)
-
-        XCTAssertFalse(html.contains("class=\"ql-spacer"))
-        XCTAssertFalse(html.contains("class='ql-spacer"))
-        XCTAssertTrue(html.contains("<p class=\"calibre7\">\(nbsp)</p>"))
+        let doc = try Parser.htmlParser().parseInput(html, "")
+        let spacers = try doc.select(".ql-spacer")
+        XCTAssertEqual(spacers.size(), 0)
     }
 
     // MARK: Fixture
