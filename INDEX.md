@@ -1,6 +1,6 @@
 # Honeycrisp code index
 
-Navigation map for development. Base: `main` at 3f033bc. About
+Navigation map for development. Base: `main` at 91c0dfd. About
 11,500 lines of Swift in `Sources/` and 3,000 in `Tests/`. Ranges are at `// MARK:` granularity and
 drift: regenerate with `scripts/index-anchors.sh`, then update the tables in the same pass that moves
 code. Functions are named, not numbered, so they survive edits. Rules and commands: `CLAUDE.md`.
@@ -189,7 +189,7 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 | New DRM or parse error | `EPUBParseError`, `EPUBParser.isDRMProtected(extractedRoot:)` (called first by `parsePackage`); error surfaces via `showError` |
 | Window behavior, float on top | `ReaderWindowController` (`setupWindow`, `toggleFloat`) |
 | Themes | `Theme` and storage in `SettingsManager`, `AppearanceSettingsViewController`, `ThemePopoverViewController` |
-| Link policy, script and URL restrictions | `ReaderViewController` `WKNavigationDelegate` extension, `loadView` WKWebView config (restrictions are not enforced yet; roadmap M3) |
+| Link policy, script and URL restrictions | `ReaderViewController` `WKNavigationDelegate` extension, `loadView` WKWebView config (not enforced in the default path; enforced in flag mode by `ChapterHostSurface`; roadmap M4a) |
 | File type registration | `Honeycrisp/Info.plist`, `project.yml` settings |
 | Signing, sandbox, version | `project.yml` base settings; workflows for release |
 
@@ -237,7 +237,7 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 
 Not covered: `SettingsManager` beyond themes, `KeyBinding`, `PaginationEngine` navigation,
 `ReaderViewController`, search UI, all Settings panes, `AppDelegate`. The `WKWebView` harness is
-`WebKitOffsetParityTests` only; its parity case is an expected failure until M3 (roadmap decision B1).
+`WebKitOffsetParityTests` only; its parity case is an expected failure until M4a (roadmap decision B1).
 
 ## Docs map
 
@@ -245,7 +245,7 @@ Not covered: `SettingsManager` beyond themes, `KeyBinding`, `PaginationEngine` n
 |---|---|---|
 | `CLAUDE.md` | Rules, workflows (planning and implementation passes), invariants | Keep short; design lives in FRAMEWORK |
 | `docs/FRAMEWORK.md` | Target design: layers, contracts (Locator, offsets, style cascade, trust), admission rules | Design, not implemented |
-| `docs/ROADMAP.md` | The only plan: decisions R1 to R19, milestones M0 to M10 with status, verify list | Plan; nothing built in review |
+| `docs/ROADMAP.md` | The only plan: decisions R1 to R22, milestones M0 to M10 (and M4a) with status, verify list | Plan; nothing built in review |
 | `ARCHITECTURE.md` | What the code does today, data flow, historical decisions | Section 7 is historical; trust the code |
 | `README.md` | Features, install, build | Linting section names swift-format and `.swift-format`; the repo has `.swiftlint.yml` and no `.swift-format` |
-| `docs/compatibility-corpus.md` | Synthetic fixture to test mapping, real-file validation table | All real-sample rows pending |
+| `docs/compatibility-corpus.md` | Synthetic fixture to test mapping, real-file validation table | Static inspection table filled; on-device rows pending |

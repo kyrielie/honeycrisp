@@ -6,7 +6,7 @@ Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
 ## Documents (one of each)
 - `docs/FRAMEWORK.md`: target design, layers, contracts, admission rules. Read before any change to
   parsing, rendering, positions, styling, persistence or settings.
-- `docs/ROADMAP.md`: the only plan. Decisions R1 to R19, milestones M0 to M10, verify list.
+- `docs/ROADMAP.md`: the only plan. Decisions R1 to R22, milestones M0 to M10 (M4a added), verify list.
 - `ARCHITECTURE.md`: what the code does today. `INDEX.md`: code map.
 - Superseded documents are deleted, not archived. A milestone is not done until the affected
   document is updated and its `Status:` line in the roadmap is changed. Do not add plan or survey
@@ -60,8 +60,8 @@ Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
 - Settings notifications: `.readerCosmeticSettingsChanged` is a live CSS-variable patch with no
   reload; `.readerStructuralSettingsChanged` re-renders the current content. Pick the right one.
 - Scroll and paginated modes share `extractedChapterBody` and `readerVarsCSS` in `EPUBParser`.
-  Keep them shared so the modes cannot drift. This becomes "one chapter pipeline" at roadmap M5.
-- Offsets have one definition (FRAMEWORK C2): the page script's text-node walk. Any change to what
+  Keep them shared so the modes cannot drift. This becomes "one content pipeline" at roadmap M6 and M4a (R20).
+- Offsets have one definition (FRAMEWORK C2): the page script's text-node walk, which counts hidden text. Hide elements, never delete them. Any change to what
   `extractedChapterBody`, indent stripping, preface stripping or AO3 formatting emit changes
   offsets: bump `EPUBAnchor.currentLayout` and run the parity test once it exists (roadmap M1).
 - Swift to JS bridge: handlers `progressHandler`, `positionHandler`, `pageAction`, `positionUpdate`,
@@ -70,7 +70,7 @@ Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
 - EPUB content is untrusted. Never interpolate strings into JS directly; use
   `EPUBParser.javaScriptStringLiteral`. Values interpolated into CSS go through `ReaderCSSSanitizer`.
   Script and resource URL restrictions are NOT enforced today (`allowsContentJavaScript` is `true`,
-  body scripts survive, URLs are rewritten by regex). Do not assume they exist. Roadmap M3 adds them.
+  body scripts survive, URLs are rewritten by regex). Do not assume they exist in the default path. Flag mode (`HONEYCRISP_CHAPTER_HOST=1`, `ChapterHostSurface`) enforces them; roadmap M4a brings them to the default path.
 - `HistoryManager.record` must carry saved position and progress forward (regression-tested).
 - Settings has one implementation: `SettingsWindowController.shared`, opened from
   `AppDelegate.openSettingsAction`. The SwiftUI `Settings` scene is intentionally empty.
@@ -86,7 +86,7 @@ Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
 ## Non-goals (do not add)
 Library view, cross-book search, quote sharing, translation, cloud or AI voices, sync, export,
 statistics, per-window or per-book reading mode, PDF reflow. Publisher CSS is no longer a non-goal
-(roadmap R1). Parked (do not start without a decision): source-style preface, series navigation,
+(roadmap R1; the flow surface harvests a whitelist instead of loading it, R21). Parked (do not start without a decision): source-style preface, series navigation,
 Quick Look, Sparkle and notarization.
 
 ## Before adding a feature
@@ -141,6 +141,7 @@ Trigger: "implement the plan across multiple passes". Work from the plan; do not
 ## Testing rules
 - XCTest with small synthetic fixtures generated in temp directories. Never add real EPUBs;
   `samples/` is local, untracked, and must not be copied from or into the repo.
+- In docs and reports record structural facts about local samples (spine counts, class names, tag counts), never titles, authors, text or file contents.
 - Add a focused test for any parser, persistence, or position-restore change.
 - A test passes or fails. Do not write tests that only record. Measurements and other diagnostics go to a
   file through `TestDiagnostics.write` (`build/diagnostics/`, gitignored, cleared by `test.sh`), never only

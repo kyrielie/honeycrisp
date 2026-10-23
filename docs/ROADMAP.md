@@ -6,7 +6,7 @@ This is the only plan document. It replaces `roadmap-unified.md`, `implementatio
 Design rules and contracts live in `docs/FRAMEWORK.md`; this file covers decisions, order and gates.
 
 Status: active implementation. Local macOS build and tests are available; milestones below reflect
-`main` at 3f033bc. Items marked "verify" are unchecked.
+`main` at 91c0dfd (2.2.1 is 3f033bc; the snapshot of the windowed chapter host is branch `chapter-engine`). Items marked "verify" are unchecked.
 
 ## 1. Baseline
 
@@ -28,7 +28,10 @@ Known gaps in code today:
 - Publisher CSS is dropped: `EPUBParser.extractBody` keeps only the `<body>`, so stylesheet `<link>` tags never load and books whose
   markup depends on their CSS render wrongly. Seen with a Project Gutenberg "advanced" EPUB (`span.sidenote`, `span.pagenum`,
   `span.stpagenum`, `div.footnote`): margin notes and page markers show as inline text. Verified in code; WebKit output and the
-  book's own CSS rules were not inspected. M3 fixes it through the host stylesheet (R1); no interim style hack.
+  book's own CSS rules were not inspected. M3 fixes it through the host stylesheet (R1); no interim style hack. Under R20 the default flow surface does not load book CSS (R21), so this case is served by the chapter host only.
+- Generator CSS carries a little meaning (static inspection of local samples, structure only; see `docs/compatibility-corpus.md`). AO3 downloads hide a heading with `.toc-heading { display: none }`; FicLab hides its landmarks list with `#landmarks { display: none }` and defines `.underline`, `.strikeout`, `.align-center` and `.monospace` in each chapter's head. A path that drops the head makes the hidden elements visible. Verified in the sample files; what 2.2.1 shows for them has not been observed.
+- Self-closing non-void tags (`<p/>`, `<a id="x"/>`) occur in real EPUB XHTML (counts in the corpus file). The default path puts XHTML bodies into a `text/html` document, where such a tag is an open tag. Not observed in 2.2.1; the M1 fixtures cover `<a id="x"/>`.
+- Largest real book (owner-supplied; structure Verified by unpacking): 307 chapters, 26.0 MB of XHTML, 23.07M characters, 4.07M words, no images, no scripts. The owner reports that 2.2.1 opens and reads it, with slow style changes and janky fast scrolling, and about 65 MB of memory (process not identified; WebContent memory not recorded). Scaling the baseline in M3 linearly predicts about 870 MB at this size (Unverified; the two figures probably measure different processes).
 
 ## 2. Decisions
 
@@ -36,16 +39,16 @@ Resolved here as recommendations; reverse any by editing this table and the affe
 
 | ID | Decision | Reason |
 |---|---|---|
-| R1 | Keep the book's own styles; override only the properties the user owns (FRAMEWORK C4). The old "no publisher CSS" non-goal is removed. | Stripping loses meaning (class-only italics and bold, verse alignment). Two references that keep publisher CSS (Varq, Rede) reached the same design. Subsumes old D13 and D15. |
-| R2 | Chapters become separate documents inside one `WKWebView`, mounted as a window (FRAMEWORK C5). Construction (iframe per chapter) is confirmed by spike M3, not assumed. | Keeping book CSS requires isolation per chapter. The same structure gives continuous scroll without loading the whole book. |
+| R1 | Keep the book's own styles; override only the properties the user owns (FRAMEWORK C4). The old "no publisher CSS" non-goal is removed. | Stripping loses meaning (class-only italics and bold, verse alignment). Two references that keep publisher CSS (Varq, Rede) reached the same design. Subsumes old D13 and D15. Amended by R20 and R21: the chapter host keeps book styles; the flow surface harvests a whitelist. |
+| R2 | Chapters become separate documents inside one `WKWebView`, mounted as a window (FRAMEWORK C5). Construction (iframe per chapter) is confirmed by spike M3, not assumed. Amended by R20: this is the chapter host, retained behind the surface seam and no longer the default. | Keeping book CSS requires isolation per chapter. The same structure gives continuous scroll without loading the whole book. |
 | R3 | Resources are served by a scheme handler, from the unpacked folder first. Lazy zip reads with an entry cache come later if needed. | Removes `rewriteResourceURLs`, gives path containment, MIME control, and the place to inject style and `lang`. About 40 to 60 lines in the references. |
-| R4 | Build continuous scroll ourselves. Do not adopt foliate-js, Readium, MuPDF or EPUBKit. | None of the references provide continuous scroll across chapters in a DOM reader; foliate-js replaces the position, pagination and search code. |
-| R5 | SwiftSoup (MIT; pin an exact version after verifying it builds under this project) replaces regex handling of body, style, URLs and active content. Foundation `XMLDocument` stays for OPF and TOC. No Kanna, AEXML, Fuzi. | Regex is the source of the confirmed URL and tag bugs. Gated by the offset parity test (C2). |
+| R4 | Build continuous scroll ourselves. Do not adopt foliate-js, Readium, MuPDF or EPUBKit. | None of the references provide continuous scroll across chapters in a DOM reader; foliate-js replaces the position, pagination and search code. Under R20 the default continuous scroll is the browser's own scroll over one document; the windowing code belongs to the chapter host. |
+| R5 | SwiftSoup (MIT; pin an exact version after verifying it builds under this project) replaces regex handling of body, style, URLs and active content. Foundation `XMLDocument` stays for OPF and TOC. No Kanna, AEXML, Fuzi. | Regex is the source of the confirmed URL and tag bugs. Gated by the offset parity test (C2). Under R20 it is the one content pipeline for every surface and moves ahead of M4a and M5; EPUB XHTML is parsed as XML and serialized as HTML. |
 | R6 | Two surface kinds: flowing (WebKit) and paged (PDFKit, images). Normalize flowing formats to chapters; do not force PDF or CBZ into chapters. | Matches how each format is actually read; keeps capabilities honest (C9). |
-| R7 | Formats, in order: Markdown and plain text, PDF, CBZ, MOBI/AZW3. | Cost and dependency order. |
+| R7 | Formats, in order: HTML, Markdown and plain text, PDF, CBZ, MOBI/AZW3. HTML, Markdown and plain text are single-file sources that L0 splits into chapters (R22). | Cost and dependency order. HTML, TXT, EPUB, MOBI and AZW3 all appear in the local fanfiction samples. |
 | R8 | PDF reflow: no. | Different product; PDFKit search and selection cover the need. Closes old D6. |
 | R9 | MOBI/AZW3 via libmobi-swift converting to a temporary EPUB, only if it builds for macOS. Otherwise unsupported with a documented external conversion. No hand-written MOBI reader. Licensing is not a gate. | Only viable reading route found; a 100-line reader lacks images, navigation and KF8. |
-| R10 | Content isolation (author JS off, app scripts in their own world) is part of M3, not deferred. Closes old D2 and D14. | The scheme handler and chapter host make it cheap now; before them it was expensive. |
+| R10 | Content isolation (author JS off, app scripts in their own world) is part of M3, not deferred. Closes old D2 and D14. Applies to every flowing surface under R20. | The scheme handler and chapter host make it cheap now; before them it was expensive. |
 | R11 | Continuous scroll position is `(resource, offset)`; progress is derived (C1). Paginated mode paginates per chapter; the displayed page count becomes per chapter or an estimate. This is a visible behavior change, confirmed for flag-mode scroll in M4 (label per chapter, same format as paginated mode). | Global page numbers depend on laying out the whole book. |
 | R12 | History retains more entries than it displays (start at 300, measure `UserDefaults` size first); path normalization like bookmarks. Closes old D18 and D19. | The cap of 100 silently drops saved positions. |
 | R13 | Navigation history (Back and Forward): yes, as a pure type plus Go-menu items and rebindable shortcuts; toolbar button optional. Closes old D10. | Cheap, testable, high value for footnotes. |
@@ -55,6 +58,9 @@ Resolved here as recommendations; reverse any by editing this table and the affe
 | R17 | ZIP entry-count and size limits: skip. DRM rule and search-hit contrast: already implemented. Closes old D17, D20, D5. | Containment is handled by ZIPFoundation; the rest is done. |
 | R18 | Platform chrome work (M8) is independent of the reader pipeline (M3 to M6) and may run in parallel. | No shared files except `ReaderViewController`; coordinate there. |
 | R19 | Themes become one JSON file per theme in a folder, replacing the `readerThemes` blob in `UserDefaults`. Folder: `Application Support/Honeycrisp/Themes` inside the app container (the app is sandboxed). File: the `ThemeExport` shape `{version, theme}` with a stable `id`. `readerCurrentThemeID` stays in `UserDefaults`. Amends FRAMEWORK C7. Folder location is confirmed before pass 2 of M2.1. | The folder is a user-visible source of truth (open, copy, back up, hand-edit) and the export format already exists. Costs: a persisted-format change, the end of "`UserDefaults` only" for themes, and an in-memory cache plus debounced writes, because live slider updates would otherwise write files. |
+| R20 | One content pipeline (L2: SwiftSoup, EPUB XHTML parsed as XML, one canonical HTML output) feeds two implementations of `FlowingSurface`. `FlowSurface` is the default: the whole book as one document with a `section.hc-chapter[data-resource]` per chapter, served by the scheme handler, content JavaScript off. `ChapterHostSurface` (M3, M4) keeps its iframe-per-chapter windowing, is frozen at bug fixes and stays behind `HONEYCRISP_CHAPTER_HOST=1`. Positions are `(resource, offset)` in both. Engine selection stays a flag; choosing by book size or by a setting is deferred because it brushes the per-book mode non-goal, and needs a decision. The chapter host snapshot is branch `chapter-engine` (91c0dfd). | The M3 adopt decision rested on synthetic fixtures. The owner reports the largest real book (4.07M words) usable in the merged document; isolation matters mainly for books whose meaning depends on their CSS, which the fanfiction samples are not; and the windowing code is the costliest and riskiest part. One pipeline and one position model keep two surfaces cheap. Flag mode has no history, search, speech or bookmarks, so it cannot be the default yet. |
+| R21 | The flow surface does not load the book's stylesheets. The pipeline harvests simple rules (`.class`, `#id`, `tag`, `tag.class` selectors) and applies a whitelist as inline style on matching elements: `display:none` (as `hidden`), italic, bold, underline and line-through, centered or right alignment, monospace. Geometry (margins, indent, justification, width) stays with the user layer (C4). Elements are hidden, never deleted, because the offset walk counts hidden text (C2). Cascade order is source order; specificity is not modeled. Amends R1 for that surface. | Generator CSS carries a small amount of meaning (AO3 and FicLab hide elements and define underline, strike and alignment classes) and nothing else in the fanfiction samples needed book CSS. Loading it would need per-chapter isolation. Inline style attributes already survive. |
+| R22 | Single-file sources (HTML, TXT, Markdown, legacy MOBI) are split into chapters at L0: `<article>` or generator containers first, then headings, then `mbp:pagebreak` for MOBI, then a size cap at paragraph boundaries; a failed split degrades to one chapter. The Markdown parser choice stays open (M7.1); a small in-house converter for the fanfiction subset is the default proposal. External `http(s)` images are not loaded by default; whether a setting enables them is open and needs a decision. | The samples include single-file HTML, TXT and legacy MOBI whose only chapter signals are those; one Fimfiction HTML hotlinks its cover image. |
 
 ## 3. Milestones
 
@@ -180,8 +186,7 @@ existing users keep their themes after migration.
 
 ### M3. Spike: chapter host, scheme handler, user layer (L, behind a flag)
 
-Status: complete. Outcome: adopt the chapter host (iframe per chapter, scheme handler, user layer); the merged document is
-replaced in M5. Implemented in M3: (a contained EPUB resource scheme handler and MIME mapping are implemented and
+Status: complete. Outcome (revised by R20): the scheme handler, `ServedChapter`, user layer and client-world isolation are kept and reused; the chapter host (iframe per chapter) is retained behind the surface seam but is no longer the default, and the merged document is replaced by the flow surface (M4a), not by the host. Implemented in M3: (a contained EPUB resource scheme handler and MIME mapping are implemented and
 unit covered; the handler also serves `/__app/` app resources and applies a markup transform, and
 `ServedChapter.prepare` inserts the stylesheet link and root `lang`, pure and unwired; `ChapterHostCSS` (static
 stylesheet plus settings-dependent user block, pure and unwired) and `ChapterHostCascadeTests` prove the
@@ -250,11 +255,11 @@ Exit criteria, all measured:
 Outcome recorded as a decision: adopt, or fall back to a sanitized merged document with
 per-chapter style scoping.
 
-Decision: adopt. The fall-back is not built.
+Decision (revised, R20): the host is kept and is not the default. The fall-back, a sanitized merged document, is built as the flow surface (M4a), with the book's styles harvested (R21) instead of scoped per chapter.
 
 ### M4. Windowed continuous scroll and per-chapter pagination (L)
 
-Status: in progress (scroll windowing, messaging, restore, the scroll baseline and paginated mode in flag mode with chapter
+Status: paused (R20: the code stays in the tree behind `HONEYCRISP_CHAPTER_HOST=1`, bug fixes only, snapshot branch `chapter-engine` at 91c0dfd; windowing work resumes only if the flow surface fails a measured large-book gate). State at the pause: (scroll windowing, messaging, restore, the scroll baseline and paginated mode in flag mode with chapter
 hand-off, exact-offset reflow and the scroll/paged toggle are in code through pass 7; owed: the owner's click-through of the
 flag-mode paged reader and the paged memory number). Decisions: flag mode does not read or write saved history in M4 (saved
 scroll positions are whole-document offsets with spine index 0, so mapping them to `(resource, offset)` is a persisted-format
@@ -279,14 +284,30 @@ mode paginates inside each chapter with a pager hand-off at chapter edges (R11).
 Exit: scroll across 20 chapter boundaries without jump; paginated forward and back across chapters
 restores exact positions; memory within the M3 budget.
 
-### M5. Port features, delete the merge pipeline (L)
+### M4a. Flow surface on the content pipeline (L)
 
-Status: not started.
+Status: not started. Decisions R20, R21, R22. Needs M6 (the pipeline) first, then the `FlowingSurface` seam.
 
-Port onto the host, one per PR: position save and restore (including the mapping from saved whole-document scroll offsets to
+Design (not yet built):
+- A `FlowingSurface` Swift protocol. `ChapterHostSurface` and the current merged path conform; the `chapterHost` branches in `ReaderViewController` (16 use sites at 91c0dfd) move behind it, behavior-neutral (FRAMEWORK C5).
+- `FlowDocumentBuilder`: one `section.hc-chapter[data-resource]` per chapter from pipeline output; ids namespaced `hc-r{N}-{id}`; internal links rewritten through a path-to-resource table; resource URLs resolved per chapter with Foundation `URL(string:relativeTo:)`.
+- Served by `EPUBResourceSchemeHandler` (`appResources` for the document, as `text/html`: the handler maps `html` and `htm` to `application/xhtml+xml` today, so add a MIME override for app resources), content JavaScript off, app scripts in the client world, the link policy shared with the chapter host, CSP through `responseHeaders` if enforcement is verified.
+- R21 harvest in the pipeline. The existing transforms are ported by M6 (hide, not delete; indent stripping not ported). `EPUBAnchor.currentLayout` was bumped to 2 by M6. Moving scroll-mode offsets from whole-document (today `spineIndex` 0 plus a document offset) to section-rooted changes what an offset counts (FRAMEWORK C1), so M4a bumps again (recommended: layout 3, fraction fallback for older positions). This needs the owner's approval before the position pass.
+- Positions: the page script walks text from the start of one section and reports `(resource, offset)`; saved whole-document offsets are mapped in M5.
+- Large books: chapters are parsed concurrently off the main thread. Chunked delivery from the scheme handler and `content-visibility: auto` are options only if a measurement shows the need (both Unverified; see the verify list).
+
+Gate, all measured: parity test (C2) per section on every fixture; hidden text counted equally with and without the harvest; open time and WebContent memory no worse than 2.2.1 on the 2,000-page fixture (about 820 ms, 124 MB) and no worse than the owner's recorded large-book numbers; author scripts do not execute; `<p/>` and `<a id="x"/>` fixtures render correctly; remote images do not load.
+
+Exit: the default path is the flow surface, the chapter host is still reachable through its flag, INDEX and ARCHITECTURE updated.
+
+### M5. Port features to the surface seam, delete the regex path (L)
+
+Status: not started; after M4a (R20).
+
+Port onto `FlowSurface` through the `FlowingSurface` protocol, one per PR: position save and restore (including the mapping from saved whole-document scroll offsets to
 `(resource, offset)`, decided here), search and highlights, auto-scroll,
 speech, bookmarks, TOC jumps, in-book links including cross-chapter links. Add navigation history
-(R13). Then delete `buildScrollHTML` merging, `rewriteResourceURLs` and the regex URL code. Split
+(R13). Port to `ChapterHostSurface` only if a decision (R20) makes it selectable. Then delete the 2.2.1 merged path (`buildScrollHTML`, `buildPageHTML`, the `loadFileURL` sites), if the owner confirms after M4a ships; `rewriteResourceURLs` and the regex URL code are already gone (M6). Split
 `EPUBParser.swift` by layer at this point (FRAMEWORK section 2).
 
 Exit: parity and restore tests green; no reference to the removed functions; INDEX and ARCHITECTURE
@@ -295,11 +316,12 @@ updated.
 ### M6. Content pipeline on SwiftSoup (M)
 
 Status: not started (spike only: `SwiftSoupSpikeTests`, test-target dependency, outcome pending; the
-R5 decision is recorded after the owner runs it).
+R5 decision is recorded after the owner runs it). Moved ahead of M4a and M5 by R20: it is the content pipeline both surfaces use.
 
-Move body extraction, active-content removal, AO3 formatting, indent stripping and text extraction to
-SwiftSoup. Verify the package builds under the project's settings first. Gate: parity test (C2)
-passes on every fixture; `layout` version bumped once, with the fraction fallback tested.
+Move body extraction, active-content removal, AO3 formatting, spacer tagging, preface hiding, URL rewriting and text extraction to
+SwiftSoup (`ChapterPipeline`, new files under `Sources/Content/`). The paragraph-indent transform is not ported: `removeParagraphIndents` becomes a no-op until M4a
+revisits it. Verify the package builds under the project's settings first. Parse EPUB XHTML with the XML parser and serialize it as HTML, so self-closing non-void tags stay empty elements; decode by BOM, then the XML declaration, then `<meta charset>`, then UTF-8, then windows-1252; hide elements instead of deleting them (R21); measure throughput on a 150 KB chapter and on 300 chapters, parsing chapters concurrently (the call stays synchronous, so the caller's thread is still blocked; M4a moves loading off the main thread). There is no hard time budget: the owner judges speed by feel and the numbers are recorded for reference. Gate: parity test (C2)
+passes on every fixture; `layout` version bumped once by M6 (1 to 2), with the fraction fallback tested.
 
 Exit: no regex remains in L2 for HTML structure; chapter bodies contain no `<script>`, `on*` or
 `javascript:`.
@@ -308,7 +330,7 @@ Exit: no regex remains in L2 for HTML structure; chapter bodies contain no `<scr
 
 Status: not started.
 
-1. Markdown and plain text: convert to chapters at L0. Plain text is escaping plus paragraph
+1. HTML, Markdown and plain text (R22): convert to chapters at L0; may start after M6, in parallel with M4a and M5. HTML splits on `<article>` or generator containers, then headings, then a size cap. Plain text normalizes CRLF and encodings, treats a leading `> ` block as the header and `> N. Title` lines as chapter starts (seen in one Fimfiction export), and turns scene-break lines into `<hr>`. The open path hardcodes `epub` (`EPUBDropTargetView`, `ReaderWindowController`, `AppDelegate`) and `Honeycrisp/Info.plist` declares only `org.idpf.epub-container`; both change here. Original item text follows. Plain text is escaping plus paragraph
    detection; Markdown splits chapters on top-level headings. Verify the Markdown parser choice from
    its manifest and docs before adding it (candidates: Foundation Markdown support, or a small
    package); none is assumed. Supported-types registry shared by Open panel, drag-and-drop, Finder
@@ -317,7 +339,7 @@ Status: not started.
    exclude themes and speech. Format-discriminated persistence audit lands here (C7); it also covers theme files (R19).
 3. CBZ: ZIPFoundation plus an image page view. Natural sort of entries; paged capabilities.
 4. MOBI/AZW3: gate on a macOS build of libmobi-swift (its manifest declares iOS only; verify), then
-   temporary EPUB conversion with reliable cleanup and history keyed to the original path.
+   temporary EPUB conversion with reliable cleanup and history keyed to the original path. Structure seen with a proxy unpacker (KindleUnpack, not libmobi): AZW3 (KF8) unpacks to an ordinary split-part EPUB; legacy MOBI unpacks to one HTML file whose `mbp:pagebreak` markers are the chapter split; the MOBI header encryption field was 0 in all samples and a non-zero value must be reported as DRM.
 
 Exit per format: open, restore, history, bookmarks, error mapping, and tests with generated fixtures.
 
@@ -378,12 +400,14 @@ the new platform style.
 ## 4. Order
 
 ```
-M0 -> M1 -> M3 -> M4 -> M5 -> M6 -> M7 (1, 2, 3, 4) -> M9
+M0 -> M1 -> M3 -> M6 -> M4a -> M5 -> M7 (2, 3, 4) -> M9
+                    \-> M7.1 (HTML, TXT, Markdown) after M6, parallel with M4a and M5
+        M4 (windowed chapter host) paused (R20)
         \-> M2, M2.1 (parallel, after M0; M2.1 needs the keep-set commit)
         \-> M8 (parallel, after M0)   M10 later
 ```
 
-M1 gates M3 (the harness is how the spike is judged). M3's outcome gates M4 to M6. M2, M2.1 and M8 touch
+M1 gates M3 (the harness is how the spike is judged). M3's outcome (revised by R20) gates M6 and M4a; M4 is paused. M2, M2.1 and M8 touch
 settings and chrome, not the pipeline, so they can fill gaps.
 
 ## 5. Not planned
@@ -396,8 +420,7 @@ be reopened by editing this file.
 
 ## 6. Verify before coding
 
-- Decision B1: the offset parity case in `WebKitOffsetParityTests` stays an expected failure until M3
-  replaces the merged document; no offset-definition change and no `currentLayout` bump before then.
+- Decision B1: the offset parity case in `WebKitOffsetParityTests` stays an expected failure until M4a replaces the merged document; no offset-definition change and no `currentLayout` bump before then.
 - Decision B2: SwiftSoup 2.14.3 is the candidate (tag manifest is `swift-tools-version:6.0`, macOS 12
   platform floor; verified from the tag). Assumed buildable on the owner's Xcode; the M6 spike
   (`SwiftSoupSpikeTests`) confirms or rejects R5.
@@ -411,6 +434,7 @@ be reopened by editing this file.
 - ZIPFoundation single-entry read API (needed only for lazy zip serving).
 - `AVSpeechSynthesizerDelegate` range callback on macOS 13.
 - Which of `NSToolbar` title and subtitle APIs are available at the deployment floor.
+- Flow surface (R20, M4a): repeated `WKURLSchemeTask.didReceive(_:)` before `didFinish()` (chunked delivery); whether a `Content-Security-Policy` on app-scheme responses is enforced; client-world registration of the five message handlers `readerJS` uses; `loading="lazy"` on `<img>` with the custom scheme; `content-visibility: auto` on macOS 13 and 14 and its scroll behavior; SwiftSoup XML parse and HTML serialization fidelity and throughput (self-closing tags, namespaces, entities); whether 2.2.1 shows the hidden AO3 `toc-heading` in chapters after the first (`stripPrefaceHeading` only touches spine index 0); which process the owner's 65 MB figure measured; libmobi license and API; the markup inside AO3 HTML `#chapters`.
 - M2.1: whether the Theme menu rebuilds on `settingsChangedNotification`; whether any Settings UI reorders
   themes (grep `SettingsWindowController`); that theme Export through the save panel works under
   `ENABLE_USER_SELECTED_FILES: readonly`.

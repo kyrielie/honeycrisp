@@ -26,13 +26,18 @@ real-file validation run, record the source and redistribution terms for each
 fixture here, then exercise Open, TOC, internal links, scroll, paginated reading,
 search, and resume on-device. Keep the EPUBs on the local machine.
 
+Policy (owner decision): no book file is redistributed through the repository, in any format. The owner supplies samples separately when a pass needs them. Every sample below is local only. Record structural facts here (counts, class names, tag shapes), never titles, authors or text.
+
 | Sample class | Source / redistribution review | Observed behavior |
 |---|---|---|
 | Ordinary EPUB2 | Pending | Pending on-device run |
 | Ordinary EPUB3 | Pending | Pending on-device run |
-| AO3 download | Pending | Pending on-device run |
-| fichub download | Pending | Pending on-device run |
-| Browser-generated EPUB | Pending | Pending on-device run |
+| AO3 download (EPUB, HTML, AZW3, MOBI) | Local only, owner-supplied, not redistributable | Pending on-device run |
+| fichub download | Local only, owner-supplied, not redistributable | Pending on-device run |
+| Browser-generated EPUB (WebToEpub) | Local only, owner-supplied, not redistributable | Pending on-device run |
+| FicLab export (AO3, FFN, Fimfiction) | Local only, owner-supplied, not redistributable | Pending on-device run |
+| Fimfiction export (EPUB, HTML, TXT) | Local only, owner-supplied, not redistributable | Pending on-device run |
+| Very large EPUB (owner's largest) | Local only, owner-supplied, not redistributable | Opens and reads in 2.2.1 with slow style changes and janky fast scroll (owner report); WebContent memory not recorded |
 | Image-heavy EPUB | Pending | Pending on-device run |
 | Missing or malformed TOC | Synthetic parser coverage; real sample pending | Pending on-device run |
 | DRM-marked EPUB | Synthetic parser coverage; real sample pending | Pending on-device run |
@@ -40,3 +45,25 @@ search, and resume on-device. Keep the EPUBs on the local machine.
 The local corpus cannot be marked complete until source, license, and observed
 behavior are verified for each real sample. No personal book files belong in
 this repository.
+
+## Static inspection of local samples
+
+Recorded 2026-10-22 by unpacking the files (structure only; nothing was opened in Honeycrisp). It states what each
+sample contains and what the engine plan (roadmap R20 to R22) must handle. Not yet inspected: `gutenberg1`,
+`standardebookcompatible`, `standardebooks`, `standardebooksadvanced`, `standardebooks.kepub`, `standardebooks.azw3`.
+
+| Sample | Structure observed | Consequence |
+|---|---|---|
+| `ao3.epub` | 4 spine files; `calibreN` classes; `.toc-heading { display: none }`; whitespace-only `<p> </p>` between paragraphs | A path that drops the CSS shows the hidden heading; hide it (R21). Spacer paragraphs are already tagged by `markSpacerParagraphs`. |
+| `ao3.html` | XHTML 1.0 Strict doctype, well-formed XML, one file with `#preface`, `#chapters`, `#afterword`; same hidden `.toc-heading`. Markup inside `#chapters` not inspected. | Needs chapter splitting (R22); the split rule is open. |
+| `ao3.azw3` | KF8 (MOBI header version 8), encryption field 0. A proxy unpack gives split part files and the same `calibreN` classes as `ao3.epub`. | Converts like an EPUB (M7.4). |
+| `ao3.mobi` | MOBI 6, encryption field 0. A proxy unpack gives one HTML file with `<font>`, `<p height width>`, `filepos` anchors, `<a id="..."/>` and 8 `mbp:pagebreak` markers. | Split on `mbp:pagebreak` (R22). |
+| `fichub-ao3.epub`, `fichub-ffnet.epub` | 3 and 5 spine files; generator metadata Ebook-lib 0.17.1; no classes; XML declaration followed by `<!DOCTYPE html>`; 3 and 16 self-closing non-void tags (`<p/>`) | Parse as XML (M6): in `text/html` `<p/>` is an open tag. |
+| `ficlab-ao3.epub`, `ficlab-ffnet.epub`, `ficlab-fimfic.epub` | 6, 8 and 7 spine files; indent, justification and typography only in CSS; `.underline`, `.strikeout`, `.align-center`, `.monospace` defined in each chapter's head `<style>` (one real use of `underline`, in the FFN file); `#landmarks { display: none }` | Harvest the whitelist (R21); hide the landmarks list. |
+| `fimfic.epub` | 5 spine files; 94 `<em>`/`<i>`; one inline style attribute | Baseline case for every path. |
+| `fimfic.html` | One well-formed XML file: `<header>`, `<nav>`, 2 `<article>`, a `<details>` holding the summary, one remote cover `<img>`, 11 `<hr>` | `<article>` is the likely chapter boundary (tag count only); remote images are not loaded by default (R22). |
+| `fimfic.txt` | UTF-8, CRLF, 711 lines; a `> ` block holds title, author and `> N. Title` chapter lines; blank-line paragraphs; curly quotes; trailing no-break spaces on some lines | Not Markdown; adapter in M7.1. |
+| `webtoepub-ao3.epub` | 2 spine files; no self-closing non-void tags; 2 `<em>`/`<i>` | Baseline case. |
+| `wikisource.epub` | 3 spine files; 179 self-closing non-void tags; 429 inline style attributes | XML parse; inline styles survive. |
+| `gutenberg2.epub` | 17 spine files; 749 self-closing non-void tags; 770 occurrences of `sidenote` in the XHTML (the roadmap R1 case) | XML parse; needs the chapter host or an accepted loss of margin-note styling. |
+| Largest local EPUB (not in the sample set) | 307 spine files, 26.0 MB XHTML, 23.07M characters, 4.07M words, median chapter 87 KB, largest 150 KB, 106,754 `<p>`, 794 `<hr>`, 395 `<em>` (each styled by one italic class), no images, no scripts; calibre 6.23.0 output | Large-book gate for M4a. Dropping its CSS loses nothing visible: italics are real `<em>`, the other classes are margins and a gray rule. |

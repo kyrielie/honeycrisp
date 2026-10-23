@@ -94,6 +94,8 @@ same served chapter. Enforced by a parity test that loads synthetic chapters in 
 and compares JS offsets with Swift offsets, including entities, supplementary Unicode, whitespace
 and self-closing tags. Any change to L2 output requires this test to pass.
 
+The walk counts every text node under its root, including text that CSS or the `hidden` attribute does not display. Hiding an element therefore never changes offsets; deleting text always does. The walk is rooted at one chapter, never at a whole multi-chapter document: in the flow surface at that chapter's `section[data-resource]`, in the chapter host at the chapter's body. Both report `(resource, offset)`.
+
 ### C3. Publication and chapter shape
 
 - `Publication` (L1): metadata (title, authors, language, identifiers), reading-order resources,
@@ -101,6 +103,7 @@ and self-closing tags. Any change to L2 output requires this test to pass.
 - Flowing resource: an id, a href, a media type, and a way to obtain bytes. The Content layer turns
   it into a served chapter. Markdown and plain text are converted to chapters at L0; MOBI and AZW3
   are converted to a temporary EPUB at L0. Nothing above L1 knows the original format.
+- Single-file sources (HTML, TXT, Markdown, legacy MOBI) are split into chapters at L0 (roadmap R22). Chapter bodies enter L2 as bytes plus a media type; EPUB XHTML is parsed as XML, everything else as HTML, and L2 emits one canonical HTML serialization.
 - Paged publication: a page count, per-page rendering owned by the paged surface, an optional
   outline. PDF and CBZ are paged. A paged publication is not forced into the chapter shape.
 - The abstraction is narrow: it carries only what L2 to L5 read. Add a field when a second consumer
@@ -124,36 +127,34 @@ specific and wins, so centered verse and titles survive. Verify in a rendered fi
 relying on it. Owned properties that must win (font family, color) use `!important` and `revert`
 on descendants.
 
-Each chapter is its own document so book class names cannot collide across chapters (see C5).
+In the chapter host each chapter is its own document, so book class names cannot collide across chapters (see C5). In the flow surface chapters share one document and the book's stylesheets are not loaded: L2 harvests a whitelist of simple rules into inline attributes (roadmap R21: `display:none` as `hidden`, italic, bold, underline, line-through, centered or right alignment, monospace) and namespaces ids as `hc-r{N}-{id}`. Geometry is never harvested.
 
-### C5. Chapter host
+### C5. Flowing surface
 
-The flowing surface shows a window of chapters: the current chapter plus neighbors, mounted near
-the edges, evicted when far. One `WKWebView` per book remains; chapters are separate documents
-inside it. Properties the host must provide:
+`FlowingSurface` is the L3 protocol that the shell, state and search code talk to. It has two implementations (roadmap R20). The contract below is what the rest of the code depends on, so a construction can change without touching callers.
 
-- Isolation: styles and ids of one chapter cannot affect another.
-- Relative resource URLs resolve by the browser, not by string rewriting.
-- XHTML chapters load as XML so self-closing tags behave.
-- A stable position model across chapter boundaries: prepending a chapter above the viewport must
-  not move the visible text.
-- Bounded memory on very long books (target set by the spike in roadmap M3, measured on a synthetic
-  2,000-page fixture).
+Properties every implementation provides:
 
-How the host is built was decided by the M3 spike and is confirmed: one iframe per chapter inside a shell document, served by
-the scheme handler. From M4 the shell holds one slot per spine item and mounts the iframe only near the viewport. The
-contract above is what the rest of the code depends on, so the construction can still change.
+- Isolation of the book from the app: author scripts do not run, resources load only through the app scheme, links and navigation follow one policy (C6).
+- Positions are `(resource, offset)` (C1, C2). Mounting or prepending content above the viewport does not move the visible text.
+- Relative resource URLs resolve to the app scheme: by the browser in the chapter host, by L2 per chapter in the flow surface. No regex rewriting.
+- Cosmetic settings patch live without reload; structural settings re-render and restore the `Locator` (C8).
+- Bounded cost. The flow surface's cost grows with book size and is gated by roadmap M4a against the 2.2.1 figures and the owner's largest book. The chapter host's memory is bounded by its window (roadmap M3, M4).
+
+`FlowSurface` (default, roadmap M4a): one document with one `section.hc-chapter[data-resource]` per chapter, served by the scheme handler, content JavaScript off, app scripts in the client world. Ids are namespaced `hc-r{N}-{id}` and internal links are rewritten through a path-to-resource table. The book's styles are not loaded (C4, R21).
+
+`ChapterHostSurface` (built in roadmap M3 and M4; frozen, behind `HONEYCRISP_CHAPTER_HOST=1`; snapshot branch `chapter-engine`): the current chapter plus neighbors as isolated documents, one iframe per chapter inside a shell document, mounted near the viewport and evicted when far, XHTML chapters loaded as XML, the book's own styles kept. It has no history, search, speech, bookmarks, TOC jumps or links until a decision makes it selectable (R20).
 
 ### C6. Trust boundary
 
 - Book bytes are untrusted at every layer, including after sanitizing (defense in depth).
-- L2 removes active content from chapters: `<script>`, event-handler attributes, `javascript:`
+- L2 removes active content from chapters: `<script>`, `iframe`, `object`, `embed`, `base`, `meta http-equiv=refresh`, event-handler attributes, `javascript:`
   URLs. It uses a real parser, not regular expressions.
 - L3 serves book resources only through the app's scheme handler. The handler resolves paths
   against the book root and rejects anything that escapes it, and it fixes the MIME type. It does
-  not serve the network.
+  not serve the network. External `http(s)` images are not loaded by default (roadmap R22). A response `Content-Security-Policy` is defense in depth once its enforcement is verified.
 - Author JavaScript is off. The app's own scripts run in a separate content world or as user
-  scripts. Verify the exact WebKit behavior on macOS 13 before building on it (roadmap section 7).
+  scripts. Verify the exact WebKit behavior on macOS 13 before building on it (roadmap section 6).
 - Strings from a book are never interpolated into JavaScript; use
   `EPUBParser.javaScriptStringLiteral` (to be renamed when L2 splits).
 - Values interpolated into CSS pass `ReaderCSSSanitizer`.
@@ -214,7 +215,7 @@ search/speech  -> L2 text extraction (parity with C2) -> Locator -> L3 scrolls a
 |---|---|---|
 | Unit (pure) | Locator math, progress, sanitizer, navigation history, theme codec, history and bookmark durability | every pure type ships with tests |
 | Pipeline | synthetic chapter fixtures in, expected served HTML and extracted text out | fixtures are generated in temp directories; never add real EPUBs |
-| WebKit harness | parity (C2), style cascade (C4), host behavior (C5) in a real `WKWebView` | required before any L2, L3 or C4 change merges; started: `WebKitOffsetParityTests` exists, and its parity and rewrite cases are expected failures until the merged document is replaced (roadmap M3, decision B1) |
+| WebKit harness | parity (C2), style cascade (C4), host behavior (C5) in a real `WKWebView` | required before any L2, L3 or C4 change merges; started: `WebKitOffsetParityTests` exists, and its parity and rewrite cases are expected failures until the merged document is replaced (roadmap M4a, decision B1) |
 | Device | local `samples/` runs recorded in `docs/compatibility-corpus.md` | observed outcome only, never copy book content |
 
 A change to an untested area (`SettingsManager`, `KeyBinding`, `PaginationEngine`,
