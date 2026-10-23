@@ -64,6 +64,14 @@ enum ChapterPipeline {
             hidePrefaceHeading: resource == 0,
             to: body
         )
+        if options.harvestStyles {
+            try ChapterStyles.apply(
+                to: document,
+                body: body,
+                chapterURL: url,
+                rootFolder: root
+            )
+        }
         try ChapterURLs.rewrite(
             in: body,
             chapterURL: url,
@@ -96,6 +104,14 @@ enum ChapterPipeline {
             hidePrefaceHeading: resource == 0,
             to: body
         )
+        if options.harvestStyles {
+            try ChapterStyles.apply(
+                to: document,
+                body: body,
+                chapterURL: url,
+                rootFolder: root
+            )
+        }
         let bodyHTML = try ChapterMarkup.bodyHTML(of: body)
         return try ChapterText.extract(fromServedBodyHTML: bodyHTML)
     }

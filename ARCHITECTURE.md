@@ -117,9 +117,9 @@ back to `super.keyDown(with:)` when it didn't.
 4. `EPUBParser.buildScrollHTML` or `buildPageHTML` renders the actual HTML document (CSS vars baked in from `ReaderCosmeticSettings.current`), written to a temp file, loaded via `webView.loadFileURL`.
 5. `readerJS` (embedded in every rendered document) reports scroll/position/page-info back to Swift via `WKScriptMessageHandler`s registered in `ReaderViewController.loadView()`.
 
-Two independent HTML-generation paths (`buildScrollHTML` for scroll mode, one document per spine item via `buildPageHTML` for paginated mode) share one SwiftSoup content pipeline (`ChapterPipeline` in `Sources/Content/`) and one CSS-vars function (`readerVarsCSS`) so the two rendering modes can't drift apart on formatting or theming.
+Two independent HTML-generation paths (`buildScrollHTML` for scroll mode, one document per spine item via `buildPageHTML` for paginated mode) share one SwiftSoup content pipeline (`ChapterPipeline` in `Sources/Content/`) and one CSS-vars function (`readerVarsCSS`) so the two rendering modes can't drift apart on formatting or theming. Under milestone M4a, `FlowDocumentBuilder` and `FlowSurface` render chapters inside `<section class="hc-chapter" id="hc-r{N}">` served over `honeycrisp-epub://book/...` with author JavaScript disabled, app scripts in `WKContentWorld.defaultClient`, and publisher styles harvested via `ChapterStyles` (Rule N3/N6, Decision R21).
 
-Direction (roadmap R20): EPUB XHTML is parsed as XML by the SwiftSoup content pipeline (M6) and will be shown by a default `FlowSurface` (M4a), one document with a section per chapter, served through the scheme handler as in flag mode. The chapter host in 4a stays behind its flag.
+Direction (roadmap R20): EPUB XHTML is parsed as XML by the SwiftSoup content pipeline (M6) and is shown by the flow surface (`FlowSurface`, M4a), one document with a section per chapter, served through the scheme handler. The chapter host in 4a stays behind its flag.
 
 ### 4a. Flag mode: chapter host spike (roadmap M3; off by default)
 

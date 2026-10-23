@@ -287,13 +287,13 @@ restores exact positions; memory within the M3 budget.
 
 ### M4a. Flow surface on the content pipeline (L)
 
-Status: not started. Decisions R20, R21, R22. Needs M6 (the pipeline) first, then the `FlowingSurface` seam.
+Status: in progress (Passes 1-4 complete: FlowingSurface protocol seam, FlowDocumentBuilder, scheme isolation with client-world scripts, and R21 publisher style harvest). Decisions R20, R21, R22. Next: section-rooted positions (Pass 5).
 
-Design (not yet built):
-- A `FlowingSurface` Swift protocol. `ChapterHostSurface` and the current merged path conform; the `chapterHost` branches in `ReaderViewController` (16 use sites at 91c0dfd) move behind it, behavior-neutral (FRAMEWORK C5).
-- `FlowDocumentBuilder`: one `section.hc-chapter[data-resource]` per chapter from pipeline output; ids namespaced `hc-r{N}-{id}`; internal links rewritten through a path-to-resource table; resource URLs resolved per chapter with Foundation `URL(string:relativeTo:)`.
-- Served by `EPUBResourceSchemeHandler` (`appResources` for the document, as `text/html`: the handler maps `html` and `htm` to `application/xhtml+xml` today, so add a MIME override for app resources), content JavaScript off, app scripts in the client world, the link policy shared with the chapter host, CSP through `responseHeaders` if enforcement is verified.
-- R21 harvest in the pipeline. The existing transforms are ported by M6 (hide, not delete; indent stripping not ported). `EPUBAnchor.currentLayout` was bumped to 2 by M6. Moving scroll-mode offsets from whole-document (today `spineIndex` 0 plus a document offset) to section-rooted changes what an offset counts (FRAMEWORK C1), so M4a bumps again (recommended: layout 3, fraction fallback for older positions). This needs the owner's approval before the position pass.
+Design:
+- A `FlowingSurface` Swift protocol. `ChapterHostSurface`, `FlowSurface`, and the legacy merged path conform; polymorphic surface calls in `ReaderViewController`. (Complete, Pass 1)
+- `FlowDocumentBuilder`: one `section.hc-chapter[data-resource]` per chapter from pipeline output; ids namespaced `hc-r{N}-{id}`; internal links rewritten to namespaced hashes; resource URLs retargeted to custom scheme `honeycrisp-epub://book/...`. (Complete, Pass 2)
+- Served by `EPUBResourceSchemeHandler` (`__app/*.html` as `text/html` override), author content JavaScript off (`allowsContentJavaScript = false`), app scripts in `WKContentWorld.defaultClient`, strict CSP, link navigation restricted to in-book resources. (Complete, Pass 3)
+- R21 harvest in the pipeline (`ChapterStyles.swift`): whitelist simple `.class`, `#id`, `tag`, `tag.class` rules (display:none as `hidden`, italic, bold, underline, line-through, center/right alignment, monospace); discard geometry and colors; apply Rule N6 semantic HTML5 (`<details open>`, `<nav hidden>`); strip raw `<style>` tags from body. (Complete, Pass 4)
 - Positions: the page script walks text from the start of one section and reports `(resource, offset)`; saved whole-document offsets are mapped in M5.
 - Large books: chapters are parsed concurrently off the main thread. Chunked delivery from the scheme handler and `content-visibility: auto` are options only if a measurement shows the need (both Unverified; see the verify list).
 

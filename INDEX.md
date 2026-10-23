@@ -66,7 +66,8 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 - `ChapterText.swift` (81): text extraction matching WebKit TreeWalker, hidden ranges detection.
 - `ChapterTransforms.swift` (102): AO3 formatting, spacer paragraph marking, and preface heading hiding in the DOM.
 - `ChapterURLs.swift` (94): DOM URL rewriting (resolving against chapter directory, containment in root, scheme URLs and fragments preserved).
-- `ChapterPipeline.swift` (107): pipeline facade for decoding, parsing, transforms, URL rewriting into served body HTML and text, and concurrent batch processing (`renderAll`).
+- `ChapterStyles.swift` (290): publisher stylesheet harvesting (Rule N3) for simple selectors, inlining whitelisted typography (italic, bold, underline/line-through, center/right alignment, monospace) and display:none as `hidden`, discarding geometry/colors, applying Rule N6 HTML5 semantics (`<details open>`, `<nav hidden>`), and stripping raw `<style>` elements (Decision R21).
+- `ChapterPipeline.swift` (107): pipeline facade for decoding, parsing, transforms, style harvesting, URL rewriting into served body HTML and text, and concurrent batch processing (`renderAll`).
 
 ### Parsing (`Sources/Parsing`)
 - `EPUBParser.swift` (1338): models, unzip, OPF, DRM, search, HTML and CSS building, `readerJS`.
@@ -253,6 +254,8 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 | `ReaderBaselinePagedTests.swift` (M4 pass 7.6) | paged memory: 20 consecutive chapters of the 2,000-page fixture reached through the real edge hand-off, median of each run's maximum WebContent footprint, at most 30 MB, writes `host-paged-2000-pages.txt` |
 | `SyntheticBook.swift` | deterministic synthetic EPUB folder generator (nested `Text/` and `Styles/`, relative images, class-only italics), shared by the baseline tests |
 | `Diagnostics.swift` | `TestDiagnostics.write(_:lines:)`: writes test measurements to `<repo>/build/diagnostics/` (gitignored); a failed write fails the test |
+| `ChapterStylesTests.swift` | publisher CSS harvesting (Rule N3, Decision R21): property whitelist, discarded geometry and colors, simple selectors and combinators, cascade and source order, Rule N6 details/nav semantics, style tag stripping |
+| `ChapterStylesIntegrationTests.swift` | publisher CSS integration: linked stylesheet resolution and file read, FicLab and AO3 real sample patterns, ChapterPipeline and FlowDocumentBuilder integration |
 | `ChapterSearchTests.swift` | search and speech offsets with AO3 transforms, hidden preface and TOC heading filtering, double-encoded ampersand exactness, limit across chapters |
 | `SpacerParagraphTests.swift` | spacer paragraphs tagged only when the setting is on, real paragraphs and `<pre>` untouched, text nodes unchanged, tag case kept |
 | `SettingsManagerThemeTests.swift` | seed keys, Codable round trip, seed-key migration, reset and customized check by identity, delete protection (isolated `UserDefaults` suite) |

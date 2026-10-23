@@ -4,10 +4,16 @@ import SwiftSoup
 struct ChapterTransformOptions: Equatable {
     var formatAO3: Bool
     var markSpacers: Bool
+    var harvestStyles: Bool
 
-    init(formatAO3: Bool = false, markSpacers: Bool = false) {
+    init(
+        formatAO3: Bool = false,
+        markSpacers: Bool = false,
+        harvestStyles: Bool = true
+    ) {
         self.formatAO3 = formatAO3
         self.markSpacers = markSpacers
+        self.harvestStyles = harvestStyles
     }
 }
 

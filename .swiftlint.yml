@@ -1,6 +1,7 @@
 # SwiftLint configuration for Honeycrisp.
 excluded:
   - DerivedData
+  - build
   - .build
   - Honeycrisp.xcodeproj
 

@@ -127,11 +127,13 @@ enum FlowDocumentBuilder {
         let syntax = ChapterMarkup.syntax(mediaType: context.mediaType, pathExtension: context.pathExtension)
         let parsedDoc = try? ChapterMarkup.parse(html, syntax: syntax)
         var targetBody = parsedDoc.flatMap { try? ChapterMarkup.body(of: $0) }
+        var activeDoc = parsedDoc
         if targetBody == nil {
             let htmlDoc = try? ChapterMarkup.parse(html, syntax: .html)
             targetBody = htmlDoc.flatMap { try? ChapterMarkup.body(of: $0) }
+            activeDoc = htmlDoc
         }
-        guard let body = targetBody else {
+        guard let body = targetBody, let document = activeDoc else {
             return "<section class=\"hc-chapter\" id=\"hc-r\(context.resource)\" data-resource=\"\(context.resource)\"></section>"
         }
 
@@ -141,6 +143,14 @@ enum FlowDocumentBuilder {
             hidePrefaceHeading: context.resource == 0,
             to: body
         )
+        if options.harvestStyles {
+            try ChapterStyles.apply(
+                to: document,
+                body: body,
+                chapterURL: context.chapterURL,
+                rootFolder: context.rootFolder
+            )
+        }
         try namespaceElementIDs(in: body, resource: context.resource)
         try rewriteInternalLinks(in: body, context: context)
         try ChapterURLs.rewrite(
