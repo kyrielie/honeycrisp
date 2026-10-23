@@ -202,8 +202,8 @@ final class ReaderViewController: NSViewController {
             let flow = FlowSurface()
             flow.install(into: cfg)
             flow.onProgress = { [weak self] pct in self?.didReceiveProgress(pct) }
-            flow.onPosition = { [weak self] offset, fraction in
-                self?.didReceivePosition(offset: offset, fraction: fraction)
+            flow.onPosition = { [weak self] resource, offset, fraction in
+                self?.didReceiveFlowPosition(resource: resource, offset: offset, fraction: fraction)
             }
             flow.onPageInfo = { [weak self] page, totalPages, spineIndex, spineCount in
                 self?.didReceiveScrollPageInfo(
@@ -685,10 +685,15 @@ final class ReaderViewController: NSViewController {
             let target = HistoryManager.shared.savedLocator(for: url)?.flowRestoreTarget
         {
             switch target {
-            case .offset(_, let offset) where offset > 0:
+            case .offset(let resource, let offset) where offset > 0:
+                if surface is FlowSurface {
+                    return "window.honeycrispNavigateToSectionOffset(\(resource), \(offset));"
+                }
                 return "window.honeycrispNavigateToOffset(\(offset));"
-            case .fraction(_, let fraction):
-                return "window.honeycrispNavigateToFraction(\(fraction));"
+            case .fraction(let resource, let fraction) where fraction > 0:
+                return "window.honeycrispNavigateToChapterFraction(\(resource), \(fraction));"
+            case .offset(let resource, _) where resource > 0:
+                return "window.navigateToChapter(\(resource));"
             default:
                 break
             }
@@ -1440,16 +1445,25 @@ final class ReaderViewController: NSViewController {
             // (scrollRestoreBootstrapJS in scroll mode, pendingPaginatedRestorePosition
             // in paginated mode -- both read from HistoryEntry) lands back where the
             // reader actually was, not wherever they were the last time the book was opened.
+            let world = self.surface.pagerContentWorld ?? .page
             self.webView.evaluateJavaScript(
-                "window.honeycrispCurrentPosition ? window.honeycrispCurrentPosition() : {offset: 0, fraction: 0}"
-            ) { result, _ in
-                if let position = result as? [String: Any],
-                    let offset = position["offset"] as? Int,
-                    let fraction = position["fraction"] as? Double
+                "window.honeycrispCurrentPosition ? window.honeycrispCurrentPosition() : {resource: 0, offset: 0, fraction: 0}",
+                in: nil,
+                in: world
+            ) { [weak self] result in
+                guard let self else { return }
+                if case let .success(val) = result,
+                    let position = val as? [String: Any],
+                    let offset = (position["offset"] as? NSNumber)?.intValue ?? (position["offset"] as? Int),
+                    let fraction = (position["fraction"] as? NSNumber)?.doubleValue ?? (position["fraction"] as? Double)
                 {
-                    let spineIndex = self.currentMode == .scroll ? 0 : self.currentSpineIndex
+                    let resource = (position["resource"] as? NSNumber)?.intValue ?? (position["resource"] as? Int) ??
+                        (self.currentMode == .scroll ? 0 : self.currentSpineIndex)
+                    if self.surface is FlowSurface {
+                        self.activeScrollSpineIndex = resource
+                    }
                     HistoryManager.shared.updatePosition(
-                        url: url, spineIndex: spineIndex, characterOffset: offset, fraction: fraction
+                        url: url, spineIndex: resource, characterOffset: offset, fraction: fraction
                     )
                 }
                 self.renderCurrentContent()
@@ -1503,6 +1517,17 @@ final class ReaderViewController: NSViewController {
         )
     }
 
+    func didReceiveFlowPosition(resource: Int, offset: Int, fraction: Double) {
+        guard let url = currentEPUBURL else { return }
+        activeScrollSpineIndex = resource
+        HistoryManager.shared.updatePosition(
+            url: url,
+            spineIndex: resource,
+            characterOffset: offset,
+            fraction: fraction
+        )
+    }
+
     private func startPositionSaveTimer() {
         positionSaveTimer?.invalidate()
         positionSaveTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
@@ -1512,7 +1537,7 @@ final class ReaderViewController: NSViewController {
 
     /// Best-effort synchronous-as-possible flush: queries the current offset via JS
     /// and saves it immediately, rather than waiting for the next debounced-scroll or
-    /// periodic tick. Called when a reader closes the window or navigates away —
+    /// periodic tick. Called when a reader closes the window or navigates away -
     /// without this, quitting mid-page loses however much time elapsed since the
     /// last periodic tick. Also called after every paginated column navigation
     /// (via didReceivePositionUpdate), since PaginationJS's own scroll events don't
@@ -1520,16 +1545,24 @@ final class ReaderViewController: NSViewController {
     func flushPositionSave() {
         // Surfaces that do not persist positions (e.g. chapter host) skip saving to avoid clobbering history.
         guard surface.persistsPosition, let url = currentEPUBURL else { return }
-        let spineIndex = currentMode == .scroll ? 0 : currentSpineIndex
-        webView.evaluateJavaScript(
-            "window.honeycrispCurrentPosition ? window.honeycrispCurrentPosition() : {offset: 0, fraction: 0}"
-        ) { result, _ in
-            guard let position = result as? [String: Any],
-                let offset = position["offset"] as? Int,
-                let fraction = position["fraction"] as? Double
+        let js = "window.honeycrispCurrentPosition ? window.honeycrispCurrentPosition() : {resource: 0, offset: 0, fraction: 0}"
+        let world = surface.pagerContentWorld ?? .page
+        webView.evaluateJavaScript(js, in: nil, in: world) { [weak self] result in
+            guard let self, case let .success(val) = result,
+                let position = val as? [String: Any],
+                let offset = (position["offset"] as? NSNumber)?.intValue ?? (position["offset"] as? Int),
+                let fraction = (position["fraction"] as? NSNumber)?.doubleValue ?? (position["fraction"] as? Double)
             else { return }
+            let resource = (position["resource"] as? NSNumber)?.intValue ?? (position["resource"] as? Int) ??
+                (self.currentMode == .scroll ? 0 : self.currentSpineIndex)
+            if self.surface is FlowSurface {
+                self.activeScrollSpineIndex = resource
+            }
             HistoryManager.shared.updatePosition(
-                url: url, spineIndex: spineIndex, characterOffset: offset, fraction: fraction
+                url: url,
+                spineIndex: resource,
+                characterOffset: offset,
+                fraction: fraction
             )
         }
     }
@@ -2134,7 +2167,12 @@ extension ReaderViewController: WKNavigationDelegate {
         }
         switch currentMode {
         case .scroll:
-            break  // Restore already happened inline; see scrollRestoreBootstrapJS/buildScrollHTML.
+            if surface is FlowSurface {
+                let restoreJS = scrollRestoreBootstrapJS()
+                if !restoreJS.isEmpty {
+                    evaluateInSurfaceWorld(restoreJS)
+                }
+            }
         case .paginated:
             paginationEngine?.setColsPerScreen(SettingsManager.shared.colsPerScreen)
             paginationEngine?.applyLayout(restorePosition: pendingPaginatedRestorePosition)

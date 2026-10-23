@@ -30,7 +30,7 @@ final class FlowSurface: FlowingSurface {
     var handlesPaginatedResize: Bool { false }
 
     var onProgress: ((Int) -> Void)?
-    var onPosition: ((Int, Double) -> Void)?
+    var onPosition: ((_ resource: Int, _ offset: Int, _ fraction: Double) -> Void)?
     var onPageInfo: ((Int, Int, Int, Int) -> Void)?
     var onPageAction: ((Bool) -> Void)?
     var onPositionUpdate: ((Int?, Int?) -> Void)?
@@ -131,15 +131,14 @@ final class FlowSurface: FlowingSurface {
 
     private func handlePositionMessage(_ body: Any) {
         if let dict = body as? [String: Any] {
-            let offset = (dict["offset"] as? NSNumber)?.intValue ?? (dict["offset"] as? Int)
-            let fraction = (dict["fraction"] as? NSNumber)?.doubleValue ?? (dict["fraction"] as? Double)
-            if let offset, let fraction {
-                onPosition?(offset, fraction)
-                return
-            }
+            let resource = (dict["resource"] as? NSNumber)?.intValue ?? (dict["resource"] as? Int) ?? 0
+            let offset = (dict["offset"] as? NSNumber)?.intValue ?? (dict["offset"] as? Int) ?? 0
+            let fraction = (dict["fraction"] as? NSNumber)?.doubleValue ?? (dict["fraction"] as? Double) ?? 0.0
+            onPosition?(resource, offset, fraction)
+            return
         }
         if let offset = (body as? NSNumber)?.intValue ?? (body as? Int) {
-            onPosition?(offset, 0.0)
+            onPosition?(0, offset, 0.0)
         }
     }
 

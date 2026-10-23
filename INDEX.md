@@ -40,7 +40,7 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 ### Reader (`Sources/Reader`)
 - `FlowingSurface.swift` (142): `protocol FlowingSurface` (L3 surface seam, FRAMEWORK C5), `LegacyMergedSurface` (2.2.1 merged-document adapter), and `extension ChapterHostSurface: FlowingSurface`.
 - `FlowDocumentBuilder.swift` (246): `FlowSurfaceFlag`, `FlowDocumentBuilder` (multi-chapter flow document builder, `SectionContext`, element ID namespacing `hc-r{N}-{id}`, internal link rewriting, `wrapSections`).
-- `FlowSurface.swift` (187): `FlowSurface` (flowing reader surface served under `honeycrisp-epub://`, roadmap M4a default candidate): `allowsContentJavaScript = false`, client-world user scripts and message handlers, strict CSP headers, in-book navigation link policy.
+- `FlowSurface.swift` (187): `FlowSurface` (flowing reader surface served under `honeycrisp-epub://`, roadmap M4a default surface): `allowsContentJavaScript = false`, client-world user scripts and message handlers, strict CSP headers, in-book navigation link policy.
 - `ReaderWindowController.swift` (147): `setupWindow`, `loadEPUB(at:)`, `showOpenPanel`,
   `loadRecent`, `toggleFloat`, `windowWillClose` flushes position. Also `ReaderWindow` (key forwarding).
 - `ReaderViewController.swift` (2487): the reading surface. See section map below.
@@ -256,6 +256,8 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 | `Diagnostics.swift` | `TestDiagnostics.write(_:lines:)`: writes test measurements to `<repo>/build/diagnostics/` (gitignored); a failed write fails the test |
 | `ChapterStylesTests.swift` | publisher CSS harvesting (Rule N3, Decision R21): property whitelist, discarded geometry and colors, simple selectors and combinators, cascade and source order, Rule N6 details/nav semantics, style tag stripping |
 | `ChapterStylesIntegrationTests.swift` | publisher CSS integration: linked stylesheet resolution and file read, FicLab and AO3 real sample patterns, ChapterPipeline and FlowDocumentBuilder integration |
+| `FlowSurfaceTests.swift` | FlowSurface protocol conformance, link containment policy, CSP headers, user script injection, client-world message dispatch, environment flag controls |
+| `FlowPositionTests.swift` | section-rooted position walk in WebKit, FlowSurface resource/offset dispatch, exact section seek, and position restore |
 | `ChapterSearchTests.swift` | search and speech offsets with AO3 transforms, hidden preface and TOC heading filtering, double-encoded ampersand exactness, limit across chapters |
 | `SpacerParagraphTests.swift` | spacer paragraphs tagged only when the setting is on, real paragraphs and `<pre>` untouched, text nodes unchanged, tag case kept |
 | `SettingsManagerThemeTests.swift` | seed keys, Codable round trip, seed-key migration, reset and customized check by identity, delete protection (isolated `UserDefaults` suite) |

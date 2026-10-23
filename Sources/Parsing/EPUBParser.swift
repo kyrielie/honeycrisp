@@ -971,13 +971,62 @@ final class EPUBParser: NSObject {
     };
 
     window.honeycrispCurrentPosition = function() {
+      var sections = document.querySelectorAll('.hc-chapter, .ql-chapter');
+      var x = Math.round(window.innerWidth / 2), y = HONEYCRISP_POSITION_REFERENCE_Y;
+      var range = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+      var target = (range && range.startContainer && range.startContainer.nodeType === Node.TEXT_NODE) ? range.startContainer : null;
+      var localOffset = target ? range.startOffset : 0;
+
+      if (sections.length > 0) {
+        var activeSection = null;
+        var resource = 0;
+        if (target) {
+          for (var s = 0; s < sections.length; s++) {
+            if (sections[s].contains(target)) {
+              activeSection = sections[s];
+              resource = s;
+              break;
+            }
+          }
+        }
+        if (!activeSection) {
+          var viewTop = window.scrollY;
+          for (var i = 0; i < sections.length; i++) {
+            var rect = sections[i].getBoundingClientRect();
+            var top = rect.top + window.scrollY;
+            if (top <= viewTop + y + 1) {
+              activeSection = sections[i];
+              resource = i;
+            }
+          }
+        }
+        if (!activeSection) {
+          activeSection = sections[0];
+          resource = 0;
+        }
+        var attrRes = activeSection.getAttribute('data-resource');
+        if (attrRes !== null && attrRes !== '') {
+          resource = parseInt(attrRes, 10);
+        }
+
+        var walker = document.createTreeWalker(activeSection, NodeFilter.SHOW_TEXT, null);
+        var count = 0, node, matchedOffset = null;
+        while ((node = walker.nextNode()) !== null) {
+          if (node === target) {
+            matchedOffset = count + localOffset;
+          }
+          count += node.length;
+        }
+        var offset = matchedOffset !== null ? matchedOffset : 0;
+        var fraction = count > 0 ? Math.max(0, Math.min(1, offset / count)) : 0;
+        return { resource: resource, offset: offset, fraction: fraction };
+      }
+
       var offset = window.honeycrispCurrentCharacterOffset();
       var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
       var length = 0, node;
       while ((node = walker.nextNode()) !== null) length += node.length;
-      var x = Math.round(window.innerWidth / 2), y = HONEYCRISP_POSITION_REFERENCE_Y;
-      var range = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
-      var hasTextCaret = range && range.startContainer && range.startContainer.nodeType === Node.TEXT_NODE;
+      var hasTextCaret = target !== null;
       var fraction;
       if (hasTextCaret && length > 0) {
         fraction = offset / length;
@@ -987,7 +1036,7 @@ final class EPUBParser: NSObject {
         var maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
         fraction = maxY > 0 ? window.scrollY / maxY : 0;
       }
-      return { offset: offset, fraction: Math.max(0, Math.min(1, fraction)) };
+      return { resource: 0, offset: offset, fraction: Math.max(0, Math.min(1, fraction)) };
     };
 
     // Character range currently on screen, as [start, end] in the same offset space
@@ -1106,6 +1155,56 @@ final class EPUBParser: NSObject {
       window.scrollTo(0, Math.max(0, Math.min(1, fraction)) * maxY);
     };
 
+    window.honeycrispNavigateToSectionOffset = function(resource, targetOffset) {
+      var section = document.getElementById('hc-r' + resource) ||
+                    document.getElementById('chapter-' + resource);
+      if (!section) {
+        var sections = document.querySelectorAll('.hc-chapter, .ql-chapter');
+        if (resource >= 0 && resource < sections.length) {
+          section = sections[resource];
+        }
+      }
+      if (!section) return;
+
+      if (targetOffset <= 0) {
+        var rect = section.getBoundingClientRect();
+        window.scrollTo(0, Math.max(0, window.scrollY + rect.top - HONEYCRISP_POSITION_REFERENCE_Y));
+        return;
+      }
+
+      var walker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT, null);
+      var count = 0, node, lastNode = null;
+      while ((node = walker.nextNode()) !== null) {
+        lastNode = node;
+        var nextCount = count + node.length;
+        if (targetOffset < nextCount) {
+          scrollNodeIntoPosition(node, targetOffset - count);
+          return;
+        }
+        count = nextCount;
+      }
+      if (lastNode) {
+        scrollNodeIntoPosition(lastNode, lastNode.length);
+      } else {
+        var rect = section.getBoundingClientRect();
+        window.scrollTo(0, Math.max(0, window.scrollY + rect.top - HONEYCRISP_POSITION_REFERENCE_Y));
+      }
+
+      function scrollNodeIntoPosition(node, localOffset) {
+        localOffset = Math.max(0, Math.min(node.length, localOffset));
+        var range = document.createRange();
+        range.setStart(node, localOffset);
+        range.setEnd(node, localOffset);
+        var rect = range.getBoundingClientRect();
+        if (!rect || (rect.width === 0 && rect.height === 0 && rect.top === 0 && rect.bottom === 0)) {
+          var parent = node.parentElement;
+          if (parent) rect = parent.getBoundingClientRect();
+        }
+        var targetY = window.scrollY + rect.top - HONEYCRISP_POSITION_REFERENCE_Y;
+        window.scrollTo(0, Math.max(0, targetY));
+      }
+    };
+
     window.honeycrispNavigateToOffset = function(targetOffset) {
       var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
       var count = 0, node, lastNode = null;
@@ -1118,7 +1217,7 @@ final class EPUBParser: NSObject {
         }
         count = nextCount;
       }
-      // Offset is at or past the end of the document — land on the last text node.
+      // Offset is at or past the end of the document: land on the last text node.
       if (lastNode) scrollNodeIntoPosition(lastNode, lastNode.length);
 
       function scrollNodeIntoPosition(node, localOffset) {

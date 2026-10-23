@@ -1,15 +1,17 @@
 import Foundation
 import SwiftSoup
 
-/// Gate for the flow surface (roadmap M4a). Off by default unless the process environment has
-/// `HONEYCRISP_FLOW=1` or when invoked directly by FlowDocumentBuilder.
+/// Gate for the flow surface (roadmap M4a). Enabled by default unless explicitly disabled with
+/// `HONEYCRISP_FLOW=0` or `HONEYCRISP_LEGACY=1`.
 enum FlowSurfaceFlag {
     static let environmentKey = "HONEYCRISP_FLOW"
 
     static var isEnabled: Bool { isEnabled(environment: ProcessInfo.processInfo.environment) }
 
     static func isEnabled(environment: [String: String]) -> Bool {
-        environment[environmentKey] == "1"
+        if environment["HONEYCRISP_LEGACY"] == "1" { return false }
+        if environment[environmentKey] == "0" { return false }
+        return true
     }
 }
 

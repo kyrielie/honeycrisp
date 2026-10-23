@@ -32,6 +32,20 @@ final class FlowSurfaceTests: XCTestCase {
         XCTAssertFalse(FlowSurface.allowsNavigation(to: nil))
     }
 
+    func testFlowSurfaceFlagEnvironmentControl() {
+        XCTAssertTrue(FlowSurfaceFlag.isEnabled(environment: [:]))
+        XCTAssertTrue(FlowSurfaceFlag.isEnabled(environment: ["HONEYCRISP_FLOW": "1"]))
+        XCTAssertFalse(FlowSurfaceFlag.isEnabled(environment: ["HONEYCRISP_FLOW": "0"]))
+        XCTAssertFalse(FlowSurfaceFlag.isEnabled(environment: ["HONEYCRISP_LEGACY": "1"]))
+        XCTAssertFalse(FlowSurfaceFlag.isEnabled(environment: ["HONEYCRISP_FLOW": "1", "HONEYCRISP_LEGACY": "1"]))
+    }
+
+    func testContentSecurityPolicyBlocksRemoteImagesAndExternalScripts() {
+        let csp = FlowSurface.defaultCSP
+        XCTAssertTrue(csp.contains("img-src 'self' honeycrisp-epub: data:;"))
+        XCTAssertTrue(csp.contains("script-src 'none';"))
+    }
+
     @MainActor
     func testInstallConfiguresWebKitPreferencesAndHandlers() {
         let surface = FlowSurface()
@@ -50,6 +64,7 @@ final class FlowSurfaceTests: XCTestCase {
     func testMessageDispatchDispatchesToCallbacks() {
         let surface = FlowSurface()
         var receivedProgress: Int?
+        var receivedResource: Int?
         var receivedOffset: Int?
         var receivedFraction: Double?
         var receivedPage: Int?
@@ -57,7 +72,11 @@ final class FlowSurfaceTests: XCTestCase {
         var receivedColumn: Int?
 
         surface.onProgress = { receivedProgress = $0 }
-        surface.onPosition = { receivedOffset = $0; receivedFraction = $1 }
+        surface.onPosition = { resource, offset, fraction in
+            receivedResource = resource
+            receivedOffset = offset
+            receivedFraction = fraction
+        }
         surface.onPageInfo = { page, _, _, _ in receivedPage = page }
         surface.onPageAction = { receivedAction = $0 }
         surface.onPositionUpdate = { col, _ in receivedColumn = col }
@@ -65,7 +84,8 @@ final class FlowSurfaceTests: XCTestCase {
         surface.didReceiveMessage(name: "progressHandler", body: 42)
         XCTAssertEqual(receivedProgress, 42)
 
-        surface.didReceiveMessage(name: "positionHandler", body: ["offset": 120, "fraction": 0.35])
+        surface.didReceiveMessage(name: "positionHandler", body: ["resource": 1, "offset": 120, "fraction": 0.35])
+        XCTAssertEqual(receivedResource, 1)
         XCTAssertEqual(receivedOffset, 120)
         XCTAssertEqual(receivedFraction, 0.35)
 

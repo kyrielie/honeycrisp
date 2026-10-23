@@ -287,14 +287,15 @@ restores exact positions; memory within the M3 budget.
 
 ### M4a. Flow surface on the content pipeline (L)
 
-Status: in progress (Passes 1-4 complete: FlowingSurface protocol seam, FlowDocumentBuilder, scheme isolation with client-world scripts, and R21 publisher style harvest). Decisions R20, R21, R22. Next: section-rooted positions (Pass 5).
+Status: complete (Passes 1 to 6 complete: FlowingSurface protocol seam, FlowDocumentBuilder, scheme isolation with client-world scripts, R21 publisher style harvest, section-rooted positions, default flip). Decisions R20, R21, R22.
 
 Design:
 - A `FlowingSurface` Swift protocol. `ChapterHostSurface`, `FlowSurface`, and the legacy merged path conform; polymorphic surface calls in `ReaderViewController`. (Complete, Pass 1)
 - `FlowDocumentBuilder`: one `section.hc-chapter[data-resource]` per chapter from pipeline output; ids namespaced `hc-r{N}-{id}`; internal links rewritten to namespaced hashes; resource URLs retargeted to custom scheme `honeycrisp-epub://book/...`. (Complete, Pass 2)
 - Served by `EPUBResourceSchemeHandler` (`__app/*.html` as `text/html` override), author content JavaScript off (`allowsContentJavaScript = false`), app scripts in `WKContentWorld.defaultClient`, strict CSP, link navigation restricted to in-book resources. (Complete, Pass 3)
 - R21 harvest in the pipeline (`ChapterStyles.swift`): whitelist simple `.class`, `#id`, `tag`, `tag.class` rules (display:none as `hidden`, italic, bold, underline, line-through, center/right alignment, monospace); discard geometry and colors; apply Rule N6 semantic HTML5 (`<details open>`, `<nav hidden>`); strip raw `<style>` tags from body. (Complete, Pass 4)
-- Positions: the page script walks text from the start of one section and reports `(resource, offset)`; saved whole-document offsets are mapped in M5.
+- Positions: the page script walks text from the start of one section and reports `(resource, offset, fraction)`; section offset seek scrolls the target section offset to the reading line. (Complete, Pass 5)
+- Default flip: `FlowSurface` is the active default reading surface; `ChapterHostSurface` is reachable via `HONEYCRISP_CHAPTER_HOST=1`; legacy merged path is reachable via `HONEYCRISP_FLOW=0` or `HONEYCRISP_LEGACY=1`. (Complete, Pass 6)
 - Large books: chapters are parsed concurrently off the main thread. Chunked delivery from the scheme handler and `content-visibility: auto` are options only if a measurement shows the need (both Unverified; see the verify list).
 
 Gate, all measured: parity test (C2) per section on every fixture; hidden text counted equally with and without the harvest; open time and WebContent memory no worse than 2.2.1 on the 2,000-page fixture (about 820 ms, 124 MB) and no worse than the owner's recorded large-book numbers; author scripts do not execute; `<p/>` and `<a id="x"/>` fixtures render correctly; remote images do not load.
