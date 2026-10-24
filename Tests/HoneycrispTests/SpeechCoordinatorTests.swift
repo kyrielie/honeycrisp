@@ -35,42 +35,78 @@ private final class MockSpeechCoordinatorDelegate: SpeechCoordinatorDelegate {
 }
 
 @MainActor
+private final class MockTTSEngine: TTSEngine {
+    let identifier = "test.mock"
+    let displayName = "Mock Engine"
+    weak var delegate: TTSEngineDelegate?
+
+    var availableVoices: [TTSVoice] = [
+        TTSVoice(id: "mock.voice.1", name: "Mock Voice", language: "en-US", quality: .premium)
+    ]
+    var preferredVoiceIdentifier: String? { "mock.voice.1" }
+
+    var spokenChunks: [String] = []
+    var stopCount = 0
+    var pauseCount = 0
+
+    func speak(chunk: String, voiceIdentifier: String?, rate: Float) {
+        spokenChunks.append(chunk)
+        delegate?.ttsEngineDidStartUtterance(self)
+    }
+
+    func pause() { pauseCount += 1 }
+    func resume() {}
+    func stop() { stopCount += 1 }
+}
+
+@MainActor
 final class SpeechCoordinatorTests: XCTestCase {
     func testAvailableVoicesFilterOutLegacyAndEloquence() {
-        let voices = SpeechCoordinator.availableVoices
+        let voices = SpeechCoordinator.defaultVoices
         for voice in voices {
-            XCTAssertFalse(voice.identifier.contains(".eloquence."))
-            XCTAssertFalse(voice.identifier.starts(with: "com.apple.speech.synthesis.voice."))
+            XCTAssertFalse(voice.id.contains(".eloquence."))
+            XCTAssertFalse(voice.id.starts(with: "com.apple.speech.synthesis.voice."))
         }
     }
 
     func testVoiceQualitySortingAndDisplayName() {
-        let voices = SpeechCoordinator.availableVoices
+        let voices = SpeechCoordinator.defaultVoices
         guard !voices.isEmpty else { return }
 
-        // Verify quality sort invariant: premium (3) >= enhanced (2) >= default (1)
-        func rank(_ quality: AVSpeechSynthesisVoiceQuality) -> Int {
-            switch quality {
-            case .premium: return 3
-            case .enhanced: return 2
-            case .default: return 1
-            @unknown default: return 0
-            }
-        }
-
         for i in 0..<(voices.count - 1) {
-            let r1 = rank(voices[i].quality)
-            let r2 = rank(voices[i + 1].quality)
-            XCTAssertGreaterThanOrEqual(r1, r2, "Voices must be ordered with higher quality first")
+            XCTAssertGreaterThanOrEqual(
+                voices[i].quality,
+                voices[i + 1].quality,
+                "Voices must be ordered with higher quality first"
+            )
         }
 
         let first = voices[0]
-        let displayName = SpeechCoordinator.displayName(for: first)
+        let displayName = first.displayName
         XCTAssertTrue(displayName.contains(first.name))
         XCTAssertTrue(displayName.contains(first.language))
 
-        let preferred = SpeechCoordinator.preferredVoiceIdentifier
-        XCTAssertNotNil(preferred)
+        let engine = AVFoundationTTSEngine()
+        XCTAssertNotNil(engine.preferredVoiceIdentifier)
+    }
+
+    func testPluggableEngineHandoffAndProgression() {
+        let mock = MockTTSEngine()
+        let coordinator = SpeechCoordinator(engine: mock)
+        let text = "Sentence one. Sentence two."
+        coordinator.start(chapterIndex: 0, text: text)
+
+        XCTAssertEqual(mock.spokenChunks.count, 1)
+        XCTAssertEqual(mock.spokenChunks.first, "Sentence one.")
+
+        mock.delegate?.ttsEngineDidFinishUtterance(mock)
+        XCTAssertEqual(mock.spokenChunks.count, 2)
+        XCTAssertEqual(mock.spokenChunks[1], "Sentence two.")
+
+        let mock2 = MockTTSEngine()
+        coordinator.engine = mock2
+        XCTAssertGreaterThanOrEqual(mock.stopCount, 1)
+        XCTAssertEqual(coordinator.availableVoices.first?.id, "mock.voice.1")
     }
 
     func testInitialStateIsIdle() {

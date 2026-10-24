@@ -668,9 +668,9 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         let voicePopup = NSPopUpButton()
         voicePopup.addItem(withTitle: "System Default")
         voicePopup.lastItem?.representedObject = ""
-        for voice in SpeechCoordinator.availableVoices {
-            voicePopup.addItem(withTitle: SpeechCoordinator.displayName(for: voice))
-            voicePopup.lastItem?.representedObject = voice.identifier
+        for voice in SpeechCoordinator.defaultVoices {
+            voicePopup.addItem(withTitle: voice.displayName)
+            voicePopup.lastItem?.representedObject = voice.id
         }
         selectSpeechVoice(in: voicePopup, identifier: SettingsManager.shared.speechVoiceIdentifier)
         voicePopup.target = self

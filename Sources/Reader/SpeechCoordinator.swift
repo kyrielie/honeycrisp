@@ -40,30 +40,7 @@ extension SpeechCoordinatorDelegate {
     ) -> (chapterIndex: Int, text: String)? { nil }
 }
 
-private final class UtteranceTask: Equatable {
-    let id = UUID()
-    let chapterIndex: Int, chunkIndex: Int, totalChunks: Int, text: String
-    var isCancelled: Bool = false
-    init(chapterIndex: Int, chunkIndex: Int, totalChunks: Int, text: String) {
-        self.chapterIndex = chapterIndex
-        self.chunkIndex = chunkIndex
-        self.totalChunks = totalChunks
-        self.text = text
-    }
-    static func == (lhs: UtteranceTask, rhs: UtteranceTask) -> Bool { lhs.id == rhs.id }
-}
-
-private final class TaskUtterance: AVSpeechUtterance {
-    let task: UtteranceTask
-    init(task: UtteranceTask) {
-        self.task = task
-        super.init(string: task.text)
-    }
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-}
-
-/// Orchestrates text-to-speech reading with sentence chunking, deadlock-free AVFoundation state machine,
+/// Orchestrates text-to-speech reading with sentence chunking, pluggable TTSEngine backend,
 /// automatic spine item auto-advance, and skip navigation.
 @MainActor
 final class SpeechCoordinator: NSObject {
@@ -77,6 +54,7 @@ final class SpeechCoordinator: NSObject {
     }
 
     weak var delegate: SpeechCoordinatorDelegate?
+
     public private(set) var playbackState: PlaybackState = .idle {
         didSet {
             if oldValue != playbackState { delegate?.speechCoordinator(self, didChangeState: playbackState) }
@@ -85,71 +63,41 @@ final class SpeechCoordinator: NSObject {
 
     public var rate: Float = AVSpeechUtteranceDefaultSpeechRate
     public var voiceIdentifier: String?
-    private let synthesizer = AVSpeechSynthesizer()
-    private var currentChapterIndex: Int = 0, currentChunks: [String] = [], currentChunkIndex: Int = 0
 
-    private enum EngineState: Equatable {
-        case stopped
-        case starting(UtteranceTask)
-        case playing(UtteranceTask)
-        case stopping(UtteranceTask, queued: UtteranceTask?)
+    public var engine: TTSEngine {
+        didSet {
+            let wasPlaying = playbackState.isPlaying
+            oldValue.stop()
+            engine.delegate = self
+            if wasPlaying { playCurrentChunk() }
+        }
     }
 
-    private enum EngineEvent: Equatable {
-        case play(UtteranceTask)
-        case stop
-        case didStart(UtteranceTask)
-        case didFinish(UtteranceTask)
-    }
+    private var currentChapterIndex: Int = 0
+    private var currentChunks: [String] = []
+    private var currentChunkIndex: Int = 0
 
-    private var engineState: EngineState = .stopped
-
-    override init() {
+    init(engine: TTSEngine? = nil) {
+        let activeEngine = engine ?? AVFoundationTTSEngine()
+        self.engine = activeEngine
         super.init()
-        synthesizer.delegate = self
+        self.engine.delegate = self
     }
 
-    public static var availableVoices: [AVSpeechSynthesisVoice] {
-        AVSpeechSynthesisVoice.speechVoices()
-            .filter { voice in
-                if #available(macOS 14.0, *) {
-                    if voice.voiceTraits.contains(.isNoveltyVoice) || voice.voiceTraits.contains(.isPersonalVoice) {
-                        return false
-                    }
-                }
-                return !voice.identifier.contains(".eloquence.")
-                    && !voice.identifier.starts(with: "com.apple.speech.synthesis.voice.")
-            }
-            .sorted { v1, v2 in
-                let q1 = qualityRank(v1.quality), q2 = qualityRank(v2.quality)
-                if q1 != q2 { return q1 > q2 }
-                return v1.name.localizedCaseInsensitiveCompare(v2.name) == .orderedAscending
-            }
+    public var availableVoices: [TTSVoice] {
+        engine.availableVoices
     }
 
-    private static func qualityRank(_ quality: AVSpeechSynthesisVoiceQuality) -> Int {
-        switch quality {
-        case .premium: return 3
-        case .enhanced: return 2
-        case .default: return 1
-        @unknown default: return 0
-        }
+    public static var defaultVoices: [TTSVoice] {
+        AVFoundationTTSEngine().availableVoices
     }
 
-    public static func displayName(for voice: AVSpeechSynthesisVoice) -> String {
-        let badge: String
-        switch voice.quality {
-        case .premium: badge = " [Premium]"
-        case .enhanced: badge = " [Enhanced]"
-        default: badge = ""
-        }
-        return "\(voice.name)\(badge) (\(voice.language))"
+    public var preferredVoiceIdentifier: String? {
+        engine.preferredVoiceIdentifier
     }
 
-    public static var preferredVoiceIdentifier: String? {
-        let code = Locale.current.language.languageCode?.identifier ?? "en"
-        let matching = availableVoices.filter { $0.language.lowercased().starts(with: code.lowercased()) }
-        return matching.first?.identifier ?? availableVoices.first?.identifier
+    public static func displayName(for voice: TTSVoice) -> String {
+        voice.displayName
     }
 
     func start(chapterIndex: Int, text: String) {
@@ -164,7 +112,7 @@ final class SpeechCoordinator: NSObject {
     func pause() {
         guard case let .playing(ch, idx, total) = playbackState else { return }
         playbackState = .paused(chapterIndex: ch, chunkIndex: idx, totalChunks: total)
-        onEngineEvent(.stop)
+        engine.pause()
     }
 
     func resume() {
@@ -186,7 +134,7 @@ final class SpeechCoordinator: NSObject {
         playbackState = .idle
         currentChunks = []
         currentChunkIndex = 0
-        onEngineEvent(.stop)
+        engine.stop()
     }
 
     func skipNext() {
@@ -246,18 +194,12 @@ final class SpeechCoordinator: NSObject {
             return
         }
         let chunk = currentChunks[currentChunkIndex]
-        let task = UtteranceTask(
-            chapterIndex: currentChapterIndex,
-            chunkIndex: currentChunkIndex,
-            totalChunks: currentChunks.count,
-            text: chunk
-        )
         playbackState = .playing(
             chapterIndex: currentChapterIndex,
             chunkIndex: currentChunkIndex,
             totalChunks: currentChunks.count
         )
-        onEngineEvent(.play(task))
+        engine.speak(chunk: chunk, voiceIdentifier: voiceIdentifier, rate: rate)
     }
 
     private func advanceToNextChapter(autoPlay: Bool) {
@@ -277,8 +219,8 @@ final class SpeechCoordinator: NSObject {
         updateChunkPosition(wasPlaying: autoPlay)
     }
 
-    private func handleUtteranceFinished(_ task: UtteranceTask) {
-        guard task.chapterIndex == currentChapterIndex, task.chunkIndex == currentChunkIndex else { return }
+    fileprivate func handleUtteranceFinished() {
+        guard playbackState.isPlaying else { return }
         if currentChunkIndex + 1 < currentChunks.count {
             currentChunkIndex += 1
             playCurrentChunk()
@@ -286,112 +228,25 @@ final class SpeechCoordinator: NSObject {
             advanceToNextChapter(autoPlay: true)
         }
     }
-
-    private func onEngineEvent(_ event: EngineEvent) {
-        switch engineState {
-        case .stopped:
-            if case let .play(task) = event {
-                engineState = .starting(task)
-                startSynthesizer(with: task)
-            }
-        case let .starting(current): handleStarting(event: event, current: current)
-        case let .playing(current): handlePlaying(event: event, current: current)
-        case let .stopping(current, queued): handleStopping(event: event, current: current, queued: queued)
-        }
-    }
-
-    private func handleStarting(event: EngineEvent, current: UtteranceTask) {
-        switch event {
-        case let .didStart(task) where current == task: engineState = .playing(current)
-        case let .didFinish(task) where current == task:
-            engineState = .stopped
-            if playbackState.isPlaying { handleUtteranceFinished(current) }
-        case let .play(next):
-            engineState = .stopping(current, queued: next)
-            synthesizer.stopSpeaking(at: .immediate)
-        case .stop:
-            engineState = .stopping(current, queued: nil)
-            synthesizer.stopSpeaking(at: .immediate)
-        default: break
-        }
-    }
-
-    private func handlePlaying(event: EngineEvent, current: UtteranceTask) {
-        switch event {
-        case let .didFinish(task) where current == task:
-            engineState = .stopped
-            if playbackState.isPlaying { handleUtteranceFinished(current) }
-        case let .play(next):
-            engineState = .stopping(current, queued: next)
-            synthesizer.stopSpeaking(at: .immediate)
-        case .stop:
-            engineState = .stopping(current, queued: nil)
-            synthesizer.stopSpeaking(at: .immediate)
-        default: break
-        }
-    }
-
-    private func handleStopping(event: EngineEvent, current: UtteranceTask, queued: UtteranceTask?) {
-        switch event {
-        case let .didStart(task) where current == task: synthesizer.stopSpeaking(at: .immediate)
-        case let .didFinish(task) where current == task:
-            if let next = queued, !next.isCancelled {
-                engineState = .starting(next)
-                startSynthesizer(with: next)
-            } else { engineState = .stopped }
-        case let .play(next): engineState = .stopping(current, queued: next)
-        case .stop: engineState = .stopping(current, queued: nil)
-        default: break
-        }
-    }
-
-    private func startSynthesizer(with task: UtteranceTask) {
-        let utterance = TaskUtterance(task: task)
-        utterance.rate = rate
-        utterance.preUtteranceDelay = 0.08
-        utterance.postUtteranceDelay = 0.04
-        let chosenID = voiceIdentifier ?? Self.preferredVoiceIdentifier
-        if let chosenID, !chosenID.isEmpty {
-            utterance.voice = AVSpeechSynthesisVoice(identifier: chosenID)
-        }
-        synthesizer.speak(utterance)
-    }
 }
 
-// MARK: - AVSpeechSynthesizerDelegate
+// MARK: - TTSEngineDelegate
 
-extension SpeechCoordinator: @preconcurrency AVSpeechSynthesizerDelegate {
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
-        guard let task = (utterance as? TaskUtterance)?.task else { return }
-        onEngineEvent(.didStart(task))
+extension SpeechCoordinator: TTSEngineDelegate {
+    func ttsEngineDidStartUtterance(_ engine: TTSEngine) {
+        // Maintained by playCurrentChunk
     }
 
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        guard let task = (utterance as? TaskUtterance)?.task else { return }
-        onEngineEvent(.didFinish(task))
+    func ttsEngineDidFinishUtterance(_ engine: TTSEngine) {
+        handleUtteranceFinished()
     }
 
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        guard let task = (utterance as? TaskUtterance)?.task else { return }
-        onEngineEvent(.didFinish(task))
-    }
-
-    func speechSynthesizer(
-        _ synthesizer: AVSpeechSynthesizer,
-        willSpeakRangeOfSpeechString characterRange: NSRange,
-        utterance: AVSpeechUtterance
-    ) {
-        guard
-            let task = (utterance as? TaskUtterance)?.task,
-            characterRange.upperBound <= task.text.count,
-            let range = Range(characterRange, in: task.text)
-        else { return }
-
+    func ttsEngine(_ engine: TTSEngine, willSpeakWordRange range: Range<String.Index>, in text: String) {
         delegate?.speechCoordinator(
             self,
             willSpeakWordRange: range,
-            inChunk: task.text,
-            chapterIndex: task.chapterIndex
+            inChunk: text,
+            chapterIndex: currentChapterIndex
         )
     }
 }
