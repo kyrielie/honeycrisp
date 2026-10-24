@@ -11,8 +11,8 @@ other. This document makes the structure explicit so each change has a home, a c
 
 ## 1. Product
 
-Honeycrisp is a native macOS reader for local files, built with AppKit and WebKit. SwiftUI is used
-only for the `@main` shim. It reads flowing text formats (EPUB, Markdown, plain text, and MOBI/AZW3
+Honeycrisp is a native macOS reader for local files, built with AppKit and WebKit (pure AppKit `@main` on
+`AppDelegate`, no SwiftUI). It reads flowing text formats (EPUB, Markdown, plain text, and MOBI/AZW3
 through conversion) and fixed-page formats (PDF, CBZ). One window per open book. No library view.
 
 Principles, in priority order. When two conflict, the earlier one wins.

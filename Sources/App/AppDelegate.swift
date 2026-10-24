@@ -32,6 +32,7 @@ private final class BookmarkMenuContext {
     }
 }
 
+@main
 // swiftlint:disable:next type_body_length
 class AppDelegate: NSObject, NSApplicationDelegate {
 

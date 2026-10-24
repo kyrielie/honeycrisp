@@ -1,7 +1,7 @@
 # Honeycrisp — Architecture
 
-Native macOS EPUB reader. AppKit + WebKit, no SwiftUI beyond the `@main` boot
-shim. XcodeGen `project.yml` is the source of truth for the generated Xcode
+Native macOS EPUB reader. Pure AppKit + WebKit (`@main` on `AppDelegate`),
+no SwiftUI. XcodeGen `project.yml` is the source of truth for the generated Xcode
 project. The root Swift package is a secondary build entry point. macOS 13+.
 
 This file describes what the code does today. The target design and its contracts are in
@@ -27,9 +27,8 @@ deliberate scope boundary: Honeycrisp is a reader, not a library manager
 (see `ambrosia` for that role).
 
 ```
-EPUBReaderApp (SwiftUI @main, boots AppDelegate)
-└── AppDelegate                          — app lifecycle, NSMenu, file-open routing
-    └── ReaderWindowController (N instances, one per open book)
+AppDelegate (AppKit @main)               — app lifecycle, NSMenu, file-open routing
+└── ReaderWindowController (N instances, one per open book)
         └── ReaderViewController          — WKWebView host, toolbar, keyboard/trackpad nav
             ├── EPUBParser                 — unzip, OPF/spine parse, HTML+CSS build
             ├── TOCParser                  — NCX / nav.xhtml / spine-synthesis
@@ -46,8 +45,7 @@ EPUBReaderApp (SwiftUI @main, boots AppDelegate)
 
 | File | Responsibility |
 |---|---|
-| `App/EPUBReaderApp.swift` | SwiftUI `@main` entry point; immediately hands off to `AppDelegate`. |
-| `App/AppDelegate.swift` | App lifecycle, all `NSMenu` construction, Apple-Event file-open handling, per-window vs per-tab open routing, live keybinding sync (`syncMenuShortcuts`), menu validation. |
+| `App/AppDelegate.swift` | Pure AppKit `@main` entry point; app lifecycle, all `NSMenu` construction, Apple-Event file-open handling, per-window vs per-tab open routing, live keybinding sync (`syncMenuShortcuts`), menu validation. |
 | `Reader/ReaderWindowController.swift` | Per-window chrome: `NSWindow` creation, toolbar attach, float-on-top level/collectionBehavior, cascading placement, window-close → flush position save. |
 | `Reader/ReaderViewController.swift` | The core reading surface: `WKWebView` configuration and message handlers, toolbar (`NSToolbarDelegate`), keyboard/scroll-wheel monitors for paginated mode, TOC popup host, search overlay host, cosmetic-vs-structural settings application, position save/restore, title display. |
 | `Reader/FlowingSurface.swift` | L3 surface protocol (`FlowingSurface`, FRAMEWORK C5) isolating reading surfaces from shell logic; `ChapterHostSurface` and `FlowSurface` conformance. (Legacy merged document path deleted in M5). |
@@ -192,25 +190,8 @@ behavior. Treat that plan as superseded by this section, not as current behavior
 this is a deliberate product decision, not a bug, so it's left as-is with
 the documentation now caught up to it.
 
-## 10. Settings has exactly one entry point (fixed)
+## 10. Settings and AppKit entry point
 
-`Sources/App/EPUBReaderApp.swift` used to declare a SwiftUI `Settings` scene
-(`SettingsView`, an `NSViewControllerRepresentable` around a *second,
-independently-constructed* `SettingsTabViewController`, framed 480×400) in
-addition to `AppDelegate`'s manually-built "Settings…" menu item
-(`openSettingsAction`, → `SettingsWindowController.shared`). Only the
-`SettingsWindowController.shared` path carried the pre-Ventura polish
-(`.toolbar` tab style, window-title sync, frame autosave, animated resize
-machinery) — the SwiftUI scene was a second, different, unpolished
-implementation of the same screen, reachable only if SwiftUI's own
-Settings-scene command (normally ⌘, via the App menu) survived
-`AppDelegate.setupMenus()` replacing `NSApp.mainMenu` wholesale, which was
-never verified either way.
+Historically, `Sources/App/EPUBReaderApp.swift` declared a SwiftUI `Settings` scene alongside `AppDelegate.setupMenus()`. In release builds, the SwiftUI `@main` lifecycle interfered with menu management by overwriting `NSApp.mainMenu` and intercepting ⌘, with its `Settings` scene (displaying a blank window).
 
-Fixed: `EPUBReaderApp`'s `Settings` scene is now an empty placeholder (kept
-only because `Settings` is the one `Scene` kind that doesn't auto-open a
-window at launch, so it's the cheapest way to satisfy `some Scene` for an
-otherwise 100%-AppDelegate-driven app). `SettingsView`/the duplicate
-`SettingsTabViewController` construction is gone. `SettingsWindowController.
-shared` via `AppDelegate.openSettingsAction` is now the only Settings
-implementation in the app.
+Fixed: The SwiftUI `@main` shim (`EPUBReaderApp.swift`) is removed. `AppDelegate` is the direct `@main` entry point (`NSApplicationMain`), leaving `AppDelegate.setupMenus()` and `SettingsWindowController.shared` in full control of macOS menu bar population and settings window presentation.

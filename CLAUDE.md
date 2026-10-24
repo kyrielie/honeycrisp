@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Honeycrisp: native macOS EPUB reader. AppKit + WebKit, SwiftUI only for the `@main` shim.
+Honeycrisp: native macOS EPUB reader. Pure AppKit + WebKit (`@main` on `AppDelegate`), no SwiftUI.
 Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
 
 ## Documents (one of each)
@@ -73,7 +73,7 @@ Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
   body scripts survive, URLs are rewritten by regex). Do not assume they exist in the default path. Flag mode (`HONEYCRISP_CHAPTER_HOST=1`, `ChapterHostSurface`) enforces them; roadmap M4a brings them to the default path.
 - `HistoryManager.record` must carry saved position and progress forward (regression-tested).
 - Settings has one implementation: `SettingsWindowController.shared`, opened from
-  `AppDelegate.openSettingsAction`. The SwiftUI `Settings` scene is intentionally empty.
+  `AppDelegate.openSettingsAction`.
 - The Settings per-tab resize machinery is wired but inert by design (all panes are one fixed size).
 - Introduce the abstractions in `docs/FRAMEWORK.md` (`Locator`, `Publication`, chapter host,
   capabilities) only at the milestone that needs them, one layer boundary per PR, behavior-neutral.

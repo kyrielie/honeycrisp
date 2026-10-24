@@ -30,12 +30,11 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 ## Source map
 
 ### App (`Sources/App`)
-- `EPUBReaderApp.swift` (33): `@main`; adapts `AppDelegate`; empty `Settings` scene by design.
-- `AppDelegate.swift` (633): launch, Apple-Event and `open urls` routing (top of file to l.132);
-  `// MARK: Menu Setup` (`setupMenus`, l.133-355); live shortcut sync (`syncMenuShortcuts`,
-  l.356-395); menu actions (l.396-511, each forwards to `readerVC()?`); helpers incl. `readerVC()`
-  (l.512-518); `NSMenuDelegate` dynamic menus (`menuNeedsUpdate`: Open Recent, bookmarks) and
-  `validateMenuItem` (l.519-633).
+- `AppDelegate.swift` (690): `@main`; launch, Apple-Event and `open urls` routing (top of file to l.133);
+  `// MARK: Menu Setup` (`setupMenus`, l.134-382); live shortcut sync (`syncMenuShortcuts`,
+  l.383-432); menu actions (l.433-552, each forwards to `readerVC()?`); helpers incl. `readerVC()`
+  (l.553-559); `NSMenuDelegate` dynamic menus (`menuNeedsUpdate`: Open Recent, bookmarks) and
+  `validateMenuItem` (l.560-690).
 
 ### Reader (`Sources/Reader`)
 - `FlowingSurface.swift`: `protocol FlowingSurface` (L3 surface seam, FRAMEWORK C5) and `extension ChapterHostSurface: FlowingSurface`.
