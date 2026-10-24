@@ -668,10 +668,8 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         let voicePopup = NSPopUpButton()
         voicePopup.addItem(withTitle: "System Default")
         voicePopup.lastItem?.representedObject = ""
-        for voice in AVSpeechSynthesisVoice.speechVoices().sorted(by: {
-            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-        }) {
-            voicePopup.addItem(withTitle: "\(voice.name) (\(voice.language))")
+        for voice in SpeechCoordinator.availableVoices {
+            voicePopup.addItem(withTitle: SpeechCoordinator.displayName(for: voice))
             voicePopup.lastItem?.representedObject = voice.identifier
         }
         selectSpeechVoice(in: voicePopup, identifier: SettingsManager.shared.speechVoiceIdentifier)
@@ -685,6 +683,15 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         speechHint.font = NSFont.systemFont(ofSize: 11)
         speechHint.textColor = .secondaryLabelColor
         stack.addArrangedSubview(speechHint)
+
+        let openSpeechPrefsButton = NSButton(
+            title: "Download Premium Voices in System Settings…",
+            target: self,
+            action: #selector(openSpeechPreferences(_:))
+        )
+        openSpeechPrefsButton.bezelStyle = .inline
+        openSpeechPrefsButton.font = NSFont.systemFont(ofSize: 11)
+        stack.addArrangedSubview(openSpeechPrefsButton)
 
         root.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -741,6 +748,12 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
             SettingsManager.shared.speechVoiceIdentifier = voiceIdentifier
         } else {
             readers.forEach { $0.setSpeechVoice(identifier: voiceIdentifier) }
+        }
+    }
+
+    @objc private func openSpeechPreferences(_ sender: Any?) {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.speech") {
+            NSWorkspace.shared.open(url)
         }
     }
 }

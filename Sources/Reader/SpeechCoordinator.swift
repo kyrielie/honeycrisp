@@ -34,40 +34,31 @@ extension SpeechCoordinatorDelegate {
         inChunk chunk: String,
         chapterIndex: Int
     ) {}
-
     func speechCoordinatorRequestsPreviousChapter(
         _ coordinator: SpeechCoordinator,
         beforeChapter chapterIndex: Int
     ) -> (chapterIndex: Int, text: String)? { nil }
 }
 
-/// Utterance task wrapper tracking sentence chunks and position.
 private final class UtteranceTask: Equatable {
     let id = UUID()
-    let chapterIndex: Int
-    let chunkIndex: Int
-    let totalChunks: Int
-    let text: String
+    let chapterIndex: Int, chunkIndex: Int, totalChunks: Int, text: String
     var isCancelled: Bool = false
-
     init(chapterIndex: Int, chunkIndex: Int, totalChunks: Int, text: String) {
         self.chapterIndex = chapterIndex
         self.chunkIndex = chunkIndex
         self.totalChunks = totalChunks
         self.text = text
     }
-
     static func == (lhs: UtteranceTask, rhs: UtteranceTask) -> Bool { lhs.id == rhs.id }
 }
 
 private final class TaskUtterance: AVSpeechUtterance {
     let task: UtteranceTask
-
     init(task: UtteranceTask) {
         self.task = task
         super.init(string: task.text)
     }
-
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
@@ -81,14 +72,8 @@ final class SpeechCoordinator: NSObject {
         case playing(chapterIndex: Int, chunkIndex: Int, totalChunks: Int)
         case paused(chapterIndex: Int, chunkIndex: Int, totalChunks: Int)
 
-        public var isPlaying: Bool {
-            if case .playing = self { return true }
-            return false
-        }
-        public var isPaused: Bool {
-            if case .paused = self { return true }
-            return false
-        }
+        public var isPlaying: Bool { if case .playing = self { return true } else { return false } }
+        public var isPaused: Bool { if case .paused = self { return true } else { return false } }
     }
 
     weak var delegate: SpeechCoordinatorDelegate?
@@ -100,11 +85,8 @@ final class SpeechCoordinator: NSObject {
 
     public var rate: Float = AVSpeechUtteranceDefaultSpeechRate
     public var voiceIdentifier: String?
-
     private let synthesizer = AVSpeechSynthesizer()
-    private var currentChapterIndex: Int = 0
-    private var currentChunks: [String] = []
-    private var currentChunkIndex: Int = 0
+    private var currentChapterIndex: Int = 0, currentChunks: [String] = [], currentChunkIndex: Int = 0
 
     private enum EngineState: Equatable {
         case stopped
@@ -138,15 +120,41 @@ final class SpeechCoordinator: NSObject {
                 return !voice.identifier.contains(".eloquence.")
                     && !voice.identifier.starts(with: "com.apple.speech.synthesis.voice.")
             }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            .sorted { v1, v2 in
+                let q1 = qualityRank(v1.quality), q2 = qualityRank(v2.quality)
+                if q1 != q2 { return q1 > q2 }
+                return v1.name.localizedCaseInsensitiveCompare(v2.name) == .orderedAscending
+            }
+    }
+
+    private static func qualityRank(_ quality: AVSpeechSynthesisVoiceQuality) -> Int {
+        switch quality {
+        case .premium: return 3
+        case .enhanced: return 2
+        case .default: return 1
+        @unknown default: return 0
+        }
+    }
+
+    public static func displayName(for voice: AVSpeechSynthesisVoice) -> String {
+        let badge: String
+        switch voice.quality {
+        case .premium: badge = " [Premium]"
+        case .enhanced: badge = " [Enhanced]"
+        default: badge = ""
+        }
+        return "\(voice.name)\(badge) (\(voice.language))"
+    }
+
+    public static var preferredVoiceIdentifier: String? {
+        let code = Locale.current.language.languageCode?.identifier ?? "en"
+        let matching = availableVoices.filter { $0.language.lowercased().starts(with: code.lowercased()) }
+        return matching.first?.identifier ?? availableVoices.first?.identifier
     }
 
     func start(chapterIndex: Int, text: String) {
         let chunks = ChapterSearch.speechChunks(from: text)
-        guard !chunks.isEmpty else {
-            stop()
-            return
-        }
+        guard !chunks.isEmpty else { stop(); return }
         currentChapterIndex = chapterIndex
         currentChunks = chunks
         currentChunkIndex = 0
@@ -286,19 +294,15 @@ final class SpeechCoordinator: NSObject {
                 engineState = .starting(task)
                 startSynthesizer(with: task)
             }
-        case let .starting(current):
-            handleStarting(event: event, current: current)
-        case let .playing(current):
-            handlePlaying(event: event, current: current)
-        case let .stopping(current, queued):
-            handleStopping(event: event, current: current, queued: queued)
+        case let .starting(current): handleStarting(event: event, current: current)
+        case let .playing(current): handlePlaying(event: event, current: current)
+        case let .stopping(current, queued): handleStopping(event: event, current: current, queued: queued)
         }
     }
 
     private func handleStarting(event: EngineEvent, current: UtteranceTask) {
         switch event {
-        case let .didStart(task) where current == task:
-            engineState = .playing(current)
+        case let .didStart(task) where current == task: engineState = .playing(current)
         case let .didFinish(task) where current == task:
             engineState = .stopped
             if playbackState.isPlaying { handleUtteranceFinished(current) }
@@ -308,8 +312,7 @@ final class SpeechCoordinator: NSObject {
         case .stop:
             engineState = .stopping(current, queued: nil)
             synthesizer.stopSpeaking(at: .immediate)
-        default:
-            break
+        default: break
         }
     }
 
@@ -324,36 +327,32 @@ final class SpeechCoordinator: NSObject {
         case .stop:
             engineState = .stopping(current, queued: nil)
             synthesizer.stopSpeaking(at: .immediate)
-        default:
-            break
+        default: break
         }
     }
 
     private func handleStopping(event: EngineEvent, current: UtteranceTask, queued: UtteranceTask?) {
         switch event {
-        case let .didStart(task) where current == task:
-            synthesizer.stopSpeaking(at: .immediate)
+        case let .didStart(task) where current == task: synthesizer.stopSpeaking(at: .immediate)
         case let .didFinish(task) where current == task:
             if let next = queued, !next.isCancelled {
                 engineState = .starting(next)
                 startSynthesizer(with: next)
-            } else {
-                engineState = .stopped
-            }
-        case let .play(next):
-            engineState = .stopping(current, queued: next)
-        case .stop:
-            engineState = .stopping(current, queued: nil)
-        default:
-            break
+            } else { engineState = .stopped }
+        case let .play(next): engineState = .stopping(current, queued: next)
+        case .stop: engineState = .stopping(current, queued: nil)
+        default: break
         }
     }
 
     private func startSynthesizer(with task: UtteranceTask) {
         let utterance = TaskUtterance(task: task)
         utterance.rate = rate
-        if let id = voiceIdentifier, !id.isEmpty {
-            utterance.voice = AVSpeechSynthesisVoice(identifier: id)
+        utterance.preUtteranceDelay = 0.08
+        utterance.postUtteranceDelay = 0.04
+        let chosenID = voiceIdentifier ?? Self.preferredVoiceIdentifier
+        if let chosenID, !chosenID.isEmpty {
+            utterance.voice = AVSpeechSynthesisVoice(identifier: chosenID)
         }
         synthesizer.speak(utterance)
     }
