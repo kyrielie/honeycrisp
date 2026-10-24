@@ -108,6 +108,11 @@ final class SettingsWindowController: NSWindowController {
 /// resize between panes with duration scaled to the size delta.
 final class SettingsPanelWindow: NSWindow {
 
+    override func makeKeyAndOrderFront(_ sender: Any?) {
+        super.makeKeyAndOrderFront(sender)
+        makeFirstResponder(nil)
+    }
+
     func resetWindowBehavior() {
         styleMask.insert([.titled, .closable])
         styleMask.remove(.resizable)
@@ -194,6 +199,11 @@ final class SettingsTabViewController: NSTabViewController {
             TabSpec(
                 makeViewController: { ReaderSettingsViewController() }, label: "Reading", symbol: "text.book.closed"),
             TabSpec(
+                makeViewController: { FanfictionSettingsViewController() },
+                label: "Fanfiction",
+                symbol: "sparkles.rectangle.stack"
+            ),
+            TabSpec(
                 makeViewController: { AppearanceSettingsViewController() }, label: "Appearance", symbol: "paintbrush"),
             TabSpec(makeViewController: { HistorySettingsViewController() }, label: "History", symbol: "clock"),
             TabSpec(makeViewController: { ShortcutsSettingsViewController() }, label: "Shortcuts", symbol: "keyboard"),
@@ -239,6 +249,14 @@ final class SettingsTabViewController: NSTabViewController {
         let identifier = (tabViewItem.identifier as? String) ?? tabViewItem.label
         let size = resolvedSize(for: pane, identifier: identifier)
         window.setWindowSize(size, animateIfPossible: animate)
+        DispatchQueue.main.async { [weak window] in
+            window?.makeFirstResponder(nil)
+        }
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        view.window?.makeFirstResponder(nil)
     }
 
     private func resolvedSize(for pane: NSViewController & SettingsPaneSizing, identifier: String) -> NSSize {
@@ -312,59 +330,6 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         // No explicit spacing override: NSStackView's own default (8pt) is
         // already AppKit's standard control spacing.
         stack.translatesAutoresizingMaskIntoConstraints = false
-
-        // "Format for AO3" (renamed from "Format first chapter")
-        let formatCheckbox = NSButton(
-            checkboxWithTitle: "Format for AO3",
-            target: self,
-            action: #selector(toggleFormatForAO3(_:))
-        )
-        formatCheckbox.state = SettingsManager.shared.formatFirstChapter ? .on : .off
-        stack.addArrangedSubview(formatCheckbox)
-        self.formatCheckbox = formatCheckbox
-
-        // Descriptive hint
-        let hint = NSTextField(
-            wrappingLabelWithString:
-                "Removes all toc-heading elements and enlarges calibre2 elements globally across the book."
-        )
-        hint.font = NSFont.systemFont(ofSize: 11)
-        hint.textColor = .secondaryLabelColor
-        stack.addArrangedSubview(hint)
-
-        let indentCheckbox = NSButton(
-            checkboxWithTitle: "Strip leading whitespace used as indents",
-            target: self,
-            action: #selector(toggleRemoveParagraphIndents(_:))
-        )
-        indentCheckbox.state = SettingsManager.shared.removeParagraphIndents ? .on : .off
-        stack.addArrangedSubview(indentCheckbox)
-        self.indentCheckbox = indentCheckbox
-
-        let indentHint = NSTextField(
-            wrappingLabelWithString:
-                "Removes literal spaces some books use for indentation. Set a reader first-line indent in Appearance; that setting is independent."
-        )
-        indentHint.font = NSFont.systemFont(ofSize: 11)
-        indentHint.textColor = .secondaryLabelColor
-        stack.addArrangedSubview(indentHint)
-
-        let spacerCheckbox = NSButton(
-            checkboxWithTitle: "Collapse empty spacer paragraphs",
-            target: self,
-            action: #selector(toggleCollapseSpacerParagraphs(_:))
-        )
-        spacerCheckbox.state = SettingsManager.shared.collapseSpacerParagraphs ? .on : .off
-        stack.addArrangedSubview(spacerCheckbox)
-        self.spacerCheckbox = spacerCheckbox
-
-        let spacerHint = NSTextField(
-            wrappingLabelWithString:
-                "Hides the blank paragraphs some converted books put between every paragraph, so Paragraph Spacing in Appearance controls the gap."
-        )
-        spacerHint.font = NSFont.systemFont(ofSize: 11)
-        spacerHint.textColor = .secondaryLabelColor
-        stack.addArrangedSubview(spacerHint)
 
         let hideImagesCheckbox = NSButton(
             checkboxWithTitle: "Hide images while reading",
@@ -494,9 +459,6 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
 
     private weak var readingModeCheckbox: NSButton?
     private weak var linkClicksCheckbox: NSButton?
-    private weak var formatCheckbox: NSButton?
-    private weak var indentCheckbox: NSButton?
-    private weak var spacerCheckbox: NSButton?
     private weak var hideImagesCheckbox: NSButton?
     private weak var skipCoverCheckbox: NSButton?
     private weak var newBookControl: NSSegmentedControl?
@@ -544,20 +506,6 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         vc.toggleReadingMode(nil)
     }
 
-    @objc private func toggleFormatForAO3(_ sender: NSButton) {
-        // SettingsManager still stores this as "formatFirstChapter" internally;
-        // EPUBParser's behaviour is now global (not first-chapter-only) — see EPUBParser.
-        SettingsManager.shared.formatFirstChapter = sender.state == .on
-    }
-
-    @objc private func toggleRemoveParagraphIndents(_ sender: NSButton) {
-        SettingsManager.shared.removeParagraphIndents = sender.state == .on
-    }
-
-    @objc private func toggleCollapseSpacerParagraphs(_ sender: NSButton) {
-        SettingsManager.shared.collapseSpacerParagraphs = sender.state == .on
-    }
-
     @objc private func toggleHideImages(_ sender: NSButton) {
         SettingsManager.shared.hideImages = sender.state == .on
     }
@@ -598,9 +546,6 @@ final class GeneralSettingsViewController: NSViewController, SettingsPaneSizing 
         // keep showing stale values until the user picks a different theme and
         // back; a real fix belongs in AppearanceSettingsViewController's own
         // refresh gating, not here.
-        formatCheckbox?.state = SettingsManager.shared.formatFirstChapter ? .on : .off
-        indentCheckbox?.state = SettingsManager.shared.removeParagraphIndents ? .on : .off
-        spacerCheckbox?.state = SettingsManager.shared.collapseSpacerParagraphs ? .on : .off
         hideImagesCheckbox?.state = SettingsManager.shared.hideImages ? .on : .off
         skipCoverCheckbox?.state = SettingsManager.shared.skipCoverWhenOpening ? .on : .off
         linkClicksCheckbox?.state = SettingsManager.shared.allowReaderLinkClicks ? .on : .off
@@ -613,8 +558,10 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
     var preferredPaneSize: NSSize?
     let isResizableView = false
     private weak var speedValue: NSTextField?
-    private weak var speedStepper: NSStepper?
+    private weak var autoScrollSlider: NSSlider?
     private weak var voicePopup: NSPopUpButton?
+    private weak var speechRateSlider: NSSlider?
+    private weak var speechRateValue: NSTextField?
     private weak var adjustScrollSpeedCheckbox: NSButton?
 
     // swiftlint:disable:next function_body_length
@@ -632,25 +579,25 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         speedRow.orientation = .horizontal
         speedRow.alignment = .centerY
         speedRow.spacing = 8
+        let speedSlider = NSSlider(
+            value: SettingsManager.shared.autoScrollSpeed,
+            minValue: 10,
+            maxValue: 600,
+            target: self,
+            action: #selector(autoScrollSpeedChanged(_:))
+        )
+        speedSlider.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        speedSlider.setAccessibilityLabel("Auto-scroll speed")
         let speedValue = NSTextField(labelWithString: "\(Int(SettingsManager.shared.autoScrollSpeed)) px/s")
-        speedValue.widthAnchor.constraint(equalToConstant: 100).isActive = true
+        speedValue.widthAnchor.constraint(equalToConstant: 70).isActive = true
         speedValue.alignment = .right
-        let speedStepper = NSStepper()
-        speedStepper.minValue = 10
-        speedStepper.maxValue = 1200
-        speedStepper.increment = 25
-        speedStepper.valueWraps = false
-        speedStepper.setAccessibilityLabel("Auto-scroll speed")
-        speedStepper.integerValue = Int(SettingsManager.shared.autoScrollSpeed)
-        speedStepper.target = self
-        speedStepper.action = #selector(autoScrollSpeedChanged(_:))
+        speedRow.addArrangedSubview(speedSlider)
         speedRow.addArrangedSubview(speedValue)
-        speedRow.addArrangedSubview(speedStepper)
         stack.addArrangedSubview(speedRow)
 
         let speedHint = NSTextField(
             wrappingLabelWithString:
-                "Use the plus and minus controls to set a speed from 10 to 1,200 pixels per second. "
+                "Drag the slider to set a speed from 10 to 600 pixels per second. "
                 + "Auto-scroll is available in continuous scroll mode.")
         speedHint.font = NSFont.systemFont(ofSize: 11)
         speedHint.textColor = .secondaryLabelColor
@@ -677,6 +624,29 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         voicePopup.action = #selector(speechVoiceChanged(_:))
         stack.addArrangedSubview(voicePopup)
 
+        stack.addArrangedSubview(NSTextField(labelWithString: "Reading speed"))
+        let speechRateRow = NSStackView()
+        speechRateRow.orientation = .horizontal
+        speechRateRow.alignment = .centerY
+        speechRateRow.spacing = 8
+        let rateMult = SettingsManager.shared.speechRate / AVSpeechUtteranceDefaultSpeechRate
+        let speechRateValue = NSTextField(labelWithString: String(format: "%.2fx", rateMult))
+        speechRateValue.widthAnchor.constraint(equalToConstant: 50).isActive = true
+        speechRateValue.alignment = .right
+        let speechRateSlider = NSSlider(
+            value: Double(rateMult),
+            minValue: 0.5,
+            maxValue: 2.0,
+            target: self,
+            action: #selector(speechRateChanged(_:))
+        )
+        speechRateSlider.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        speechRateRow.addArrangedSubview(speechRateSlider)
+        speechRateRow.addArrangedSubview(speechRateValue)
+        stack.addArrangedSubview(speechRateRow)
+        self.speechRateSlider = speechRateSlider
+        self.speechRateValue = speechRateValue
+
         let speechHint = NSTextField(
             wrappingLabelWithString:
                 "Speech starts at the current reading position, then continues through the remaining chapters.")
@@ -700,7 +670,7 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
             stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 24),
         ])
         self.speedValue = speedValue
-        self.speedStepper = speedStepper
+        self.autoScrollSlider = speedSlider
         self.voicePopup = voicePopup
         self.adjustScrollSpeedCheckbox = adjustScrollSpeedCheckbox
         self.view = root
@@ -709,8 +679,11 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        speedStepper?.integerValue = Int(SettingsManager.shared.autoScrollSpeed)
+        autoScrollSlider?.doubleValue = SettingsManager.shared.autoScrollSpeed
         speedValue?.stringValue = "\(Int(SettingsManager.shared.autoScrollSpeed)) px/s"
+        let rateMult = SettingsManager.shared.speechRate / AVSpeechUtteranceDefaultSpeechRate
+        speechRateSlider?.doubleValue = Double(rateMult)
+        speechRateValue?.stringValue = String(format: "%.2fx", rateMult)
         if let voicePopup {
             selectSpeechVoice(in: voicePopup, identifier: SettingsManager.shared.speechVoiceIdentifier)
         }
@@ -726,13 +699,14 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         popup.select(item)
     }
 
-    @objc private func autoScrollSpeedChanged(_ sender: NSStepper) {
-        SettingsManager.shared.autoScrollSpeed = Double(sender.integerValue)
-        speedValue?.stringValue = "\(sender.integerValue) px/s"
+    @objc private func autoScrollSpeedChanged(_ sender: NSSlider) {
+        let speed = round(sender.doubleValue)
+        SettingsManager.shared.autoScrollSpeed = speed
+        speedValue?.stringValue = "\(Int(speed)) px/s"
         if let reader = NSApp.orderedWindows.lazy.compactMap({ $0.contentViewController as? ReaderViewController })
             .first
         {
-            reader.setAutoScrollSpeed(Double(sender.integerValue))
+            reader.setAutoScrollSpeed(speed)
         }
     }
 
@@ -751,9 +725,23 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         }
     }
 
+    @objc private func speechRateChanged(_ sender: NSSlider) {
+        let multiplier = Float(sender.doubleValue)
+        let rate = multiplier * AVSpeechUtteranceDefaultSpeechRate
+        SettingsManager.shared.speechRate = rate
+        speechRateValue?.stringValue = String(format: "%.2fx", multiplier)
+        let readers = NSApp.orderedWindows.compactMap { $0.contentViewController as? ReaderViewController }
+        readers.forEach { $0.setSpeechRate(rate) }
+    }
+
     @objc private func openSpeechPreferences(_ sender: Any?) {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.speech") {
-            NSWorkspace.shared.open(url)
+        let modernURL = URL(string: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?SpokenContent")
+        let legacyURL = URL(string: "x-apple.systempreferences:com.apple.preference.speech")
+        if let modernURL, NSWorkspace.shared.open(modernURL) {
+            return
+        }
+        if let legacyURL {
+            NSWorkspace.shared.open(legacyURL)
         }
     }
 }
@@ -2170,7 +2158,12 @@ final class HistorySettingsViewController: NSViewController, SettingsPaneSizing 
             self, selector: #selector(reload),
             name: HistoryManager.entriesDidChangeNotification, object: nil
         )
-        historyEntries = HistoryManager.shared.entries
+        reload()
+    }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        reload()
     }
 
     @objc private func reload() {

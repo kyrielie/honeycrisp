@@ -7,6 +7,7 @@
 
 // swiftlint:disable file_length
 import AppKit
+import AVFoundation
 
 /// Overrides the window chrome / system-level light-or-dark appearance,
 /// independent of each theme's own light/dark ThemeColorSet (which still
@@ -692,6 +693,17 @@ final class SettingsManager {
         }
     }
 
+    var speechRate: Float {
+        get {
+            let val = defaults.float(forKey: "readerSpeechRate")
+            return val > 0 ? val : AVSpeechUtteranceDefaultSpeechRate
+        }
+        set {
+            defaults.set(newValue, forKey: "readerSpeechRate")
+            notifyChange()
+        }
+    }
+
     var colsPerScreen: ColsPerScreen {
         get { ColsPerScreen(rawValue: defaults.integer(forKey: "readerColsPerScreen")) ?? .one }
         set { defaults.set(newValue.rawValue, forKey: "readerColsPerScreen"); notifyStructuralChange() }
@@ -934,6 +946,7 @@ final class SettingsManager {
         autoScrollSpeed = 60
         adjustScrollSpeedWhilePaging = true
         speechVoiceIdentifier = nil
+        speechRate = AVSpeechUtteranceDefaultSpeechRate
         defaultReadingMode = .scroll
         colsPerScreen = .one
         newBookOpensIn = .newWindow

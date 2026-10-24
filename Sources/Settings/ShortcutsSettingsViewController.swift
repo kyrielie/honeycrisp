@@ -13,18 +13,34 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsPaneSizin
     override func loadView() {
         let root = NSView(frame: NSRect(origin: .zero, size: SettingsPaneMetrics.size))
 
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let documentView = NSView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        // No explicit spacing override: NSStackView's own default (8pt) is
-        // already AppKit's standard control spacing.
         stack.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(stack)
+        documentView.addSubview(stack)
+        scrollView.documentView = documentView
+        root.addSubview(scrollView)
 
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
-            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -20),
+            scrollView.topAnchor.constraint(equalTo: root.topAnchor, constant: 16),
+            scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16),
+
+            stack.topAnchor.constraint(equalTo: documentView.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor, constant: -16),
+            documentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -16),
         ])
 
         for action in RebindableAction.allCases {
@@ -62,12 +78,14 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsPaneSizin
     private func makeRow(for action: RebindableAction) -> NSStackView {
         let row = NSStackView()
         row.orientation = .horizontal
+        row.alignment = .centerY
         row.spacing = 10
 
         let label = NSTextField(labelWithString: action.displayName)
         label.widthAnchor.constraint(equalToConstant: 180).isActive = true
 
         let recorder = RecorderButton()
+        recorder.widthAnchor.constraint(equalToConstant: 130).isActive = true
         recorder.updateTitle(binding: SettingsManager.shared.keyBindings[action])
         recorder.onRecord = { [weak self] newBinding in
             self?.attemptRebind(action: action, to: newBinding, recorder: recorder)
@@ -88,6 +106,11 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsPaneSizin
     /// another action's current binding, surfaced inline rather than silently
     /// overwriting either the reserved shortcut or the other action's binding.
     private func attemptRebind(action: RebindableAction, to newBinding: KeyBinding, recorder: RecorderButton) {
+        guard !newBinding.modifierFlags.isDisjoint(with: KeyBinding.relevantMask) else {
+            showConflict("Shortcuts require at least one modifier key (⌘, ⌥, ⇧, or ⌃).")
+            recorder.updateTitle(binding: SettingsManager.shared.keyBindings[action])
+            return
+        }
         guard !SettingsManager.shared.isReserved(newBinding) else {
             showConflict("That shortcut is reserved by the system.")
             recorder.updateTitle(binding: SettingsManager.shared.keyBindings[action])

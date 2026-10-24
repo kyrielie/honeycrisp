@@ -225,6 +225,7 @@ final class ReaderViewController: NSViewController {
         webView = ReaderWebView(frame: NSRect(x: 0, y: 0, width: 780, height: 920), configuration: cfg)
         webView.navigationDelegate = self
         speechCoordinator.delegate = self
+        speechCoordinator.rate = SettingsManager.shared.speechRate
         if let id = SettingsManager.shared.speechVoiceIdentifier {
             speechCoordinator.voiceIdentifier = id
         }
@@ -1133,6 +1134,12 @@ final class ReaderViewController: NSViewController {
 
     func adjustSpeechRate(by delta: Float) {
         speechCoordinator.adjustRate(by: delta)
+        SettingsManager.shared.speechRate = speechCoordinator.rate
+    }
+
+    func setSpeechRate(_ rate: Float) {
+        speechCoordinator.rate = rate
+        SettingsManager.shared.speechRate = rate
     }
 
     func stopSpeech() {
@@ -1757,6 +1764,9 @@ final class ReaderViewController: NSViewController {
         switch event.keyCode {
         case 123, 126, 116: scrollByPages(-1)
         case 124, 125, 121: scrollByPages(1)
+        case 49:
+            let direction = event.modifierFlags.contains(.shift) ? -1 : 1
+            scrollByPages(direction)
         case 3 where event.modifierFlags.contains(.command):  // ⌘F
             toggleSearch(nil)
         default: return false
@@ -1867,18 +1877,19 @@ final class ReaderViewController: NSViewController {
             else { return event }
             if responder is NSTextView || responder is NSTextField { return event }
 
-            switch event.keyCode {
-            case 123, 126, 116:  // ← ↑ Page Up
-                guard !event.isARepeat else { return nil }
-                self.paginationEngine?.handleKeyDown(.backward)
-                return nil
-            case 124, 125, 121:  // → ↓ Page Down
-                guard !event.isARepeat else { return nil }
-                self.paginationEngine?.handleKeyDown(.forward)
-                return nil
-            default:
-                return event
-            }
+            guard let direction = self.paginatedDirection(for: event) else { return event }
+            guard !event.isARepeat else { return nil }
+            self.paginationEngine?.handleKeyDown(direction)
+            return nil
+        }
+    }
+
+    private func paginatedDirection(for event: NSEvent) -> PaginationEngine.NavigationKey? {
+        switch event.keyCode {
+        case 123, 126, 116: return .backward  // ← ↑ Page Up
+        case 124, 125, 121: return .forward   // → ↓ Page Down
+        case 49: return event.modifierFlags.contains(.shift) ? .backward : .forward  // Space / ⇧Space
+        default: return nil
         }
     }
 

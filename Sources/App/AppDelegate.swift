@@ -390,6 +390,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .toggleFloat: #selector(ReaderWindowController.toggleFloat(_:)),
             .toggleReadingMode: #selector(toggleReadingMode),
             .bookInfo: #selector(showBookInfo),
+            .goToBeginning: #selector(goToBeginning),
+            .goToEnd: #selector(goToEnd),
+            .nextChapter: #selector(nextChapter),
+            .previousChapter: #selector(previousChapter),
+            .toggleSpeech: #selector(toggleSpeechPause),
+            .toggleAutoScroll: #selector(startAutoScroll),
+            .increaseFontSize: #selector(increaseFontSize),
+            .decreaseFontSize: #selector(decreaseFontSize),
         ]
         // Invert once: selector -> binding, so the recursive walk below is a
         // single dictionary lookup per item instead of re-scanning all five

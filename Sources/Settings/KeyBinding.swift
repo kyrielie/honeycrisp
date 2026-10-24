@@ -4,6 +4,8 @@ import AppKit
 
 enum RebindableAction: String, CaseIterable, Codable {
     case openFile, searchInBook, showTOC, toggleFloat, toggleReadingMode, bookInfo
+    case goToBeginning, goToEnd, nextChapter, previousChapter
+    case toggleSpeech, toggleAutoScroll, increaseFontSize, decreaseFontSize
 
     var displayName: String {
         switch self {
@@ -13,6 +15,14 @@ enum RebindableAction: String, CaseIterable, Codable {
         case .toggleFloat: "Float on Top"
         case .toggleReadingMode: "Toggle Paginated Mode"
         case .bookInfo: "Book Info"
+        case .goToBeginning: "Go to Beginning"
+        case .goToEnd: "Go to End"
+        case .nextChapter: "Next Chapter"
+        case .previousChapter: "Previous Chapter"
+        case .toggleSpeech: "Play / Pause Speech"
+        case .toggleAutoScroll: "Start / Stop Auto-Scroll"
+        case .increaseFontSize: "Increase Font Size"
+        case .decreaseFontSize: "Decrease Font Size"
         }
     }
 
@@ -24,6 +34,24 @@ enum RebindableAction: String, CaseIterable, Codable {
         case .toggleFloat: KeyBinding(key: "t", modifiers: [.command, .shift])
         case .toggleReadingMode: KeyBinding(key: "p", modifiers: [.command, .shift])
         case .bookInfo: KeyBinding(key: "i", modifiers: [.command])
+        case .goToBeginning:
+            KeyBinding(
+                key: String(utf16CodeUnits: [unichar(NSUpArrowFunctionKey)], count: 1),
+                modifiers: [.command, .option]
+            )
+        case .goToEnd:
+            KeyBinding(
+                key: String(utf16CodeUnits: [unichar(NSDownArrowFunctionKey)], count: 1),
+                modifiers: [.command, .option]
+            )
+        case .nextChapter:
+            KeyBinding(key: String(utf16CodeUnits: [unichar(NSRightArrowFunctionKey)], count: 1), modifiers: [.command])
+        case .previousChapter:
+            KeyBinding(key: String(utf16CodeUnits: [unichar(NSLeftArrowFunctionKey)], count: 1), modifiers: [.command])
+        case .toggleSpeech: KeyBinding(key: "p", modifiers: [.option])
+        case .toggleAutoScroll: KeyBinding(key: "s", modifiers: [.option])
+        case .increaseFontSize: KeyBinding(key: "=", modifiers: [.command])
+        case .decreaseFontSize: KeyBinding(key: "-", modifiers: [.command])
         }
     }
 }
@@ -36,7 +64,7 @@ struct KeyBinding: Codable, Equatable, Hashable {
 
     init(key: String, modifiers: NSEvent.ModifierFlags) {
         self.key = key.lowercased()
-        self.modifiers = modifiers.rawValue
+        self.modifiers = (modifiers.intersection(Self.relevantMask)).rawValue
     }
 
     var modifierFlags: NSEvent.ModifierFlags { NSEvent.ModifierFlags(rawValue: modifiers) }
@@ -44,7 +72,7 @@ struct KeyBinding: Codable, Equatable, Hashable {
     /// Only the modifier keys this app's shortcuts actually use — masks out flags
     /// like .numericPad/.function that NSEvent sets incidentally and that would
     /// otherwise make two visually-identical bindings compare unequal.
-    private static let relevantMask: NSEvent.ModifierFlags = [.command, .shift, .option, .control]
+    static let relevantMask: NSEvent.ModifierFlags = [.command, .shift, .option, .control]
 
     static func == (lhs: KeyBinding, rhs: KeyBinding) -> Bool {
         lhs.key == rhs.key
@@ -64,7 +92,19 @@ struct KeyBinding: Codable, Equatable, Hashable {
         if flags.contains(.option) { text += "⌥" }
         if flags.contains(.shift) { text += "⇧" }
         if flags.contains(.command) { text += "⌘" }
-        text += key.uppercased()
+        if key.utf16.first == unichar(NSUpArrowFunctionKey) {
+            text += "↑"
+        } else if key.utf16.first == unichar(NSDownArrowFunctionKey) {
+            text += "↓"
+        } else if key.utf16.first == unichar(NSLeftArrowFunctionKey) {
+            text += "←"
+        } else if key.utf16.first == unichar(NSRightArrowFunctionKey) {
+            text += "→"
+        } else if key == " " {
+            text += "Space"
+        } else {
+            text += key.uppercased()
+        }
         return text
     }
 }
