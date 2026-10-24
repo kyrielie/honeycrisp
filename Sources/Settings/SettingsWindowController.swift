@@ -1222,7 +1222,6 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         return container
     }
 
-    // swiftlint:disable:next function_body_length
     private func rebuildThemeGrid() {
         guard let container = themeGridContainer else { return }
         for arranged in container.arrangedSubviews {
@@ -1251,20 +1250,12 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         }
 
         let perRow = 4
-        // Row layout for the swatches: the "+" tile always joins the last
-        // swatch row if there's room, so it visually sits right after the
-        // themes. Only when the theme count exactly fills a row (4, 8, ...)
-        // does it need a row of its own -- and even then that row must be
-        // rendered immediately after the swatch row, before that row's
-        // expanded color editor (if any), not after it. Previously the add
-        // tile and the swatches were chunked together into one `cells` array,
-        // which pushed the tile's own row below the editor in that case.
+        // Row layout for the swatches: all theme cards plus the trailing "+"
+        // tile wrap at 4 items per row and remain above the color editor
+        // section. Short rows are padded with spacers so .fillEqually keeps
+        // cells matching the width of full rows.
         func makeRow(_ views: [NSView]) {
             var rowCells = views
-            // Pad a short row with invisible spacers so .fillEqually can't
-            // stretch its real cells (including the add tile) wider than the
-            // swatches in the full rows above -- otherwise the add tile ends
-            // up a different size whenever it doesn't land in a full row.
             while rowCells.count < perRow {
                 let spacer = NSView()
                 spacer.heightAnchor.constraint(equalToConstant: ThemeBigSwatchButton.swatchSize.height).isActive = true
@@ -1278,34 +1269,20 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
             row.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         }
 
-        for start in stride(from: 0, to: swatchCells.count, by: perRow) {
-            let end = min(start + perRow, swatchCells.count)
-            var rowCells = Array(swatchCells[start..<end])
-            let isLastSwatchRow = end == swatchCells.count
-            let addTileJoinsThisRow = isLastSwatchRow && rowCells.count < perRow
-            if addTileJoinsThisRow {
-                rowCells.append(makeAddThemeTile())
-            }
-            makeRow(rowCells)
+        var allCells = swatchCells
+        allCells.append(makeAddThemeTile())
 
-            if isLastSwatchRow && !addTileJoinsThisRow {
-                // Row filled exactly -- give the add tile its own row here,
-                // still ahead of any expanded editor below.
-                makeRow([makeAddThemeTile()])
-            }
-
-            // Which (if any) expanded theme belongs in this row, so its editor
-            // panel can be inserted directly beneath it -- after the add tile
-            // if the add tile belongs to this same row.
-            let rowThemes = themes[start..<end]
-            if let theme = rowThemes.first(where: { $0.id == expandedThemeID }) {
-                let editor = makeInlineThemeEditor(for: theme)
-                container.addArrangedSubview(editor)
-                editor.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
-            }
+        for start in stride(from: 0, to: allCells.count, by: perRow) {
+            let end = min(start + perRow, allCells.count)
+            makeRow(Array(allCells[start..<end]))
         }
-        if swatchCells.isEmpty {
-            makeRow([makeAddThemeTile()])
+
+        // Inline color editor panel for the selected theme is placed directly
+        // beneath all theme card rows.
+        if let expandedThemeID, let theme = themes.first(where: { $0.id == expandedThemeID }) {
+            let editor = makeInlineThemeEditor(for: theme)
+            container.addArrangedSubview(editor)
+            editor.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         }
         refreshThemeGridSelection()
     }
@@ -1850,8 +1827,8 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         refreshPreview()
     }
 
-    /// Inline expanding editor shown directly beneath the selected swatch's
-    /// row: a name field with Duplicate/Delete off to the side, then
+    /// Inline expanding editor shown directly beneath the theme cards:
+    /// a name field with Duplicate/Delete off to the side, then
     /// light/dark colors side by side so both are visible at once instead of
     /// switching between them in separate wells inside a sheet. All fields
     /// live-update the theme (name on every keystroke, colors on every pick)

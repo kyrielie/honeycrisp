@@ -110,7 +110,7 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 
 ### Settings (`Sources/Settings`)
 - `SettingsManager.swift` (984): see section map below.
-- `SettingsWindowController.swift` (2302): see section map below.
+- `SettingsWindowController.swift` (2362): see section map below.
 - `KeyBinding.swift` (144): `RebindableAction` (openFile, searchInBook, showTOC, toggleFloat,
   toggleReadingMode) with defaults, `KeyBinding`, storage extension on `SettingsManager`,
   `.keyBindingsChanged`.
@@ -175,10 +175,10 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 |---|---|
 | 36-160 | `SettingsPaneSizing`, `SettingsPaneMetrics` (fixed pane size), `SettingsWindowController`, `SettingsPanelWindow` |
 | 161-289 | `SettingsTabViewController`: five tabs built from `tabSpecs` (General, Reading, Appearance, History, Shortcuts) |
-| 290-747 | `GeneralSettingsViewController`, `ReaderSettingsViewController` (the Reading tab) |
-| 748-2096 | `AppearanceSettingsViewController`: control factories (l.997), visibility (l.1466), actions (l.1526), theme add, edit, duplicate, delete (l.1703); field and control identity helpers (l.1966); `ThemeBigSwatchButton` (l.1989) |
-| 2097-2255 | `HistorySettingsViewController`, table delegate, `HistorySettingsCellView` |
-| 2256-2304 | `CustomFontStore`, `CustomFont` |
+| 308-825 | `GeneralSettingsViewController`, `ReaderSettingsViewController` (the Reading tab) |
+| 826-2149 | `AppearanceSettingsViewController`: control factories (l.1075), visibility (l.1519), actions (l.1579), theme add, edit, duplicate, delete (l.1756); field and control identity helpers (l.2019); `ThemeBigSwatchButton` (l.2042) |
+| 2150-2313 | `HistorySettingsViewController`, table delegate, `HistorySettingsCellView` |
+| 2314-2362 | `CustomFontStore`, `CustomFont` |
 
 ## Runtime wiring
 
