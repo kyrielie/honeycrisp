@@ -384,6 +384,7 @@ final class ReaderViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         view.window?.makeFirstResponder(webView)
+        updateWindowChromeForTheme()
         if currentMode == .paginated {
             installScrollWheelMonitorIfNeeded()
             installKeyDownMonitor()
@@ -445,6 +446,7 @@ final class ReaderViewController: NSViewController {
     func loadEPUB(at url: URL) {
         emptyStateView?.isHidden = true
         webView?.isHidden = false
+        updateWindowChromeForTheme()
         pendingInitialScrollSpineIndex = nil
         navigationHistory.clear()
         currentEPUBURL = url
@@ -690,6 +692,7 @@ final class ReaderViewController: NSViewController {
             return
         }
         currentSpineIndex = index
+        pendingPaginatedRestorePosition = restorePosition
         updateCurrentChapter(spineIndex: index)
         if let flow = surface as? FlowSurface {
             loadFlowPagedChapter(flow, index: index, restorePosition: restorePosition, pkg: pkg)
@@ -738,7 +741,7 @@ final class ReaderViewController: NSViewController {
                 into: webView.configuration.userContentController
             )
             guard let url = flow.pagedDocumentURL else { return }
-            webView.load(URLRequest(url: url))
+            webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15))
         } catch {
             showError(error)
         }
@@ -1447,6 +1450,7 @@ final class ReaderViewController: NSViewController {
     @objc private func applyCosmeticCSSUpdate() {
         let cosmetics = ReaderCosmeticSettings.current(from: SettingsManager.shared, language: currentPackage?.language)
         lastBuiltCosmetics = cosmetics
+        updateWindowChromeForTheme()
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -1454,6 +1458,24 @@ final class ReaderViewController: NSViewController {
             } catch {
                 self.showError(error)
             }
+        }
+    }
+
+    /// When the "Invisible" theme is active, blends the toolbar chrome seamlessly
+    /// with the background of the text so the toolbar becomes invisible.
+    func updateWindowChromeForTheme() {
+        guard let window = view.window else { return }
+        let theme = SettingsManager.shared.currentTheme
+        let isBookOpen = (currentPackage != nil)
+        if theme.seedKey == "invisible" && isBookOpen {
+            window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
+            let bgHex = SettingsManager.shared.effectiveBackgroundCSS
+            window.backgroundColor = SettingsManager.color(fromCSS: bgHex)
+        } else {
+            window.titlebarAppearsTransparent = false
+            window.titlebarSeparatorStyle = .automatic
+            window.backgroundColor = NSColor.windowBackgroundColor
         }
     }
 
@@ -1765,6 +1787,7 @@ final class ReaderViewController: NSViewController {
         case 123, 126, 116: scrollByPages(-1)
         case 124, 125, 121: scrollByPages(1)
         case 49:
+            guard SettingsManager.shared.spacebarAdvancesPage else { return false }
             let direction = event.modifierFlags.contains(.shift) ? -1 : 1
             scrollByPages(direction)
         case 3 where event.modifierFlags.contains(.command):  // ⌘F
@@ -1888,7 +1911,9 @@ final class ReaderViewController: NSViewController {
         switch event.keyCode {
         case 123, 126, 116: return .backward  // ← ↑ Page Up
         case 124, 125, 121: return .forward   // → ↓ Page Down
-        case 49: return event.modifierFlags.contains(.shift) ? .backward : .forward  // Space / ⇧Space
+        case 49:
+            guard SettingsManager.shared.spacebarAdvancesPage else { return nil }
+            return event.modifierFlags.contains(.shift) ? .backward : .forward  // Space / ⇧Space
         default: return nil
         }
     }
@@ -2044,15 +2069,22 @@ extension ReaderViewController {
         pushCurrentNavigationLocation()
         let fragment = entry.absoluteURL.fragment ?? URLComponents(url: target, resolvingAgainstBaseURL: false)?.fragment
         updateCurrentChapter(spineIndex: idx, fragment: fragment)
-        if let fragment, !fragment.isEmpty {
-            if currentMode == .paginated && currentSpineIndex != idx {
-                pendingFragment = fragment
-                loadSpineItem(index: idx, restorePosition: .start, pkg: pkg)
-            } else if currentMode == .paginated {
-                if let encoded = EPUBParser.javaScriptStringLiteral(fragment) {
-                    evaluateInSurfaceWorld("window.navigateToFragment(\(encoded));")
+        if currentMode == .paginated {
+            if let fragment, !fragment.isEmpty {
+                if currentSpineIndex != idx {
+                    loadSpineItem(index: idx, restorePosition: .fragment(fragment), pkg: pkg)
+                } else {
+                    paginationEngine?.navigateToFragment(fragment)
                 }
             } else {
+                if currentSpineIndex != idx {
+                    navigate(to: idx)
+                } else {
+                    paginationEngine?.scrollToColumn(0)
+                }
+            }
+        } else {
+            if let fragment, !fragment.isEmpty {
                 stopAutoScroll()
                 stopSpeech()
                 activeScrollSpineIndex = idx
@@ -2060,9 +2092,9 @@ extension ReaderViewController {
                 if let encoded = EPUBParser.javaScriptStringLiteral(namespacedTarget) {
                     evaluateInSurfaceWorld("window.navigateToFragment(\(encoded));")
                 }
+            } else {
+                navigate(to: idx)
             }
-        } else {
-            navigate(to: idx)
         }
     }
 }
@@ -2205,6 +2237,13 @@ extension ReaderViewController: WKNavigationDelegate {
         if action.navigationType == .linkActivated {
             pushCurrentNavigationLocation()
         }
+        if let url = action.request.url, url.isFileURL {
+            if let appDelegate = NSApp.delegate as? AppDelegate {
+                appDelegate.application(NSApp, open: [url])
+            }
+            decisionHandler(.cancel)
+            return
+        }
         if !surface.allowsNavigation(action: action, currentURL: webView.url) {
             decisionHandler(.cancel)
             return
@@ -2247,9 +2286,13 @@ extension ReaderViewController: WKNavigationDelegate {
         if let term = pendingSearchTerm, let encoded = EPUBParser.javaScriptStringLiteral(term) {
             evaluateInSurfaceWorld("window.searchText(\(encoded));")
         }
-        if let fragment = pendingFragment, let encoded = EPUBParser.javaScriptStringLiteral(fragment) {
+        if let fragment = pendingFragment {
             pendingFragment = nil
-            evaluateInSurfaceWorld("window.navigateToFragment(\(encoded));")
+            if currentMode == .paginated {
+                paginationEngine?.navigateToFragment(fragment)
+            } else if let encoded = EPUBParser.javaScriptStringLiteral(fragment) {
+                evaluateInSurfaceWorld("window.navigateToFragment(\(encoded));")
+            }
         }
         refreshBookmarkButton()
     }
@@ -2561,6 +2604,53 @@ private class PageInfoMessageHandler: NSObject, WKScriptMessageHandler {
 
 final class ReaderWebView: WKWebView {
     weak var readerViewController: ReaderViewController?
+
+    override init(frame: CGRect, configuration: WKWebViewConfiguration) {
+        super.init(frame: frame, configuration: configuration)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+            return []
+        }
+        return .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        draggingEntered(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+            return false
+        }
+        if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.application(NSApp, open: urls)
+            return true
+        }
+        return false
+    }
+
+    private func droppedSupportedURLs(from sender: NSDraggingInfo) -> [URL]? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        guard let urls = sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: options
+        ) as? [URL] else { return nil }
+        let valid = urls.filter { BookFormat.isSupported(url: $0) }
+        return valid.isEmpty ? nil : valid
+    }
+
     override func keyDown(with event: NSEvent) {
         let navigationKeys: Set<UInt16> = [123, 124, 125, 126, 116, 121]
         if navigationKeys.contains(event.keyCode), let vc = readerViewController {
@@ -2574,6 +2664,11 @@ final class ReaderWebView: WKWebView {
     }
     override var acceptsFirstResponder: Bool { true }
 
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let menu = super.menu(for: event) else { return nil }
+        return menu.items.isEmpty ? nil : menu
+    }
+
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         // WKWebView tags its built-in items with a stable NSMenuItem.identifier
         // (e.g. "WKMenuItemIdentifierShareMenu"). These strings are undocumented
@@ -2583,12 +2678,23 @@ final class ReaderWebView: WKWebView {
         let idsToRemove: Set<String> = [
             "WKMenuItemIdentifierShareMenu",
             "WKMenuItemIdentifierSearchWeb",
+            "WKMenuItemIdentifierSpeechMenu",
+            "WKMenuItemIdentifierGoBack",
+            "WKMenuItemIdentifierGoForward",
+            "WKMenuItemIdentifierReload",
         ]
         // "Copy Link with Highlight" doesn't have a confirmed stable identifier;
         // match by title instead. Honeycrisp has no localization (no .lproj
-        // folders in the project), so an English title match is safe here — flag
-        // this if Honeycrisp is ever localized.
-        let titlesToRemove: Set<String> = ["Copy Link with Highlight"]
+        // folders in the project), so an English title match is safe here.
+        // Also strip browser navigation ("Back", "Reload", "Forward") and native
+        // Speech submenu (which conflicts with Honeycrisp's own SpeechCoordinator).
+        let titlesToRemove: Set<String> = [
+            "Copy Link with Highlight",
+            "Speech",
+            "Back",
+            "Forward",
+            "Reload",
+        ]
 
         menu.items.removeAll { item in
             if let id = item.identifier?.rawValue, idsToRemove.contains(id) { return true }
@@ -2596,25 +2702,34 @@ final class ReaderWebView: WKWebView {
             return false
         }
 
-        // Replace the native "Search With Google" (opens via Safari specifically,
-        // not the user's default browser — a known WKWebView quirk) with a version
-        // that goes through NSWorkspace, which always respects the user's actual
-        // default browser.
-        let searchItem = NSMenuItem(
-            title: "Search in Book",
-            action: #selector(ReaderViewController.searchSelectionInBook),
-            keyEquivalent: ""
-        )
-        searchItem.target = readerViewController
-        menu.insertItem(searchItem, at: 0)
+        // Only add "Search in Book" and "Search in Browser" when text is selected
+        // or a word is targeted for lookup/copy. In blank areas, these search
+        // actions make no sense.
+        let hasSelection = menu.items.contains { item in
+            item.identifier?.rawValue == "WKMenuItemIdentifierCopy"
+                || item.identifier?.rawValue == "WKMenuItemIdentifierLookUp"
+                || item.identifier?.rawValue == "WKMenuItemIdentifierTranslate"
+                || item.title == "Copy"
+                || item.action == #selector(NSText.copy(_:))
+        }
 
-        let browserSearchItem = NSMenuItem(
-            title: "Search in Browser",
-            action: #selector(ReaderViewController.searchSelectionInBrowser),
-            keyEquivalent: ""
-        )
-        browserSearchItem.target = readerViewController
-        menu.insertItem(browserSearchItem, at: 1)
+        if hasSelection {
+            let searchItem = NSMenuItem(
+                title: "Search in Book",
+                action: #selector(ReaderViewController.searchSelectionInBook),
+                keyEquivalent: ""
+            )
+            searchItem.target = readerViewController
+            menu.insertItem(searchItem, at: 0)
+
+            let browserSearchItem = NSMenuItem(
+                title: "Search in Browser",
+                action: #selector(ReaderViewController.searchSelectionInBrowser),
+                keyEquivalent: ""
+            )
+            browserSearchItem.target = readerViewController
+            menu.insertItem(browserSearchItem, at: 1)
+        }
 
         super.willOpenMenu(menu, with: event)
     }

@@ -282,6 +282,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         bookmarksMenu.delegate = self
         bookmarksItem.title = "Bookmarks"
         bookmarksItem.submenu = bookmarksMenu
+        let defaultBookmarkToggle = NSMenuItem(
+            title: "Add Bookmark",
+            action: #selector(toggleBookmark),
+            keyEquivalent: ""
+        )
+        defaultBookmarkToggle.target = self
+        bookmarksMenu.addItem(defaultBookmarkToggle)
 
         // Reflect any previously-saved rebinding immediately on launch, not only
         // after the next change.
@@ -398,6 +405,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .toggleAutoScroll: #selector(startAutoScroll),
             .increaseFontSize: #selector(increaseFontSize),
             .decreaseFontSize: #selector(decreaseFontSize),
+            .toggleBookmark: #selector(toggleBookmark),
         ]
         // Invert once: selector -> binding, so the recursive walk below is a
         // single dictionary lookup per item instead of re-scanning all five
@@ -584,9 +592,14 @@ extension AppDelegate: NSMenuDelegate {
         if menu.title == "Bookmarks" {
             menu.items.removeAll()
             let isBookmarked = readerVC()?.isCurrentPositionBookmarked ?? false
+            let binding = SettingsManager.shared.keyBindings[.toggleBookmark]
+                ?? RebindableAction.toggleBookmark.defaultBinding
             let toggle = NSMenuItem(
                 title: isBookmarked ? "Remove Bookmark" : "Add Bookmark",
-                action: #selector(toggleBookmark), keyEquivalent: "")
+                action: #selector(toggleBookmark),
+                keyEquivalent: binding.key
+            )
+            toggle.keyEquivalentModifierMask = binding.modifierFlags
             toggle.target = self
             toggle.isEnabled = readerVC()?.currentBookURL() != nil
             menu.addItem(toggle)

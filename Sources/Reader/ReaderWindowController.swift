@@ -127,11 +127,101 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
         readerViewController.flushPositionSave()
         ReaderWindowController.openWindows.removeAll { $0 === self }
     }
+
+    // MARK: - NSDraggingDestination via NSWindowDelegate
+
+    func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+            return []
+        }
+        return .copy
+    }
+
+    func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        draggingEntered(sender)
+    }
+
+    func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+            return false
+        }
+        if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.application(NSApp, open: urls)
+            return true
+        }
+        return false
+    }
+
+    private func droppedSupportedURLs(from sender: NSDraggingInfo) -> [URL]? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        guard let urls = sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: options
+        ) as? [URL] else { return nil }
+        let valid = urls.filter { BookFormat.isSupported(url: $0) }
+        return valid.isEmpty ? nil : valid
+    }
 }
 
 // MARK: - ReaderWindow
 
 final class ReaderWindow: NSWindow {
+    override init(
+        contentRect: NSRect,
+        styleMask style: NSWindow.StyleMask,
+        backing backingStoreType: NSWindow.BackingStoreType,
+        defer flag: Bool
+    ) {
+        super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+            return []
+        }
+        return .copy
+    }
+
+    func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        draggingEntered(sender)
+    }
+
+    func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+            return false
+        }
+        if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.application(NSApp, open: urls)
+            return true
+        }
+        return false
+    }
+
+    private func droppedSupportedURLs(from sender: NSDraggingInfo) -> [URL]? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        guard let urls = sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: options
+        ) as? [URL] else { return nil }
+        let valid = urls.filter { BookFormat.isSupported(url: $0) }
+        return valid.isEmpty ? nil : valid
+    }
+
     override func keyDown(with event: NSEvent) {
         if let vc = contentViewController as? ReaderViewController, vc.handleKeyDown(event) {
             return

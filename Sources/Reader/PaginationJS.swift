@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import Foundation
 
 // MARK: - PaginationJS
@@ -291,6 +292,32 @@ private let _pjsNavigateToOffset: String = #"""
             marker.parentNode.removeChild(marker);
             col = pitch > 0 ? Math.max(0, Math.round(docX / pitch)) : 0;
         }
+        window.qlScrollToColumn(col);
+        _postPositionUpdate();
+    };
+
+    // ─── Navigate to fragment / element ID ───────────────────────────────────
+
+    window.qlNavigateToFragment = function (id) {
+        if (!_ready || !id) return;
+        var el = document.getElementById(id);
+        if (!el) {
+            var named = document.getElementsByName(id);
+            el = named.length ? named[0] : null;
+        }
+        if (!el) {
+            try {
+                var escaped = (window.CSS && CSS.escape) ? CSS.escape(id) : id.replace(/["\\]/g, '\\$&');
+                el = document.querySelector('[id$="-' + escaped + '"]');
+            } catch (e) {}
+        }
+        if (!el) return;
+        document.body.style.transform = '';
+        var pitch = _colAndGap;
+        var padLeft = parseFloat(window.getComputedStyle(document.documentElement).paddingLeft) || 0;
+        var rect = el.getBoundingClientRect();
+        var docX = rect.left + window.scrollX - padLeft;
+        var col = pitch > 0 ? Math.max(0, Math.floor((docX + 2) / pitch)) : 0;
         window.qlScrollToColumn(col);
         _postPositionUpdate();
     };

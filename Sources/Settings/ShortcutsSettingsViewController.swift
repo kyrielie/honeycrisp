@@ -9,7 +9,9 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsPaneSizin
 
     private var conflictLabel: NSTextField!
     private var recorders: [RebindableAction: RecorderButton] = [:]
+    private weak var spacebarCheckbox: NSButton?
 
+    // swiftlint:disable:next function_body_length
     override func loadView() {
         let root = NSView(frame: NSRect(origin: .zero, size: SettingsPaneMetrics.size))
 
@@ -19,7 +21,7 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsPaneSizin
         scrollView.drawsBackground = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        let documentView = NSView()
+        let documentView = FlippedView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView()
@@ -43,6 +45,29 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsPaneSizin
             documentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -16),
         ])
 
+        let spacebarCheckbox = NSButton(
+            checkboxWithTitle: "Use Spacebar to advance pages",
+            target: self,
+            action: #selector(toggleSpacebarAdvancesPage(_:))
+        )
+        spacebarCheckbox.state = SettingsManager.shared.spacebarAdvancesPage ? .on : .off
+        stack.addArrangedSubview(spacebarCheckbox)
+        self.spacebarCheckbox = spacebarCheckbox
+
+        let spacebarHint = NSTextField(
+            wrappingLabelWithString:
+                "Space advances pages forward and Shift+Space turns backward in both scroll and paginated modes."
+        )
+        spacebarHint.font = NSFont.systemFont(ofSize: 11)
+        spacebarHint.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(spacebarHint)
+        stack.setCustomSpacing(16, after: spacebarHint)
+
+        let shortcutsHeader = NSTextField(labelWithString: "Keyboard Shortcuts")
+        shortcutsHeader.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        stack.addArrangedSubview(shortcutsHeader)
+        stack.setCustomSpacing(10, after: shortcutsHeader)
+
         for action in RebindableAction.allCases {
             stack.addArrangedSubview(makeRow(for: action))
         }
@@ -60,6 +85,19 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsPaneSizin
             self, selector: #selector(reloadBindings),
             name: .keyBindingsChanged, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(reloadBindings),
+            name: SettingsManager.settingsChangedNotification, object: nil
+        )
+    }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        reloadBindings()
+    }
+
+    @objc private func toggleSpacebarAdvancesPage(_ sender: NSButton) {
+        SettingsManager.shared.spacebarAdvancesPage = sender.state == .on
     }
 
     /// Refreshes every row's recorder title from SettingsManager. Needed
@@ -68,6 +106,7 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsPaneSizin
     /// recreating it -- so a change made elsewhere (General's "Reset All to
     /// Defaults") needs an explicit nudge, not just a re-visit of this tab.
     @objc private func reloadBindings() {
+        spacebarCheckbox?.state = SettingsManager.shared.spacebarAdvancesPage ? .on : .off
         let bindings = SettingsManager.shared.keyBindings
         for (action, recorder) in recorders {
             recorder.updateTitle(binding: bindings[action])

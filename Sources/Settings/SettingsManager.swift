@@ -356,6 +356,18 @@ final class SettingsManager {
             dark: ThemeColorSet(background: "#2b2216", text: "#d8c9a8", link: "#c99a55"),
             fontFamily: FontPresets.all.first { $0.id == "georgia" }!.cssStack,
             isDefault: true, seedKey: "paper"),
+        Theme(
+            name: "Invisible",
+            light: ThemeColorSet(background: "#ffffff", text: "#000000", link: "#0068da"),
+            dark: ThemeColorSet(background: "#18181a", text: "#e8e8e8", link: "#5aa9ff"),
+            fontFamily: FontPresets.all.first { $0.id == "system" }!.cssStack,
+            isDefault: true, seedKey: "invisible"),
+        Theme(
+            name: "System Window",
+            light: ThemeColorSet(background: "#ececec", text: "#000000", link: "#0068da"),
+            dark: ThemeColorSet(background: "#1e1e1e", text: "#e8e8e8", link: "#5aa9ff"),
+            fontFamily: FontPresets.all.first { $0.id == "system" }!.cssStack,
+            isDefault: true, seedKey: "systemWindow"),
     ]
 
     /// One-time migration for installs that persisted themes before `isDefault`
@@ -448,6 +460,19 @@ final class SettingsManager {
                     }
                     return migrated
                 }
+                if !self.defaults.bool(forKey: "didSeedExtendedThemes") {
+                    self.defaults.set(true, forKey: "didSeedExtendedThemes")
+                    let existingSeedKeys = Set(decoded.compactMap(\.seedKey))
+                    let missingSeeds = Self.seedThemes.filter { !existingSeedKeys.contains($0.seedKey ?? "") }
+                    if !missingSeeds.isEmpty {
+                        var migrated = decoded
+                        migrated.append(contentsOf: missingSeeds)
+                        if let data = try? JSONEncoder().encode(migrated) {
+                            self.defaults.set(data, forKey: "readerThemes")
+                        }
+                        return migrated
+                    }
+                }
                 return decoded
             }
             let migrated = Self.migrateLegacyThemes(defaults: defaults)
@@ -461,6 +486,7 @@ final class SettingsManager {
             return migrated
         }
         set {
+            defaults.set(true, forKey: "didSeedExtendedThemes")
             if let data = try? JSONEncoder().encode(newValue) {
                 defaults.set(data, forKey: "readerThemes")
             }
@@ -493,6 +519,7 @@ final class SettingsManager {
     /// Builds the seed list, folding in the old `.custom` colors (if the user had
     /// set any) as an extra "Custom" theme so that data isn't silently dropped.
     private static func migrateLegacyThemes(defaults: UserDefaults) -> [Theme] {
+        defaults.set(true, forKey: "didSeedExtendedThemes")
         var result = seedThemes
         if defaults.object(forKey: "readerTheme") != nil,
             ReaderThemeLegacy(rawValue: defaults.integer(forKey: "readerTheme")) == .custom
@@ -679,6 +706,14 @@ final class SettingsManager {
                 ? true : defaults.bool(forKey: "readerAdjustScrollSpeedWhilePaging")
         }
         set { defaults.set(newValue, forKey: "readerAdjustScrollSpeedWhilePaging"); notifyChange() }
+    }
+
+    var spacebarAdvancesPage: Bool {
+        get {
+            defaults.object(forKey: "readerSpacebarAdvancesPage") == nil
+                ? true : defaults.bool(forKey: "readerSpacebarAdvancesPage")
+        }
+        set { defaults.set(newValue, forKey: "readerSpacebarAdvancesPage"); notifyChange() }
     }
 
     var speechVoiceIdentifier: String? {
@@ -945,6 +980,7 @@ final class SettingsManager {
         skipCoverWhenOpening = false
         autoScrollSpeed = 60
         adjustScrollSpeedWhilePaging = true
+        spacebarAdvancesPage = true
         speechVoiceIdentifier = nil
         speechRate = AVSpeechUtteranceDefaultSpeechRate
         defaultReadingMode = .scroll

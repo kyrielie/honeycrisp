@@ -200,7 +200,7 @@ final class SettingsTabViewController: NSTabViewController {
                 makeViewController: { ReaderSettingsViewController() }, label: "Reading", symbol: "text.book.closed"),
             TabSpec(
                 makeViewController: { FanfictionSettingsViewController() },
-                label: "Fanfiction",
+                label: "Formatting",
                 symbol: "sparkles.rectangle.stack"
             ),
             TabSpec(
@@ -559,6 +559,7 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
     let isResizableView = false
     private weak var speedValue: NSTextField?
     private weak var autoScrollSlider: NSSlider?
+    private weak var languagePopup: NSPopUpButton?
     private weak var voicePopup: NSPopUpButton?
     private weak var speechRateSlider: NSSlider?
     private weak var speechRateValue: NSTextField?
@@ -611,18 +612,25 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         adjustScrollSpeedCheckbox.state = SettingsManager.shared.adjustScrollSpeedWhilePaging ? .on : .off
         stack.addArrangedSubview(adjustScrollSpeedCheckbox)
 
+        stack.addArrangedSubview(NSTextField(labelWithString: "Voice language"))
+        let languagePopup = NSPopUpButton()
+        languagePopup.target = self
+        languagePopup.action = #selector(languageChanged(_:))
+        stack.addArrangedSubview(languagePopup)
+        self.languagePopup = languagePopup
+
         stack.addArrangedSubview(NSTextField(labelWithString: "Speech voice"))
         let voicePopup = NSPopUpButton()
-        voicePopup.addItem(withTitle: "System Default")
-        voicePopup.lastItem?.representedObject = ""
-        for voice in SpeechCoordinator.defaultVoices {
-            voicePopup.addItem(withTitle: voice.displayName)
-            voicePopup.lastItem?.representedObject = voice.id
-        }
-        selectSpeechVoice(in: voicePopup, identifier: SettingsManager.shared.speechVoiceIdentifier)
         voicePopup.target = self
         voicePopup.action = #selector(speechVoiceChanged(_:))
         stack.addArrangedSubview(voicePopup)
+        self.voicePopup = voicePopup
+
+        let initialVoiceID = SettingsManager.shared.speechVoiceIdentifier
+        let initialLang = SpeechCoordinator.defaultVoices.first(where: { $0.id == initialVoiceID })?.language
+            ?? Locale.current.language.languageCode?.identifier
+        populateLanguages(selectedLanguage: initialLang)
+        populateVoices(forLanguage: initialLang, selectedVoiceID: initialVoiceID)
 
         stack.addArrangedSubview(NSTextField(labelWithString: "Reading speed"))
         let speechRateRow = NSStackView()
@@ -684,9 +692,78 @@ final class ReaderSettingsViewController: NSViewController, SettingsPaneSizing {
         let rateMult = SettingsManager.shared.speechRate / AVSpeechUtteranceDefaultSpeechRate
         speechRateSlider?.doubleValue = Double(rateMult)
         speechRateValue?.stringValue = String(format: "%.2fx", rateMult)
-        if let voicePopup {
-            selectSpeechVoice(in: voicePopup, identifier: SettingsManager.shared.speechVoiceIdentifier)
+
+        let savedVoiceID = SettingsManager.shared.speechVoiceIdentifier
+        let allVoices = SpeechCoordinator.defaultVoices
+        let currentVoice = allVoices.first(where: { $0.id == savedVoiceID })
+        let currentLang = currentVoice?.language
+            ?? (languagePopup?.selectedItem?.representedObject as? String)
+            ?? Locale.current.language.languageCode?.identifier
+
+        populateLanguages(selectedLanguage: currentLang)
+        populateVoices(forLanguage: currentLang, selectedVoiceID: savedVoiceID)
+    }
+
+    private func populateLanguages(selectedLanguage: String?) {
+        guard let languagePopup else { return }
+        languagePopup.removeAllItems()
+        languagePopup.addItem(withTitle: "All Languages")
+        languagePopup.lastItem?.representedObject = ""
+
+        let allVoices = SpeechCoordinator.defaultVoices
+        let languages = Array(Set(allVoices.map(\.language))).sorted { lang1, lang2 in
+            let name1 = Locale.current.localizedString(forIdentifier: lang1) ?? lang1
+            let name2 = Locale.current.localizedString(forIdentifier: lang2) ?? lang2
+            return name1.localizedCaseInsensitiveCompare(name2) == .orderedAscending
         }
+
+        for lang in languages {
+            let title = Locale.current.localizedString(forIdentifier: lang) ?? lang
+            languagePopup.addItem(withTitle: title)
+            languagePopup.lastItem?.representedObject = lang
+        }
+
+        if let selectedLanguage,
+            let item = languagePopup.itemArray.first(where: {
+                let obj = $0.representedObject as? String
+                return obj == selectedLanguage || (obj != nil && selectedLanguage.starts(with: obj!))
+            })
+        {
+            languagePopup.select(item)
+        } else {
+            languagePopup.selectItem(at: 0)
+        }
+    }
+
+    private func populateVoices(forLanguage language: String?, selectedVoiceID: String?) {
+        guard let voicePopup else { return }
+        voicePopup.removeAllItems()
+        voicePopup.addItem(withTitle: "System Default")
+        voicePopup.lastItem?.representedObject = ""
+
+        let allVoices = SpeechCoordinator.defaultVoices
+        let filteredVoices: [TTSVoice]
+        if let language, !language.isEmpty {
+            filteredVoices = allVoices.filter {
+                $0.language.caseInsensitiveCompare(language) == .orderedSame
+                    || $0.language.lowercased().starts(with: language.lowercased())
+            }
+        } else {
+            filteredVoices = allVoices
+        }
+
+        for voice in filteredVoices {
+            voicePopup.addItem(withTitle: voice.displayName)
+            voicePopup.lastItem?.representedObject = voice.id
+        }
+
+        selectSpeechVoice(in: voicePopup, identifier: selectedVoiceID)
+    }
+
+    @objc private func languageChanged(_ sender: NSPopUpButton) {
+        let lang = sender.selectedItem?.representedObject as? String
+        let currentVoiceID = SettingsManager.shared.speechVoiceIdentifier
+        populateVoices(forLanguage: lang, selectedVoiceID: currentVoiceID)
     }
 
     private func selectSpeechVoice(in popup: NSPopUpButton, identifier: String?) {

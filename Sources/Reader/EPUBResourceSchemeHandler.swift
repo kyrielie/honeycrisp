@@ -122,9 +122,11 @@ final class EPUBResourceSchemeHandler: NSObject, WKURLSchemeHandler {
                 urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
                 return
             }
+            var headers = responseHeaders
+            headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
             let response = Self.response(
                 for: url, fileURL: URL(fileURLWithPath: key), byteCount: data.count,
-                extraHeaders: responseHeaders, isAppResource: true)
+                extraHeaders: headers, isAppResource: true)
             urlSchemeTask.didReceive(response)
             urlSchemeTask.didReceive(data)
             urlSchemeTask.didFinish()

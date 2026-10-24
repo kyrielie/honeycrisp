@@ -62,6 +62,7 @@ enum RestorePosition: Equatable {
     case end  // last column
     case fraction(Double)  // 0.0–1.0, saved progress
     case characterOffset(Int)  // exact UTF-16 offset, from HistoryEntry
+    case fragment(String)
 }
 
 // MARK: - Anchor layout
@@ -94,6 +95,11 @@ extension RestorePosition {
             return "window.qlScrollToFraction(\(clamped));"
         case .characterOffset(let offset):
             return "window.qlNavigateToOffset(\(offset));"
+        case .fragment(let id):
+            if let encoded = EPUBParser.javaScriptStringLiteral(id) {
+                return "window.qlNavigateToFragment(\(encoded));"
+            }
+            return "window.qlScrollToColumn(0);"
         }
     }
 }
@@ -241,6 +247,13 @@ final class PaginationEngine: NSObject {
     func scrollToOffset(_ charOffset: Int) {
         guard isReady else { return }
         run("window.qlNavigateToOffset(\(charOffset));")
+    }
+
+    func navigateToFragment(_ id: String) {
+        guard isReady else { return }
+        if let encoded = EPUBParser.javaScriptStringLiteral(id) {
+            run("window.qlNavigateToFragment(\(encoded));")
+        }
     }
 
     /// UTF-16 offset of the first text on the current page (`qlOffsetAtCurrentColumn`), or nil before layout is

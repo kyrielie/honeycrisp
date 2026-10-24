@@ -6,6 +6,7 @@ enum RebindableAction: String, CaseIterable, Codable {
     case openFile, searchInBook, showTOC, toggleFloat, toggleReadingMode, bookInfo
     case goToBeginning, goToEnd, nextChapter, previousChapter
     case toggleSpeech, toggleAutoScroll, increaseFontSize, decreaseFontSize
+    case toggleBookmark
 
     var displayName: String {
         switch self {
@@ -23,6 +24,7 @@ enum RebindableAction: String, CaseIterable, Codable {
         case .toggleAutoScroll: "Start / Stop Auto-Scroll"
         case .increaseFontSize: "Increase Font Size"
         case .decreaseFontSize: "Decrease Font Size"
+        case .toggleBookmark: "Add / Remove Bookmark"
         }
     }
 
@@ -52,6 +54,7 @@ enum RebindableAction: String, CaseIterable, Codable {
         case .toggleAutoScroll: KeyBinding(key: "s", modifiers: [.option])
         case .increaseFontSize: KeyBinding(key: "=", modifiers: [.command])
         case .decreaseFontSize: KeyBinding(key: "-", modifiers: [.command])
+        case .toggleBookmark: KeyBinding(key: "d", modifiers: [.command])
         }
     }
 }

@@ -11,5 +11,6 @@ final class RestorePositionTests: XCTestCase {
         XCTAssertEqual(RestorePosition.start.bootstrapJS, "window.qlScrollToColumn(0);")
         XCTAssertEqual(RestorePosition.end.bootstrapJS, "window.qlScrollToColumn(window.qlColumnCount() - 1);")
         XCTAssertEqual(RestorePosition.characterOffset(321).bootstrapJS, "window.qlNavigateToOffset(321);")
+        XCTAssertEqual(RestorePosition.fragment("chapter-heading").bootstrapJS, "window.qlNavigateToFragment(\"chapter-heading\");")
     }
 }
