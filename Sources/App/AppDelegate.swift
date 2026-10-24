@@ -36,6 +36,19 @@ private final class BookmarkMenuContext {
 // swiftlint:disable:next type_body_length
 class AppDelegate: NSObject, NSApplicationDelegate {
 
+    /// NSApplication.delegate is weak, and Honeycrisp has no nib to instantiate the delegate.
+    private static var retainedDelegate: AppDelegate?
+
+    @MainActor
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        retainedDelegate = delegate
+        app.delegate = delegate
+        app.setActivationPolicy(.regular)
+        app.run()
+    }
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Without this, AppKit's own automatic window tabbing (on by default)
         // fights with the explicit "new window vs new tab" setting below, and
@@ -58,9 +71,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if NSApp.windows.isEmpty {
+        if !ReaderWindowController.hasOpenWindows {
             let windowController = ReaderWindowController()
             windowController.showWindow(nil)
+        }
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 

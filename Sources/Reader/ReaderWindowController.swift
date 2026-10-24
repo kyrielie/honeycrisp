@@ -12,6 +12,14 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
     // Retain all open window controllers so ARC doesn't deallocate them
     private static var openWindows: [ReaderWindowController] = []
 
+    static var hasOpenWindows: Bool {
+        !openWindows.isEmpty
+    }
+
+    static var openCount: Int {
+        openWindows.count
+    }
+
     init() {
         let window = ReaderWindow(
             contentRect: NSRect(x: 100, y: 100, width: 780, height: 960),

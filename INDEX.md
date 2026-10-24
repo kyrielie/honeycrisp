@@ -30,11 +30,11 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 ## Source map
 
 ### App (`Sources/App`)
-- `AppDelegate.swift` (690): `@main`; launch, Apple-Event and `open urls` routing (top of file to l.133);
-  `// MARK: Menu Setup` (`setupMenus`, l.134-382); live shortcut sync (`syncMenuShortcuts`,
-  l.383-432); menu actions (l.433-552, each forwards to `readerVC()?`); helpers incl. `readerVC()`
-  (l.553-559); `NSMenuDelegate` dynamic menus (`menuNeedsUpdate`: Open Recent, bookmarks) and
-  `validateMenuItem` (l.560-690).
+- `AppDelegate.swift` (708): `@main` entry point with explicit programmatic bootstrap; launch, Apple-Event and `open urls` routing (top of file to l.151);
+  `// MARK: Menu Setup` (`setupMenus`, l.152-400); live shortcut sync (`syncMenuShortcuts`,
+  l.401-450); menu actions (l.451-570, each forwards to `readerVC()?`); helpers incl. `readerVC()`
+  (l.571-577); `NSMenuDelegate` dynamic menus (`menuNeedsUpdate`: Open Recent, bookmarks) and
+  `validateMenuItem` (l.578-708).
 
 ### Reader (`Sources/Reader`)
 - `FlowingSurface.swift`: `protocol FlowingSurface` (L3 surface seam, FRAMEWORK C5) and `extension ChapterHostSurface: FlowingSurface`.
