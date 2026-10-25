@@ -1331,10 +1331,8 @@ final class ReaderViewController: NSViewController {
         )
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.contentView?.wantsLayer = true
-        panel.contentView?.layer?.masksToBounds = false
-        panel.hasShadow = true
-        panel.invalidateShadow()
+        // No system shadow: it is rectangular, and the search overlay (same rounded blur view) has none.
+        panel.hasShadow = false
         panel.isFloatingPanel = true
         panel.level = .floating
         panel.contentViewController = popupVC
