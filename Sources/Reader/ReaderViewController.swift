@@ -33,7 +33,7 @@ final class ReaderViewController: NSViewController {
     private var emptyStateHintLabel: NSTextField?
     private var didScheduleEmptyStateHintFade = false
 
-    private var currentPackage: EPUBPackage?
+    fileprivate var currentPackage: EPUBPackage?
     private var currentEPUBURL: URL?
     /// The active flowing surface implementation (FRAMEWORK contract C5).
     private var surface: FlowingSurface!

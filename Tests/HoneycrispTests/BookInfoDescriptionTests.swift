@@ -26,6 +26,6 @@ final class BookInfoDescriptionTests: XCTestCase {
     func testCollapsesExtraWhitespace() {
         let input = "  Lots   of \n\n extra \t  whitespace.   "
         let output = BookInfoViewController.cleanDescription(input)
-        XCTAssertEqual(output, "Lots of whitespace.")
+        XCTAssertEqual(output, "Lots of extra whitespace.")
     }
 }

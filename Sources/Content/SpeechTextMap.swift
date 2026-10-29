@@ -12,13 +12,6 @@ struct SpeechSentence: Equatable, Sendable {
     let text: String
     let chapterStart: Int
     let chapterEnd: Int
-
-    init(spoken: NSRange, text: String, chapterStart: Int, chapterEnd: Int) {
-        self.spoken = spoken
-        self.text = text
-        self.chapterStart = chapterStart
-        self.chapterEnd = chapterEnd
-    }
 }
 
 struct SpeechTextMap: Equatable, Sendable {

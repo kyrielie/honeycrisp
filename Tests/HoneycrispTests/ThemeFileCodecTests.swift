@@ -20,7 +20,7 @@ final class ThemeFileCodecTests: XCTestCase {
             hyphenate: true,
             paragraphSpacing: 1.5,
             paragraphIndent: 1.2,
-            boldWeight: .bolder,
+            boldWeight: .bold,
             isDefault: false,
             seedKey: nil
         )
@@ -43,7 +43,7 @@ final class ThemeFileCodecTests: XCTestCase {
         XCTAssertEqual(decoded.hyphenate, true)
         XCTAssertEqual(decoded.paragraphSpacing, 1.5)
         XCTAssertEqual(decoded.paragraphIndent, 1.2)
-        XCTAssertEqual(decoded.boldWeight, .bolder)
+        XCTAssertEqual(decoded.boldWeight, .bold)
         XCTAssertFalse(decoded.isDefault)
         XCTAssertNil(decoded.seedKey)
     }

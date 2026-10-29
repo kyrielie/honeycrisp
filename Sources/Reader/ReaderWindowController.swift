@@ -139,7 +139,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - NSDraggingDestination via NSWindowDelegate
 
     func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+        guard let urls = sender.droppedSupportedURLs(), !urls.isEmpty else {
             return []
         }
         return .copy
@@ -150,7 +150,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+        guard let urls = sender.droppedSupportedURLs(), !urls.isEmpty else {
             return false
         }
         return true

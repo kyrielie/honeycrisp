@@ -71,7 +71,7 @@ struct ThemeColorSet: Codable, Equatable {
     var link: String
 }
 
-enum ThemeTextAlignment: String, Codable, CaseIterable {
+enum ThemeTextAlignment: String, Codable, CaseIterable, Equatable {
     case book
     case left
     case center
@@ -91,7 +91,7 @@ enum ThemeTextAlignment: String, Codable, CaseIterable {
     var cssValue: String { self == .book ? "inherit" : rawValue }
 }
 
-enum ThemeBoldWeight: String, Codable, CaseIterable {
+enum ThemeBoldWeight: String, Codable, CaseIterable, Equatable {
     case book, normal, medium, bold
 
     var cssValue: String {
