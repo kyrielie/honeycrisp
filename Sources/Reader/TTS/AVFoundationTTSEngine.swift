@@ -224,6 +224,12 @@ extension AVFoundationTTSEngine: @preconcurrency AVSpeechSynthesizerDelegate {
         onEngineEvent(.didFinish(task))
     }
 
+    nonisolated static func stringRange(for characterRange: NSRange, in text: String) -> Range<String.Index>? {
+        guard characterRange.location != NSNotFound,
+              NSMaxRange(characterRange) <= (text as NSString).length else { return nil }
+        return Range(characterRange, in: text)
+    }
+
     func speechSynthesizer(
         _ synthesizer: AVSpeechSynthesizer,
         willSpeakRangeOfSpeechString characterRange: NSRange,
@@ -231,8 +237,7 @@ extension AVFoundationTTSEngine: @preconcurrency AVSpeechSynthesizerDelegate {
     ) {
         guard
             let task = (utterance as? TaskUtterance)?.task,
-            characterRange.upperBound <= task.text.count,
-            let range = Range(characterRange, in: task.text)
+            let range = Self.stringRange(for: characterRange, in: task.text)
         else { return }
 
         delegate?.ttsEngine(self, willSpeakWordRange: range, in: task.text)

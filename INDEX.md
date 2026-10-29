@@ -61,16 +61,23 @@ Target design: `docs/FRAMEWORK.md`. Plan: `docs/ROADMAP.md`. As-built descriptio
 - `ChapterHostScript.swift` and `ChapterHostScriptTail.swift`: `ChapterHostScript.source` (client-world script: frame sizing, `window.honeycrispHost.fitAll`, `applyUserCSS(css)` replacing `<style id="honeycrisp-user">` in every mounted chapter, `offsetOfFirstVisibleText(x)`, `scrollTo(resource, offset)`, `reconcile()`, `mountedResources()` and `pixelsPerByte()`, `restoreTo(resource, offset, fraction)`, `reveal()` and throttled `hostPosition` posts for windowing and measured heights).
 - `ChapterHostPaging.swift`: pure `ChapterHostPaging` for paginated mode on the host (M4 pass 7): `handoff(from:forward:count:)` (next chapter at its start, previous at its end, nil at book edges), `restore(for:)` (a scroll-window `Position` as an exact `RestorePosition.characterOffset`), `geometry(viewport:cols:paddingH:paddingV:maxWidth:)`. `changesDocument(from:to:)` (link policy), `pagedTarget(for:fallbackIndex:count:)` (the in-memory restore of a flag-mode paged load), `toPaged(from:activeIndex:count:)` and `toScroll(index:offset:count:)` (the exact-offset restores of the mode toggle). Called by `ReaderViewController.renderCurrentContent`, `navigateSpine`, `loadHostedPagedChapter` and `toggleHostedReadingMode`.
 - `ChapterHostHandlers.swift`: `ChapterHostPositionHandler` (client-world `hostPosition`) and `ChapterHostPagerHandler` (client-world `pageAction` and `positionUpdate`), forwarding to `ChapterHostSurface.receive*`.
+- `SpeechCoordinator.swift`: speech playback orchestration with sentence chunking, pluggable `TTSEngine`, spine item auto-advance, and progress notifications.
+- `SpeechProgress+JS.swift`: string generation for `honeycrispSpeechHighlight` client-world JS call.
+- `SpeechStartResolver.swift`: pure resolver mapping caret or selection offset to starting sentence.
+- `SpeechToolbarState.swift`: pure toolbar item state machine for `.speech`.
+- `TTS/TTSEngine.swift`: backend synthesis protocol and voice descriptors.
+- `TTS/AVFoundationTTSEngine.swift`: concrete `AVSpeechSynthesizer` implementation with UTF-16 code unit range handling.
 
 ### Content (`Sources/Content`)
 - `ChapterDecoder.swift`: pure byte decoding (BOM, XML declaration, meta charset, UTF-8, windows-1252/iso-8859-1 fallback).
 - `ChapterMarkup.swift`: syntax mapping, XML/HTML parsing, active content removal, body HTML serialization.
 - `ChapterText.swift`: text extraction matching WebKit TreeWalker, hidden ranges detection.
+- `SpeechTextMap.swift`: bidirectional mapping between spoken sentences and chapter UTF-16 offsets with block-break preservation and skip ranges.
 - `ChapterTransforms.swift`: AO3 formatting, spacer paragraph marking, and preface heading hiding in the DOM.
 - `ChapterURLs.swift`: DOM URL rewriting (resolving against chapter directory, containment in root, scheme URLs and fragments preserved).
 - `ChapterStyles.swift`: publisher stylesheet harvesting (Rule N3) for simple selectors, inlining whitelisted typography (italic, bold, underline/line-through, center/right alignment, monospace) and display:none as `hidden`, discarding geometry/colors, applying Rule N6 HTML5 semantics (`<details open>`, `<nav hidden>`), and stripping raw `<style>` elements (Decision R21).
 - `ChapterPipeline.swift`: pipeline facade for decoding, parsing, transforms, style harvesting, URL rewriting into served body HTML and text, and concurrent batch processing (`renderAll`).
-- `ChapterSearch.swift`: text search (`searchResults`) and speech extraction (`speechText`) over package chapters using `ChapterPipeline`.
+- `ChapterSearch.swift`: text search (`searchResults`) and speech extraction (`speechText`, `speechMap`, `speechChunkRanges`) over package chapters using `ChapterPipeline`.
 
 ### Parsing (`Sources/Parsing`)
 - `BookFormat.swift`: format detection enum (`BookFormat`), UTI mappings, file extension matching, and support predicates.

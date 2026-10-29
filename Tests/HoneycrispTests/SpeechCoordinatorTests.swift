@@ -12,24 +12,34 @@ import XCTest
 @MainActor
 private final class MockSpeechCoordinatorDelegate: SpeechCoordinatorDelegate {
     var stateChanges: [SpeechCoordinator.PlaybackState] = []
-    var nextChapterToReturn: (chapterIndex: Int, text: String)?
-    var prevChapterToReturn: (chapterIndex: Int, text: String)?
+    var progressUpdates: [SpeechProgress] = []
+    var begunChapters: [Int] = []
+    var nextChapterToReturn: (chapterIndex: Int, map: SpeechTextMap)?
+    var prevChapterToReturn: (chapterIndex: Int, map: SpeechTextMap)?
 
     func speechCoordinator(_ coordinator: SpeechCoordinator, didChangeState state: SpeechCoordinator.PlaybackState) {
         stateChanges.append(state)
     }
 
+    func speechCoordinator(_ coordinator: SpeechCoordinator, didAdvanceTo progress: SpeechProgress) {
+        progressUpdates.append(progress)
+    }
+
+    func speechCoordinator(_ coordinator: SpeechCoordinator, willBeginChapter chapterIndex: Int) {
+        begunChapters.append(chapterIndex)
+    }
+
     func speechCoordinatorRequestsNextChapter(
         _ coordinator: SpeechCoordinator,
         afterChapter chapterIndex: Int
-    ) -> (chapterIndex: Int, text: String)? {
+    ) -> (chapterIndex: Int, map: SpeechTextMap)? {
         nextChapterToReturn
     }
 
     func speechCoordinatorRequestsPreviousChapter(
         _ coordinator: SpeechCoordinator,
         beforeChapter chapterIndex: Int
-    ) -> (chapterIndex: Int, text: String)? {
+    ) -> (chapterIndex: Int, map: SpeechTextMap)? {
         prevChapterToReturn
     }
 }
@@ -182,7 +192,7 @@ final class SpeechCoordinatorTests: XCTestCase {
     func testSkipNextAdvancesToNextChapterViaDelegate() {
         let coordinator = SpeechCoordinator()
         let delegate = MockSpeechCoordinatorDelegate()
-        delegate.nextChapterToReturn = (1, "Chapter two sentence one. Chapter two sentence two.")
+        delegate.nextChapterToReturn = (1, SpeechTextMap(plainText: "Chapter two sentence one. Chapter two sentence two."))
         coordinator.delegate = delegate
 
         coordinator.start(chapterIndex: 0, text: "Only one sentence.")
@@ -197,6 +207,46 @@ final class SpeechCoordinatorTests: XCTestCase {
             XCTFail("Expected chapter 1 playing")
         }
 
+        coordinator.stop()
+    }
+
+    func testStartFromOffsetInsideSentenceStartsThatSentence() throws {
+        let html = "<p>Sentence one. Sentence two. Sentence three.</p>"
+        let chapterText = try ChapterText.extract(fromServedBodyHTML: html)
+        let map = SpeechTextMap.make(from: chapterText)
+        let sentences = map.sentences()
+
+        let coordinator = SpeechCoordinator()
+        let delegate = MockSpeechCoordinatorDelegate()
+        coordinator.delegate = delegate
+
+        // Start at offset inside "Sentence two"
+        let s1Offset = sentences[1].chapterStart + 2
+        coordinator.start(chapterIndex: 0, map: map, fromChapterOffset: s1Offset)
+
+        if case let .playing(ch, idx, _) = coordinator.playbackState {
+            XCTAssertEqual(ch, 0)
+            XCTAssertEqual(idx, 1)
+        } else {
+            XCTFail("Expected playing at chunk index 1")
+        }
+
+        XCTAssertEqual(delegate.progressUpdates.count, 1)
+        XCTAssertEqual(delegate.progressUpdates.first?.sentenceChapterRange, sentences[1].chapterStart..<sentences[1].chapterEnd)
+        coordinator.stop()
+    }
+
+    func testWillBeginChapterCalledOnStartAndOnAdvance() {
+        let coordinator = SpeechCoordinator()
+        let delegate = MockSpeechCoordinatorDelegate()
+        delegate.nextChapterToReturn = (1, SpeechTextMap(plainText: "Chapter two sentence."))
+        coordinator.delegate = delegate
+
+        coordinator.start(chapterIndex: 0, text: "Chapter one sentence.")
+        XCTAssertEqual(delegate.begunChapters, [0])
+
+        coordinator.skipNext()
+        XCTAssertEqual(delegate.begunChapters, [0, 1])
         coordinator.stop()
     }
 

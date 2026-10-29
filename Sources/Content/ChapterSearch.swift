@@ -84,56 +84,108 @@ enum ChapterSearch {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Splits continuous chapter text into sentence chunks with abbreviation protection.
-    static func speechChunks(from text: String) -> [String] {
+    static func speechMap(
+        in package: EPUBPackage,
+        at index: Int,
+        options: ChapterTransformOptions = .init()
+    ) -> SpeechTextMap? {
+        guard package.spineURLs.indices.contains(index) else { return nil }
+        let url = package.spineURLs[index]
+        let mediaType = package.spine.indices.contains(index)
+            ? package.manifest[package.spine[index].manifestID]?.mediaType
+            : nil
+        guard let chapterText = try? ChapterPipeline.text(
+            chapterAt: url,
+            mediaType: mediaType,
+            resource: index,
+            root: package.rootFolder,
+            options: options
+        ) else { return nil }
+
+        return SpeechTextMap.make(from: chapterText)
+    }
+
+    /// Finds trimmed sentence chunk ranges in text, preserving abbreviation boundaries.
+    static func speechChunkRanges(in text: String) -> [NSRange] {
         guard !text.isEmpty else { return [] }
-        // Protect common abbreviations from breaking sentences
         let abbreviations = [
             "Mr.", "Mrs.", "Ms.", "Dr.", "Prof.", "Sr.", "Jr.", "vs.", "etc.", "e.g.", "i.e.", "approx.", "fig.",
         ]
         var protected = text
-        for (i, abbr) in abbreviations.enumerated() {
-            let token = "___HC_ABBR_\(i)___"
-            protected = protected.replacingOccurrences(of: abbr, with: token)
+        for abbr in abbreviations {
+            guard abbr.hasSuffix(".") else { continue }
+            let replacement = String(abbr.dropLast()) + "\u{E000}"
+            protected = protected.replacingOccurrences(of: abbr, with: replacement)
         }
 
-        // Split on sentence-ending punctuation followed by whitespace, or paragraph line breaks
         let pattern = #"(?<=[.?!])\s+|[\r\n]+"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
-            return [text]
+            return [trimmedRange(in: text, range: NSRange(location: 0, length: (text as NSString).length))]
         }
 
-        let nsString = protected as NSString
+        let nsString = text as NSString
         let matches = regex.matches(in: protected, range: NSRange(location: 0, length: nsString.length))
-        var chunks: [String] = []
+        var ranges: [NSRange] = []
         var lastIndex = 0
 
         for match in matches {
             let chunkRange = NSRange(location: lastIndex, length: match.range.location - lastIndex)
-            if chunkRange.length > 0 {
-                var chunk = nsString.substring(with: chunkRange).trimmingCharacters(in: .whitespacesAndNewlines)
-                for (i, abbr) in abbreviations.enumerated() {
-                    let token = "___HC_ABBR_\(i)___"
-                    chunk = chunk.replacingOccurrences(of: token, with: abbr)
-                }
-                if !chunk.isEmpty {
-                    chunks.append(chunk)
-                }
+            let trimmed = trimmedRange(in: text, range: chunkRange)
+            if trimmed.length > 0 {
+                ranges.append(trimmed)
             }
             lastIndex = match.range.location + match.range.length
         }
 
         if lastIndex < nsString.length {
-            var chunk = nsString.substring(from: lastIndex).trimmingCharacters(in: .whitespacesAndNewlines)
-            for (i, abbr) in abbreviations.enumerated() {
-                let token = "___HC_ABBR_\(i)___"
-                chunk = chunk.replacingOccurrences(of: token, with: abbr)
-            }
-            if !chunk.isEmpty {
-                chunks.append(chunk)
+            let chunkRange = NSRange(location: lastIndex, length: nsString.length - lastIndex)
+            let trimmed = trimmedRange(in: text, range: chunkRange)
+            if trimmed.length > 0 {
+                ranges.append(trimmed)
             }
         }
 
-        return chunks.isEmpty ? [text] : chunks
+        if ranges.isEmpty {
+            let trimmed = trimmedRange(in: text, range: NSRange(location: 0, length: nsString.length))
+            return trimmed.length > 0 ? [trimmed] : []
+        }
+        return ranges
+    }
+
+    private static func trimmedRange(in text: String, range: NSRange) -> NSRange {
+        let ns = text as NSString
+        guard range.location < ns.length, NSMaxRange(range) <= ns.length else { return NSRange(location: 0, length: 0) }
+
+        var start = range.location
+        var end = NSMaxRange(range)
+
+        let whitespace = CharacterSet.whitespacesAndNewlines
+        while start < end {
+            let ch = ns.character(at: start)
+            if let scalar = Unicode.Scalar(ch), whitespace.contains(scalar) {
+                start += 1
+            } else {
+                break
+            }
+        }
+
+        while end > start {
+            let ch = ns.character(at: end - 1)
+            if let scalar = Unicode.Scalar(ch), whitespace.contains(scalar) {
+                end -= 1
+            } else {
+                break
+            }
+        }
+
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// Splits continuous chapter text into sentence chunks with abbreviation protection.
+    static func speechChunks(from text: String) -> [String] {
+        let ranges = speechChunkRanges(in: text)
+        guard !ranges.isEmpty else { return [] }
+        let ns = text as NSString
+        return ranges.map { ns.substring(with: $0) }
     }
 }

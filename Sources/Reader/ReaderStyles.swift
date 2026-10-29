@@ -37,6 +37,8 @@ enum ReaderStyles {
             --reader-hit-text: \(cosmetics.hitText);
             --reader-hit-active-bg: \(cosmetics.hitActiveBackground);
             --reader-hit-active-text: \(cosmetics.hitActiveText);
+            --reader-speech-sentence: \(cosmetics.speechSentenceBackground);
+            --reader-speech-word: \(cosmetics.speechWordBackground);
             --reader-line-height: \(cosmetics.lineHeight);
             --reader-max-width: \(cosmetics.maxWidth)px;
             --reader-padding-h: \(cosmetics.paddingH)px;
@@ -136,6 +138,29 @@ enum ReaderStyles {
         background: var(--reader-hit-active-bg);
         color: var(--reader-hit-active-text);
         outline: 2px solid var(--reader-hit-text);
+    }
+
+    /* Speech highlight overlay */
+    #hc-speech-hl {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 0;
+        height: 0;
+        pointer-events: none;
+        z-index: 5;
+    }
+    .hc-sp-s {
+        position: absolute;
+        background: var(--reader-speech-sentence);
+        border-radius: 3px;
+        pointer-events: none;
+    }
+    .hc-sp-w {
+        position: absolute;
+        background: var(--reader-speech-word);
+        border-radius: 3px;
+        pointer-events: none;
     }
 
     html {

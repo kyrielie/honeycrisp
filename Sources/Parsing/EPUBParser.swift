@@ -123,6 +123,14 @@ final class EPUBParser: NSObject {
         ChapterSearch.speechText(in: package, at: index, options: options)
     }
 
+    func speechMap(
+        in package: EPUBPackage,
+        at index: Int,
+        options: ChapterTransformOptions = .init()
+    ) -> SpeechTextMap? {
+        ChapterSearch.speechMap(in: package, at: index, options: options)
+    }
+
     // swiftlint:disable:next cyclomatic_complexity function_body_length
     private func parseOPF(at opfURL: URL) throws -> EPUBPackage {
         let rootFolder = opfURL.deletingLastPathComponent()

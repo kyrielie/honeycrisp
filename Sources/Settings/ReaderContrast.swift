@@ -14,6 +14,12 @@ enum ReaderContrast {
         var activeText: String
     }
 
+    /// Spoken sentence and word highlight colors as 8-digit `#RRGGBBAA` hex.
+    struct SpeechColors: Equatable {
+        var sentence: String
+        var word: String
+    }
+
     /// Minimum contrast ratio for text over a hit (WCAG AA for body text).
     static let minimumTextRatio = 4.5
 
@@ -72,5 +78,51 @@ enum ReaderContrast {
             activeBackground: "Highlight",
             activeText: "HighlightText"
         )
+    }
+
+    /// Blends an sRGB foreground color at given `alpha` (0-255) over an sRGB `background` color, returning `#RRGGBB`.
+    static func blend(foreground: String, alpha: UInt8, over background: String) -> String {
+        let fg = rgb(fromCSS: foreground)
+        let bg = rgb(fromCSS: background)
+        let a = Double(alpha) / 255.0
+        let r = Int(round((fg.red * a + bg.red * (1.0 - a)) * 255.0))
+        let g = Int(round((fg.green * a + bg.green * (1.0 - a)) * 255.0))
+        let b = Int(round((fg.blue * a + bg.blue * (1.0 - a)) * 255.0))
+        let clampedR = min(255, max(0, r))
+        let clampedG = min(255, max(0, g))
+        let clampedB = min(255, max(0, b))
+        return String(format: "#%02X%02X%02X", clampedR, clampedG, clampedB)
+    }
+
+    /// Generates high-contrast sentence and word highlight colors (#RRGGBBAA) based on theme colors.
+    static func speechColors(background: String, text: String, link: String) -> SpeechColors {
+        let cleanLink = ReaderCSSSanitizer.hexColor(link, fallback: "#0068DA").uppercased()
+        let sentenceAlphas: [UInt8] = [0x33, 0x2A, 0x22, 0x1A]
+        var chosenSentenceAlpha = sentenceAlphas.last!
+        var sentenceBlended = blend(foreground: cleanLink, alpha: chosenSentenceAlpha, over: background)
+
+        for alpha in sentenceAlphas {
+            let blended = blend(foreground: cleanLink, alpha: alpha, over: background)
+            if ratio(blended, text) >= minimumTextRatio {
+                chosenSentenceAlpha = alpha
+                sentenceBlended = blended
+                break
+            }
+        }
+
+        let wordAlphas: [UInt8] = [0x66, 0x55, 0x44, 0x33]
+        var chosenWordAlpha = wordAlphas.last!
+
+        for alpha in wordAlphas {
+            let blended = blend(foreground: cleanLink, alpha: alpha, over: sentenceBlended)
+            if ratio(blended, text) >= minimumTextRatio {
+                chosenWordAlpha = alpha
+                break
+            }
+        }
+
+        let sentenceHex = String(format: "%@%02X", cleanLink, chosenSentenceAlpha)
+        let wordHex = String(format: "%@%02X", cleanLink, chosenWordAlpha)
+        return SpeechColors(sentence: sentenceHex, word: wordHex)
     }
 }

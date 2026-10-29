@@ -294,10 +294,20 @@ final class SettingsManager {
     static let settingsChangedNotification = Notification.Name("ReaderSettingsChanged")
 
     private let defaults: UserDefaults
+    let themeStore: ThemeStore
 
     /// `defaults` is injectable so tests can use an isolated suite instead of the app's domain.
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, themeStore: ThemeStore? = nil) {
         self.defaults = defaults
+        if let themeStore {
+            self.themeStore = themeStore
+        } else if defaults == .standard {
+            self.themeStore = .shared
+        } else {
+            let tempDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("HoneycrispThemes_\(UUID().uuidString)", isDirectory: true)
+            self.themeStore = ThemeStore(directoryURL: tempDir)
+        }
     }
 
     // MARK: Font
@@ -403,93 +413,96 @@ final class SettingsManager {
         }
     }
 
-    /// JSON-array-in-UserDefaults, same pattern as HistoryManager.entries. Migrates
-    /// the old fixed ReaderTheme selection + single custom color pair into an
-    /// equivalent seeded theme the first time this is read post-upgrade, so
-    /// existing users don't lose their current look.
+    private func loadLegacyThemesFromUserDefaults() -> [Theme] {
+        if let data = defaults.data(forKey: "readerThemes"),
+            let decoded = try? JSONDecoder().decode([Theme].self, from: data),
+            !decoded.isEmpty
+        {
+            if !Self.dataHasPerThemeTypography(data) {
+                let migrated = decoded.map { theme -> Theme in
+                    var updatedTheme = theme
+                    updatedTheme.fontFamily =
+                        self.defaults.string(forKey: "readerFontFamily")
+                        ?? (self.defaults.object(forKey: "readerFont") != nil
+                            ? Self.migrateLegacyFontFamily(defaults: self.defaults)
+                            : FontPresets.defaultStack)
+                    let storedSize = self.defaults.integer(forKey: "readerFontSize")
+                    updatedTheme.fontSizePercent = storedSize == 0 ? 100 : storedSize
+                    let storedLineHeight = self.defaults.double(forKey: "readerLineHeight")
+                    updatedTheme.lineHeight = storedLineHeight == 0 ? 1.6 : storedLineHeight
+                    let storedMaxWidth = self.defaults.integer(forKey: "readerMaxWidth")
+                    updatedTheme.maxWidth = storedMaxWidth == 0 ? 700 : storedMaxWidth
+                    updatedTheme.paddingH =
+                        self.defaults.object(forKey: "readerPaddingH") == nil
+                        ? 24 : self.defaults.integer(forKey: "readerPaddingH")
+                    updatedTheme.paddingV =
+                        self.defaults.object(forKey: "readerPaddingV") == nil
+                        ? 24 : self.defaults.integer(forKey: "readerPaddingV")
+                    return updatedTheme
+                }
+                return migrated
+            }
+            if !Self.dataHasIsDefaultFlag(data) {
+                return Self.backfillSeedKeys(Self.backfillIsDefault(decoded))
+            }
+            if decoded.contains(where: { $0.isDefault && $0.seedKey == nil }) {
+                return Self.backfillSeedKeys(decoded)
+            }
+            let existingSeedKeys = Set(decoded.compactMap(\.seedKey))
+            let missingSeeds = Self.seedThemes.filter { !existingSeedKeys.contains($0.seedKey ?? "") }
+            if !missingSeeds.isEmpty {
+                var migrated = decoded
+                migrated.append(contentsOf: missingSeeds)
+                return migrated
+            }
+            return decoded
+        }
+        return Self.migrateLegacyThemes(defaults: defaults)
+    }
+
+    private func migrateThemesToFilesIfNeeded() {
+        guard !defaults.bool(forKey: "readerThemesMigratedToFiles") else { return }
+
+        var candidateThemes: [Theme]?
+        if let data = defaults.data(forKey: "readerThemes") {
+            if (try? JSONDecoder().decode([Theme].self, from: data)) != nil {
+                candidateThemes = loadLegacyThemesFromUserDefaults()
+            } else {
+                StorageQuarantine.preserve(
+                    data,
+                    key: "readerThemes",
+                    defaults: defaults,
+                    reason: "corrupt readerThemes during file migration"
+                )
+            }
+        }
+
+        if candidateThemes == nil {
+            candidateThemes = loadLegacyThemesFromUserDefaults()
+        }
+
+        if var themesToMigrate = candidateThemes {
+            let existingSeedKeys = Set(themesToMigrate.compactMap(\.seedKey))
+            let missingSeeds = Self.seedThemes.filter { !existingSeedKeys.contains($0.seedKey ?? "") }
+            themesToMigrate.append(contentsOf: missingSeeds)
+
+            if let data = try? JSONEncoder().encode(themesToMigrate) {
+                defaults.set(data, forKey: "readerThemes")
+            }
+            themeStore.setThemes(themesToMigrate, debounce: false)
+            defaults.set(true, forKey: "readerThemesMigratedToFiles")
+        }
+    }
+
+    /// Themes managed by `ThemeStore` (M2.1 / R19). On first access post-upgrade,
+    /// migrates any existing `readerThemes` blob into files.
     var themes: [Theme] {
         get {
-            if let data = defaults.data(forKey: "readerThemes"),
-                let decoded = try? JSONDecoder().decode([Theme].self, from: data),
-                !decoded.isEmpty
-            {
-                if !Self.dataHasPerThemeTypography(data) {
-                    // Pre-upgrade storage: every theme shared one global font/
-                    // size/line-height/margin setting. Backfill each theme
-                    // with whatever that global value currently is (not the
-                    // Theme initializer's hardcoded constants) so upgrading
-                    // doesn't silently reset anyone's chosen look, then
-                    // persist the backfilled version so this only runs once.
-                    let migrated = decoded.map { theme -> Theme in
-                        var updatedTheme = theme
-                        updatedTheme.fontFamily =
-                            self.defaults.string(forKey: "readerFontFamily")
-                            ?? (self.defaults.object(forKey: "readerFont") != nil
-                                ? Self.migrateLegacyFontFamily(defaults: self.defaults)
-                                : FontPresets.defaultStack)
-                        let storedSize = self.defaults.integer(forKey: "readerFontSize")
-                        updatedTheme.fontSizePercent = storedSize == 0 ? 100 : storedSize
-                        let storedLineHeight = self.defaults.double(forKey: "readerLineHeight")
-                        updatedTheme.lineHeight = storedLineHeight == 0 ? 1.6 : storedLineHeight
-                        let storedMaxWidth = self.defaults.integer(forKey: "readerMaxWidth")
-                        updatedTheme.maxWidth = storedMaxWidth == 0 ? 700 : storedMaxWidth
-                        updatedTheme.paddingH =
-                            self.defaults.object(forKey: "readerPaddingH") == nil
-                            ? 24 : self.defaults.integer(forKey: "readerPaddingH")
-                        updatedTheme.paddingV =
-                            self.defaults.object(forKey: "readerPaddingV") == nil
-                            ? 24 : self.defaults.integer(forKey: "readerPaddingV")
-                        return updatedTheme
-                    }
-                    if let data = try? JSONEncoder().encode(migrated) {
-                        defaults.set(data, forKey: "readerThemes")
-                    }
-                    return migrated
-                }
-                if !Self.dataHasIsDefaultFlag(data) {
-                    let migrated = Self.backfillSeedKeys(Self.backfillIsDefault(decoded))
-                    if let data = try? JSONEncoder().encode(migrated) {
-                        defaults.set(data, forKey: "readerThemes")
-                    }
-                    return migrated
-                }
-                if decoded.contains(where: { $0.isDefault && $0.seedKey == nil }) {
-                    let migrated = Self.backfillSeedKeys(decoded)
-                    if let data = try? JSONEncoder().encode(migrated) {
-                        defaults.set(data, forKey: "readerThemes")
-                    }
-                    return migrated
-                }
-                if !self.defaults.bool(forKey: "didSeedExtendedThemes") {
-                    self.defaults.set(true, forKey: "didSeedExtendedThemes")
-                    let existingSeedKeys = Set(decoded.compactMap(\.seedKey))
-                    let missingSeeds = Self.seedThemes.filter { !existingSeedKeys.contains($0.seedKey ?? "") }
-                    if !missingSeeds.isEmpty {
-                        var migrated = decoded
-                        migrated.append(contentsOf: missingSeeds)
-                        if let data = try? JSONEncoder().encode(migrated) {
-                            self.defaults.set(data, forKey: "readerThemes")
-                        }
-                        return migrated
-                    }
-                }
-                return decoded
-            }
-            let migrated = Self.migrateLegacyThemes(defaults: defaults)
-            // Persist directly via `defaults`, not `self.themes = migrated` --
-            // that would call this same getter's setter while the getter is
-            // still on the stack, which Swift's exclusivity checking traps on
-            // ("Attempting to access 'themes' within its own getter").
-            if let data = try? JSONEncoder().encode(migrated) {
-                defaults.set(data, forKey: "readerThemes")
-            }
-            return migrated
+            migrateThemesToFilesIfNeeded()
+            return themeStore.themes
         }
         set {
-            defaults.set(true, forKey: "didSeedExtendedThemes")
-            if let data = try? JSONEncoder().encode(newValue) {
-                defaults.set(data, forKey: "readerThemes")
-            }
+            themeStore.setThemes(newValue)
             notifyChange()
         }
     }
@@ -739,6 +752,30 @@ final class SettingsManager {
         }
     }
 
+    var speechHighlight: Bool {
+        get {
+            defaults.object(forKey: "readerSpeechHighlight") == nil
+                ? true : defaults.bool(forKey: "readerSpeechHighlight")
+        }
+        set { defaults.set(newValue, forKey: "readerSpeechHighlight"); notifyChange() }
+    }
+
+    var speechHighlightWord: Bool {
+        get {
+            defaults.object(forKey: "readerSpeechHighlightWord") == nil
+                ? true : defaults.bool(forKey: "readerSpeechHighlightWord")
+        }
+        set { defaults.set(newValue, forKey: "readerSpeechHighlightWord"); notifyChange() }
+    }
+
+    var speechFollow: Bool {
+        get {
+            defaults.object(forKey: "readerSpeechFollow") == nil
+                ? true : defaults.bool(forKey: "readerSpeechFollow")
+        }
+        set { defaults.set(newValue, forKey: "readerSpeechFollow"); notifyChange() }
+    }
+
     var colsPerScreen: ColsPerScreen {
         get { ColsPerScreen(rawValue: defaults.integer(forKey: "readerColsPerScreen")) ?? .one }
         set { defaults.set(newValue.rawValue, forKey: "readerColsPerScreen"); notifyStructuralChange() }
@@ -983,6 +1020,9 @@ final class SettingsManager {
         spacebarAdvancesPage = true
         speechVoiceIdentifier = nil
         speechRate = AVSpeechUtteranceDefaultSpeechRate
+        speechHighlight = true
+        speechHighlightWord = true
+        speechFollow = true
         defaultReadingMode = .scroll
         colsPerScreen = .one
         newBookOpensIn = .newWindow
@@ -999,7 +1039,7 @@ final class SettingsManager {
     /// Cosmetic changes also post the general notification, so anything (like
     /// HistorySettingsViewController) still watching the old generic notification
     /// keeps working unchanged.
-    private func notifyCosmeticChange() {
+    func notifyCosmeticChange() {
         NotificationCenter.default.post(name: .readerCosmeticSettingsChanged, object: nil)
         notifyChange()
     }

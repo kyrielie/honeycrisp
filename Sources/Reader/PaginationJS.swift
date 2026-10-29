@@ -296,6 +296,21 @@ private let _pjsNavigateToOffset: String = #"""
         _postPositionUpdate();
     };
 
+    window.qlTurnToRange = function (range) {
+        if (!_ready || !range) return 0;
+        document.body.style.transform = '';
+        var pitch = _colAndGap;
+        var padLeft = parseFloat(window.getComputedStyle(document.documentElement).paddingLeft) || 0;
+        var rects = range.getClientRects();
+        var col = 0;
+        if (rects.length > 0 && pitch > 0) {
+            col = Math.max(0, Math.floor((rects[0].left + window.scrollX - padLeft + 2) / pitch));
+        }
+        window.qlScrollToColumn(col);
+        _postPositionUpdate();
+        return col;
+    };
+
     // ─── Navigate to fragment / element ID ───────────────────────────────────
 
     window.qlNavigateToFragment = function (id) {

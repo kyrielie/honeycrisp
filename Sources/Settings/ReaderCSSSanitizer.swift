@@ -30,6 +30,17 @@ enum ReaderCSSSanitizer {
         return "#" + lower
     }
 
+    /// Normalizes `#rrggbbaa` (leading `#` optional, surrounding whitespace ignored) to lowercase
+    /// `#rrggbbaa`. Anything else returns `fallback`.
+    static func hexColorWithAlpha(_ raw: String, fallback: String) -> String {
+        var digits = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if digits.hasPrefix("#") { digits.removeFirst() }
+        guard digits.count == 8, digits.unicodeScalars.allSatisfy(isASCIIHexDigit) else {
+            return fallback
+        }
+        return "#" + digits.lowercased()
+    }
+
     private static func isASCIIHexDigit(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar {
         case "0"..."9", "a"..."f", "A"..."F": return true

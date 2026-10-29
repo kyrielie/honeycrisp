@@ -8,12 +8,14 @@ struct ReadingBookmark: Codable, Identifiable, Equatable {
     var spineIndex: Int
     var characterOffset: Int
     var chapterTitle: String?
+    var snippet: String?
     /// `EPUBAnchor` layout that `characterOffset` was saved against. Stored for a future change that
     /// alters extraction; nothing reads it yet.
     var anchorLayout: Int
 
     init(
         bookURL: URL, label: String, spineIndex: Int, characterOffset: Int, chapterTitle: String? = nil,
+        snippet: String? = nil,
         id: UUID = UUID(), createdAt: Date = Date()
     ) {
         self.id = id
@@ -23,6 +25,7 @@ struct ReadingBookmark: Codable, Identifiable, Equatable {
         self.spineIndex = max(0, spineIndex)
         self.characterOffset = max(0, characterOffset)
         self.chapterTitle = chapterTitle
+        self.snippet = snippet
         self.anchorLayout = EPUBAnchor.currentLayout
     }
 
@@ -37,6 +40,7 @@ struct ReadingBookmark: Codable, Identifiable, Equatable {
         spineIndex = try c.decode(Int.self, forKey: .spineIndex)
         characterOffset = try c.decode(Int.self, forKey: .characterOffset)
         chapterTitle = try c.decodeIfPresent(String.self, forKey: .chapterTitle)
+        snippet = try c.decodeIfPresent(String.self, forKey: .snippet)
         anchorLayout =
             try c.decodeIfPresent(Int.self, forKey: .anchorLayout) ?? EPUBAnchor.legacyLayout
     }
@@ -106,12 +110,14 @@ final class BookmarkManager {
     }
 
     @discardableResult
-    func add(bookURL: URL, label: String, spineIndex: Int, characterOffset: Int, chapterTitle: String?)
-        -> ReadingBookmark
-    {
+    func add(
+        bookURL: URL, label: String, spineIndex: Int, characterOffset: Int,
+        chapterTitle: String? = nil, snippet: String? = nil
+    ) -> ReadingBookmark {
         let item = ReadingBookmark(
             bookURL: bookURL, label: label, spineIndex: spineIndex, characterOffset: characterOffset,
-            chapterTitle: chapterTitle)
+            chapterTitle: chapterTitle, snippet: snippet
+        )
         bookmarks.append(item)
         save()
         return item

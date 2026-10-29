@@ -17,6 +17,8 @@ struct ReaderCosmeticSettings: Equatable {
     var hitText: String
     var hitActiveBackground: String
     var hitActiveText: String
+    var speechSentenceBackground: String = "#0068DA2E"
+    var speechWordBackground: String = "#0068DA66"
     var lineHeight: Double
     var maxWidth: Int
     var paddingH: Int
@@ -42,6 +44,8 @@ struct ReaderCosmeticSettings: Equatable {
             hitText: "#000000",
             hitActiveBackground: "#ffa000",
             hitActiveText: "#000000",
+            speechSentenceBackground: "#0068DA2E",
+            speechWordBackground: "#0068DA66",
             lineHeight: 1.6,
             maxWidth: 700,
             paddingH: 24,
@@ -56,6 +60,9 @@ struct ReaderCosmeticSettings: Equatable {
         let text = ReaderCSSSanitizer.hexColor(settings.effectiveTextCSS, fallback: ReaderCSSSanitizer.fallbackText)
         let link = ReaderCSSSanitizer.hexColor(settings.effectiveLinkCSS, fallback: ReaderCSSSanitizer.fallbackLink)
         let hit = ReaderContrast.hitColors(background: background, text: text)
+        let speech = ReaderContrast.speechColors(background: background, text: text, link: link)
+        let speechSentence = ReaderCSSSanitizer.hexColorWithAlpha(speech.sentence, fallback: "#0068da2e")
+        let speechWord = ReaderCSSSanitizer.hexColorWithAlpha(speech.word, fallback: "#0068da66")
         return ReaderCosmeticSettings(
             fontSizePercent: ReaderCSSSanitizer.fontSizePercent(settings.fontSizePercent),
             fontFamily: ReaderCSSSanitizer.fontFamily(settings.fontFamily),
@@ -66,6 +73,8 @@ struct ReaderCosmeticSettings: Equatable {
             hitText: hit.hitText,
             hitActiveBackground: hit.activeBackground,
             hitActiveText: hit.activeText,
+            speechSentenceBackground: speechSentence,
+            speechWordBackground: speechWord,
             lineHeight: ReaderCSSSanitizer.lineHeight(settings.lineHeight),
             maxWidth: ReaderCSSSanitizer.maxWidth(settings.maxWidth),
             paddingH: ReaderCSSSanitizer.paddingH(settings.paddingH),

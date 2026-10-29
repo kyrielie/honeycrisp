@@ -8,9 +8,27 @@
 import AVFoundation
 import Foundation
 
+struct SpeechProgress: Equatable, Sendable {
+    let chapterIndex: Int
+    let sentenceChapterRange: Range<Int>
+    let wordChapterRange: Range<Int>?
+
+    init(
+        chapterIndex: Int,
+        sentenceChapterRange: Range<Int>,
+        wordChapterRange: Range<Int>? = nil
+    ) {
+        self.chapterIndex = chapterIndex
+        self.sentenceChapterRange = sentenceChapterRange
+        self.wordChapterRange = wordChapterRange
+    }
+}
+
 @MainActor
 protocol SpeechCoordinatorDelegate: AnyObject {
     func speechCoordinator(_ coordinator: SpeechCoordinator, didChangeState state: SpeechCoordinator.PlaybackState)
+    func speechCoordinator(_ coordinator: SpeechCoordinator, didAdvanceTo progress: SpeechProgress)
+    func speechCoordinator(_ coordinator: SpeechCoordinator, willBeginChapter chapterIndex: Int)
     func speechCoordinator(
         _ coordinator: SpeechCoordinator,
         willSpeakWordRange range: Range<String.Index>,
@@ -20,14 +38,16 @@ protocol SpeechCoordinatorDelegate: AnyObject {
     func speechCoordinatorRequestsNextChapter(
         _ coordinator: SpeechCoordinator,
         afterChapter chapterIndex: Int
-    ) -> (chapterIndex: Int, text: String)?
+    ) -> (chapterIndex: Int, map: SpeechTextMap)?
     func speechCoordinatorRequestsPreviousChapter(
         _ coordinator: SpeechCoordinator,
         beforeChapter chapterIndex: Int
-    ) -> (chapterIndex: Int, text: String)?
+    ) -> (chapterIndex: Int, map: SpeechTextMap)?
 }
 
 extension SpeechCoordinatorDelegate {
+    func speechCoordinator(_ coordinator: SpeechCoordinator, didAdvanceTo progress: SpeechProgress) {}
+    func speechCoordinator(_ coordinator: SpeechCoordinator, willBeginChapter chapterIndex: Int) {}
     func speechCoordinator(
         _ coordinator: SpeechCoordinator,
         willSpeakWordRange range: Range<String.Index>,
@@ -37,34 +57,35 @@ extension SpeechCoordinatorDelegate {
     func speechCoordinatorRequestsPreviousChapter(
         _ coordinator: SpeechCoordinator,
         beforeChapter chapterIndex: Int
-    ) -> (chapterIndex: Int, text: String)? { nil }
+    ) -> (chapterIndex: Int, map: SpeechTextMap)? { nil }
 }
 
 /// Orchestrates text-to-speech reading with sentence chunking, pluggable TTSEngine backend,
 /// automatic spine item auto-advance, and skip navigation.
 @MainActor
 final class SpeechCoordinator: NSObject {
-    public enum PlaybackState: Equatable, Sendable {
+    enum PlaybackState: Equatable, Sendable {
         case idle
         case playing(chapterIndex: Int, chunkIndex: Int, totalChunks: Int)
         case paused(chapterIndex: Int, chunkIndex: Int, totalChunks: Int)
 
-        public var isPlaying: Bool { if case .playing = self { return true } else { return false } }
-        public var isPaused: Bool { if case .paused = self { return true } else { return false } }
+        var isPlaying: Bool { if case .playing = self { return true } else { return false } }
+        var isPaused: Bool { if case .paused = self { return true } else { return false } }
+        var isIdle: Bool { if case .idle = self { return true } else { return false } }
     }
 
     weak var delegate: SpeechCoordinatorDelegate?
 
-    public private(set) var playbackState: PlaybackState = .idle {
+    private(set) var playbackState: PlaybackState = .idle {
         didSet {
             if oldValue != playbackState { delegate?.speechCoordinator(self, didChangeState: playbackState) }
         }
     }
 
-    public var rate: Float = AVSpeechUtteranceDefaultSpeechRate
-    public var voiceIdentifier: String?
+    var rate: Float = AVSpeechUtteranceDefaultSpeechRate
+    var voiceIdentifier: String?
 
-    public var engine: TTSEngine {
+    var engine: TTSEngine {
         didSet {
             let wasPlaying = playbackState.isPlaying
             oldValue.stop()
@@ -74,7 +95,8 @@ final class SpeechCoordinator: NSObject {
     }
 
     private var currentChapterIndex: Int = 0
-    private var currentChunks: [String] = []
+    private var currentMap: SpeechTextMap = SpeechTextMap(text: "", chapterOffsets: [])
+    private var currentSentences: [SpeechSentence] = []
     private var currentChunkIndex: Int = 0
 
     init(engine: TTSEngine? = nil) {
@@ -84,29 +106,35 @@ final class SpeechCoordinator: NSObject {
         self.engine.delegate = self
     }
 
-    public var availableVoices: [TTSVoice] {
+    var availableVoices: [TTSVoice] {
         engine.availableVoices
     }
 
-    public static var defaultVoices: [TTSVoice] {
+    static var defaultVoices: [TTSVoice] {
         AVFoundationTTSEngine().availableVoices
     }
 
-    public var preferredVoiceIdentifier: String? {
+    var preferredVoiceIdentifier: String? {
         engine.preferredVoiceIdentifier
     }
 
-    public static func displayName(for voice: TTSVoice) -> String {
+    static func displayName(for voice: TTSVoice) -> String {
         voice.displayName
     }
 
-    func start(chapterIndex: Int, text: String) {
-        let chunks = ChapterSearch.speechChunks(from: text)
-        guard !chunks.isEmpty else { stop(); return }
+    func start(chapterIndex: Int, map: SpeechTextMap, fromChapterOffset offset: Int = 0) {
+        let sentences = map.sentences()
+        guard !sentences.isEmpty else { stop(); return }
         currentChapterIndex = chapterIndex
-        currentChunks = chunks
-        currentChunkIndex = 0
+        currentMap = map
+        currentSentences = sentences
+        currentChunkIndex = map.sentenceIndex(containingOrAfter: offset) ?? max(0, sentences.count - 1)
+        delegate?.speechCoordinator(self, willBeginChapter: chapterIndex)
         playCurrentChunk()
+    }
+
+    func start(chapterIndex: Int, text: String) {
+        start(chapterIndex: chapterIndex, map: SpeechTextMap(plainText: text), fromChapterOffset: 0)
     }
 
     func pause() {
@@ -132,15 +160,16 @@ final class SpeechCoordinator: NSObject {
 
     func stop() {
         playbackState = .idle
-        currentChunks = []
+        currentMap = SpeechTextMap(text: "", chapterOffsets: [])
+        currentSentences = []
         currentChunkIndex = 0
         engine.stop()
     }
 
     func skipNext() {
-        guard !currentChunks.isEmpty else { return }
+        guard !currentSentences.isEmpty else { return }
         let wasPlaying = playbackState.isPlaying
-        if currentChunkIndex + 1 < currentChunks.count {
+        if currentChunkIndex + 1 < currentSentences.count {
             currentChunkIndex += 1
             updateChunkPosition(wasPlaying: wasPlaying)
         } else {
@@ -149,7 +178,7 @@ final class SpeechCoordinator: NSObject {
     }
 
     func skipPrevious() {
-        guard !currentChunks.isEmpty else { return }
+        guard !currentSentences.isEmpty else { return }
         let wasPlaying = playbackState.isPlaying
         if currentChunkIndex > 0 {
             currentChunkIndex -= 1
@@ -158,11 +187,13 @@ final class SpeechCoordinator: NSObject {
             self,
             beforeChapter: currentChapterIndex
         ) {
-            let chunks = ChapterSearch.speechChunks(from: prev.text)
-            guard !chunks.isEmpty else { return }
+            let sentences = prev.map.sentences()
+            guard !sentences.isEmpty else { return }
             currentChapterIndex = prev.chapterIndex
-            currentChunks = chunks
-            currentChunkIndex = max(0, chunks.count - 1)
+            currentMap = prev.map
+            currentSentences = sentences
+            currentChunkIndex = max(0, sentences.count - 1)
+            delegate?.speechCoordinator(self, willBeginChapter: prev.chapterIndex)
             updateChunkPosition(wasPlaying: wasPlaying)
         }
     }
@@ -183,23 +214,29 @@ final class SpeechCoordinator: NSObject {
             playbackState = .paused(
                 chapterIndex: currentChapterIndex,
                 chunkIndex: currentChunkIndex,
-                totalChunks: currentChunks.count
+                totalChunks: currentSentences.count
             )
         }
     }
 
     private func playCurrentChunk() {
-        guard currentChunks.indices.contains(currentChunkIndex) else {
+        guard currentSentences.indices.contains(currentChunkIndex) else {
             advanceToNextChapter(autoPlay: true)
             return
         }
-        let chunk = currentChunks[currentChunkIndex]
+        let sentence = currentSentences[currentChunkIndex]
         playbackState = .playing(
             chapterIndex: currentChapterIndex,
             chunkIndex: currentChunkIndex,
-            totalChunks: currentChunks.count
+            totalChunks: currentSentences.count
         )
-        engine.speak(chunk: chunk, voiceIdentifier: voiceIdentifier, rate: rate)
+        let progress = SpeechProgress(
+            chapterIndex: currentChapterIndex,
+            sentenceChapterRange: sentence.chapterStart..<sentence.chapterEnd,
+            wordChapterRange: nil
+        )
+        delegate?.speechCoordinator(self, didAdvanceTo: progress)
+        engine.speak(chunk: sentence.text, voiceIdentifier: voiceIdentifier, rate: rate)
     }
 
     private func advanceToNextChapter(autoPlay: Bool) {
@@ -207,21 +244,23 @@ final class SpeechCoordinator: NSObject {
             stop()
             return
         }
-        let chunks = ChapterSearch.speechChunks(from: next.text)
-        guard !chunks.isEmpty else {
+        let sentences = next.map.sentences()
+        guard !sentences.isEmpty else {
             currentChapterIndex = next.chapterIndex
             advanceToNextChapter(autoPlay: autoPlay)
             return
         }
         currentChapterIndex = next.chapterIndex
-        currentChunks = chunks
+        currentMap = next.map
+        currentSentences = sentences
         currentChunkIndex = 0
+        delegate?.speechCoordinator(self, willBeginChapter: next.chapterIndex)
         updateChunkPosition(wasPlaying: autoPlay)
     }
 
     fileprivate func handleUtteranceFinished() {
         guard playbackState.isPlaying else { return }
-        if currentChunkIndex + 1 < currentChunks.count {
+        if currentChunkIndex + 1 < currentSentences.count {
             currentChunkIndex += 1
             playCurrentChunk()
         } else {
@@ -248,5 +287,24 @@ extension SpeechCoordinator: TTSEngineDelegate {
             inChunk: text,
             chapterIndex: currentChapterIndex
         )
+
+        guard currentSentences.indices.contains(currentChunkIndex) else { return }
+        let sentence = currentSentences[currentChunkIndex]
+        let ns = NSRange(range, in: text)
+        guard ns.location != NSNotFound, ns.length > 0 else { return }
+
+        let spokenWordStart = sentence.spoken.location + ns.location
+        let spokenWordEnd = spokenWordStart + ns.length
+        guard spokenWordStart < currentMap.chapterOffsets.count,
+              spokenWordEnd <= currentMap.chapterOffsets.count else { return }
+
+        let chapterWordStart = currentMap.chapterOffsets[spokenWordStart]
+        let chapterWordEnd = currentMap.chapterOffsets[spokenWordEnd - 1] + 1
+        let progress = SpeechProgress(
+            chapterIndex: currentChapterIndex,
+            sentenceChapterRange: sentence.chapterStart..<sentence.chapterEnd,
+            wordChapterRange: chapterWordStart..<chapterWordEnd
+        )
+        delegate?.speechCoordinator(self, didAdvanceTo: progress)
     }
 }

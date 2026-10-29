@@ -71,6 +71,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        MediaKeyCoordinator.shared.setup()
         if !ReaderWindowController.hasOpenWindows {
             let windowController = ReaderWindowController()
             windowController.showWindow(nil)
@@ -147,6 +148,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             wc.showWindow(nil)
         }
         return true
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if SettingsManager.shared.themeStore.rescanIfChanged() {
+            SettingsManager.shared.notifyCosmeticChange()
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        SettingsManager.shared.themeStore.flushPendingWrites()
     }
 
     // MARK: - Menu Setup
@@ -359,9 +370,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         autoScrollItem.submenu = autoScrollMenu
         readingMenu.addItem(autoScrollItem)
 
-        let speechMenu = NSMenu(title: "Speak Current Chapter")
+        let speechMenu = NSMenu(title: "Speech")
         speechMenu.addItem(
-            NSMenuItem(title: "Speak from Current Location", action: #selector(speakCurrentLocation), keyEquivalent: "")
+            NSMenuItem(title: "Speak from Selection or Top of Page", action: #selector(speakCurrentLocation), keyEquivalent: "")
         )
         speechMenu.addItem(NSMenuItem(title: "Pause / Resume", action: #selector(toggleSpeechPause), keyEquivalent: ""))
         speechMenu.addItem(NSMenuItem(title: "Stop Speaking", action: #selector(stopSpeech), keyEquivalent: ""))
@@ -369,7 +380,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         speechMenu.addItem(NSMenuItem(title: "Slower Speech", action: #selector(slowerSpeech), keyEquivalent: ""))
         speechMenu.addItem(NSMenuItem(title: "Faster Speech", action: #selector(fasterSpeech), keyEquivalent: ""))
         speechMenu.addItem(.separator())
-        let speechItem = NSMenuItem(title: "Speak Current Chapter", action: nil, keyEquivalent: "")
+        let speechItem = NSMenuItem(title: "Speech", action: nil, keyEquivalent: "")
         speechItem.submenu = speechMenu
         readingMenu.addItem(speechItem)
 
@@ -570,7 +581,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Helpers
 
-    private func readerVC() -> ReaderViewController? {
+    func readerVC() -> ReaderViewController? {
         TOCPanel.hostWindow(for: NSApp.keyWindow)?.contentViewController as? ReaderViewController
     }
 }
@@ -628,6 +639,9 @@ extension AppDelegate: NSMenuDelegate {
                 let item = NSMenuItem(title: bookmark.label, action: #selector(openBookmark(_:)), keyEquivalent: "")
                 item.target = self
                 item.representedObject = BookmarkMenuContext(bookmark: bookmark, reader: reader)
+                if let snippet = bookmark.snippet, !snippet.isEmpty {
+                    item.toolTip = snippet
+                }
                 let actions = NSMenu(title: bookmark.label)
                 let rename = NSMenuItem(title: "Rename…", action: #selector(renameBookmark(_:)), keyEquivalent: "")
                 rename.target = self
@@ -649,13 +663,26 @@ extension AppDelegate: NSMenuDelegate {
             item.target = self
             menu.addItem(item)
         }
+        menu.addItem(.separator())
+        let showThemesItem = NSMenuItem(
+            title: "Show Themes in Finder",
+            action: #selector(showThemesInFinderAction(_:)),
+            keyEquivalent: ""
+        )
+        showThemesItem.target = self
+        menu.addItem(showThemesItem)
+    }
+
+    @objc private func showThemesInFinderAction(_ sender: Any?) {
+        let url = SettingsManager.shared.themeStore.directoryURL
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     @objc private func clearRecent() { HistoryManager.shared.clearAll() }
 }
 
 extension AppDelegate: NSMenuItemValidation {
-    // swiftlint:disable:next cyclomatic_complexity
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(selectTheme(_:)) {
             menuItem.state = (menuItem.representedObject as? UUID == SettingsManager.shared.currentThemeID) ? .on : .off
@@ -679,10 +706,27 @@ extension AppDelegate: NSMenuItemValidation {
             #selector(toggleSpeechPause), #selector(stopSpeech), #selector(slowerSpeech), #selector(fasterSpeech),
         ]
         if readingActions.contains(menuItem.action) {
+            guard let rvc = readerVC(), rvc.currentBookURL() != nil else { return false }
             if menuItem.action == #selector(startAutoScroll) || menuItem.action == #selector(stopAutoScroll) {
-                return readerVC()?.currentBookURL() != nil && readerVC()?.currentMode == .scroll
+                return rvc.currentMode == .scroll
             }
-            return readerVC()?.currentBookURL() != nil
+            if menuItem.action == #selector(toggleSpeechPause) {
+                let playback = rvc.speechCoordinator.playbackState
+                if playback.isPlaying {
+                    menuItem.title = "Pause Speech"
+                    return true
+                } else if playback.isPaused {
+                    menuItem.title = "Resume Speech"
+                    return true
+                } else {
+                    menuItem.title = "Pause / Resume"
+                    return false
+                }
+            }
+            if menuItem.action == #selector(stopSpeech) {
+                return rvc.speechCoordinator.playbackState.isPlaying || rvc.speechCoordinator.playbackState.isPaused
+            }
+            return true
         }
         let bookActions: [Selector?] = [
             #selector(startReading), #selector(goToBeginning), #selector(goToEnd), #selector(searchInBook), #selector(showTOC),

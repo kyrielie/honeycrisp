@@ -157,7 +157,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+        guard let urls = sender.droppedSupportedURLs(), !urls.isEmpty else {
             return false
         }
         if let appDelegate = NSApp.delegate as? AppDelegate {
@@ -165,16 +165,6 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate {
             return true
         }
         return false
-    }
-
-    private func droppedSupportedURLs(from sender: NSDraggingInfo) -> [URL]? {
-        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
-        guard let urls = sender.draggingPasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: options
-        ) as? [URL] else { return nil }
-        let valid = urls.filter { BookFormat.isSupported(url: $0) }
-        return valid.isEmpty ? nil : valid
     }
 }
 
@@ -192,7 +182,7 @@ final class ReaderWindow: NSWindow {
     }
 
     func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+        guard let urls = sender.droppedSupportedURLs(), !urls.isEmpty else {
             return []
         }
         return .copy
@@ -203,14 +193,14 @@ final class ReaderWindow: NSWindow {
     }
 
     func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+        guard let urls = sender.droppedSupportedURLs(), !urls.isEmpty else {
             return false
         }
         return true
     }
 
     func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+        guard let urls = sender.droppedSupportedURLs(), !urls.isEmpty else {
             return false
         }
         if let appDelegate = NSApp.delegate as? AppDelegate {
@@ -218,16 +208,6 @@ final class ReaderWindow: NSWindow {
             return true
         }
         return false
-    }
-
-    private func droppedSupportedURLs(from sender: NSDraggingInfo) -> [URL]? {
-        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
-        guard let urls = sender.draggingPasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: options
-        ) as? [URL] else { return nil }
-        let valid = urls.filter { BookFormat.isSupported(url: $0) }
-        return valid.isEmpty ? nil : valid
     }
 
     override func keyDown(with event: NSEvent) {
@@ -245,5 +225,16 @@ final class ReaderWindow: NSWindow {
     }
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+}
 
+extension NSDraggingInfo {
+    func droppedSupportedURLs() -> [URL]? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        guard let urls = draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: options
+        ) as? [URL] else { return nil }
+        let valid = urls.filter { BookFormat.isSupported(url: $0) }
+        return valid.isEmpty ? nil : valid
+    }
 }

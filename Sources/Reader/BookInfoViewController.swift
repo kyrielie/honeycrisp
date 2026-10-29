@@ -153,10 +153,53 @@ final class BookInfoViewController: NSViewController {
         descText.isSelectable = true
         descText.drawsBackground = false
         descText.font = NSFont.systemFont(ofSize: 11)
-        descText.string = desc.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        descText.string = Self.cleanDescription(desc)
         descScroll.documentView = descText
         container.addArrangedSubview(descScroll)
         return container
+    }
+
+    static func cleanDescription(_ raw: String) -> String {
+        var text = raw.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        let namedEntities: [(String, String)] = [
+            ("&amp;", "&"),
+            ("&quot;", "\""),
+            ("&#39;", "'"),
+            ("&apos;", "'"),
+            ("&lt;", "<"),
+            ("&gt;", ">"),
+            ("&mdash;", "—"),
+            ("&ndash;", "–"),
+            ("&hellip;", "…"),
+            ("&nbsp;", " "),
+            ("&copy;", "©"),
+            ("&trade;", "™"),
+            ("&reg;", "®"),
+        ]
+        for (entity, replacement) in namedEntities {
+            text = text.replacingOccurrences(of: entity, with: replacement)
+        }
+        if text.contains("&#") {
+            let regex = try? NSRegularExpression(pattern: "&#(x?[0-9a-fA-F]+);", options: [.caseInsensitive])
+            let nsString = text as NSString
+            let matches = regex?.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length)) ?? []
+            for match in matches.reversed() {
+                let entityString = nsString.substring(with: match.range(at: 1))
+                var codePoint: UInt32?
+                if entityString.lowercased().hasPrefix("x") {
+                    let hex = String(entityString.dropFirst())
+                    codePoint = UInt32(hex, radix: 16)
+                } else {
+                    codePoint = UInt32(entityString, radix: 10)
+                }
+                if let cp = codePoint, let scalar = UnicodeScalar(cp) {
+                    let char = String(Character(scalar))
+                    text = (text as NSString).replacingCharacters(in: match.range, with: char)
+                }
+            }
+        }
+        text = text.replacingOccurrences(of: "[ \t\r\n]+", with: " ", options: .regularExpression)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func createButtonBox() -> NSView {

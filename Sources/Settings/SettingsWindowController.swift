@@ -950,17 +950,27 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         grid.addRow(with: [label("Horizontal Margin:"), makePaddingHRow()])
         grid.addRow(with: [label("Vertical Margin:"), makePaddingVRow()])
 
-        let themeActions = NSStackView(views: [
+        let themeActionButtons = [
             NSButton(title: "Import Theme…", target: self, action: #selector(importThemeClicked(_:))),
             NSButton(title: "Export Theme…", target: self, action: #selector(exportThemeClicked(_:))),
+            NSButton(title: "Open Themes Folder", target: self, action: #selector(openThemesFolderClicked(_:))),
             NSButton(title: "Reset to Defaults", target: self, action: #selector(resetToDefaults(_:))),
-        ])
+        ]
+        let themeActions = NSStackView(views: themeActionButtons)
         themeActions.orientation = .horizontal
         themeActions.spacing = 8
         themeActions.arrangedSubviews.forEach { ($0 as? NSButton)?.bezelStyle = .rounded }
         let actionsGridRow = grid.addRow(with: [themeActions, NSGridCell.emptyContentView])
         actionsGridRow.mergeCells(in: NSRange(location: 0, length: 2))
         actionsGridRow.cell(at: 0).xPlacement = .fill
+
+        if SettingsManager.shared.themeStore.isReadOnly {
+            let warnLabel = NSTextField(labelWithString: "Themes folder is read-only. Changes will not be saved to disk.")
+            warnLabel.font = NSFont.systemFont(ofSize: 11)
+            warnLabel.textColor = .systemRed
+            let warnRow = grid.addRow(with: [warnLabel, NSGridCell.emptyContentView])
+            warnRow.mergeCells(in: NSRange(location: 0, length: 2))
+        }
 
         // ── Preview (responsive: below the form, no fixed height, sized by its
         // own wrapped text at whatever width the window currently is) ────────
@@ -1064,7 +1074,12 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
         // while this tab isn't visible; re-sync so the expanded editor and
         // typography controls always match whatever's actually selected
         // rather than whatever was selected the last time this tab appeared.
-        if expandedThemeID != SettingsManager.shared.currentThemeID {
+        if SettingsManager.shared.themeStore.rescanIfChanged() {
+            expandedThemeID = SettingsManager.shared.currentThemeID
+            refreshAllTypographyControls()
+            rebuildThemeGrid()
+            refreshPreview()
+        } else if expandedThemeID != SettingsManager.shared.currentThemeID {
             expandedThemeID = SettingsManager.shared.currentThemeID
             refreshAllTypographyControls()
             rebuildThemeGrid()
@@ -1150,6 +1165,11 @@ final class AppearanceSettingsViewController: NSViewController, SettingsPaneSizi
                 self.refreshPreview()
             } catch { self.showThemeTransferError(error) }
         }
+    }
+
+    @objc private func openThemesFolderClicked(_ sender: Any?) {
+        let url = SettingsManager.shared.themeStore.directoryURL
+        NSWorkspace.shared.open(url)
     }
 
     private func showThemeTransferError(_ error: Error) {

@@ -51,7 +51,8 @@ final class ReaderViewController: NSViewController {
     private var currentFlowOffset: Int = 0
     private var navigationHistory = NavigationHistoryStack<NavigationLocation>()
     private var tocEntries: [TOCEntry] = []
-    private var currentChapterTitle: String?
+    private(set) var currentChapterTitle: String?
+    var currentBookTitle: String? { currentPackage?.title }
     private var pendingSearchTerm: String?
     private var pendingFragment: String?
     // MARK: - Page count (menu bar display)
@@ -162,6 +163,10 @@ final class ReaderViewController: NSViewController {
     /// stops scrolling and just sits reading still gets saved periodically.
     private var positionSaveTimer: Timer?
     let speechCoordinator = SpeechCoordinator()
+    private var lastSpeechProgress: SpeechProgress?
+    private var speechHighlightInFlight = false
+    private var pendingSpeechProgress: SpeechProgress?
+    private weak var speechButton: NSButton?
     private var autoScrollSpeed: Double { SettingsManager.shared.autoScrollSpeed }
     private var isAutoScrolling = false
     private var isAdjustingAutoScrollSpeed = false
@@ -240,6 +245,9 @@ final class ReaderViewController: NSViewController {
             guard let self else { return }
             self.paginatedTotalColumns = totalCols
             self.updatePageCountLabel()
+            if self.speechCoordinator.playbackState.isPlaying {
+                self.pushSpeechHighlight()
+            }
         }
         // The restore scroll for .start/.end/.fraction/.characterOffset all
         // happen via the client-world pager bootstrap before first paint — not via a
@@ -372,6 +380,10 @@ final class ReaderViewController: NSViewController {
             self,
             selector: #selector(scheduleStructuralReload),
             name: .readerStructuralSettingsChanged, object: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSettingsChanged),
+            name: SettingsManager.settingsChangedNotification, object: nil)
         applyDynamicSettings()
         // Every theme now carries both a light and dark ThemeColorSet (see
         // SettingsManager.effectiveColorSet), so a system appearance flip changes
@@ -875,6 +887,13 @@ final class ReaderViewController: NSViewController {
     private struct PageLocation {
         let offset: Int
         let visibleRange: ClosedRange<Int>?
+        let snippet: String?
+
+        init(offset: Int, visibleRange: ClosedRange<Int>?, snippet: String? = nil) {
+            self.offset = offset
+            self.visibleRange = visibleRange
+            self.snippet = snippet
+        }
     }
 
     /// Reads the current page location from the web view. The visible range is
@@ -892,10 +911,12 @@ final class ReaderViewController: NSViewController {
             "(function(){"
             + "var o=\(offsetFunction)?\(offsetFunction)(\(spineIndex)):0;"
             + "var r=\(rangeFunction)?\(rangeFunction)(\(isScroll),\(spineIndex)):null;"
-            + "return JSON.stringify({offset:o,range:r});})()"
+            + "var sn=window.honeycrispSnippetAtOffset?window.honeycrispSnippetAtOffset(\(spineIndex),o,120):'';"
+            + "return JSON.stringify({offset:o,range:r,snippet:sn});})()"
         evaluateInSurfaceWorld(script) { result, _ in
             var offset = 0
             var visible: ClosedRange<Int>?
+            var snippet: String?
             if let text = result as? String,
                 let data = text.data(using: .utf8),
                 let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -906,8 +927,11 @@ final class ReaderViewController: NSViewController {
                 {
                     visible = bounds[0].intValue...bounds[1].intValue
                 }
+                if let rawSnippet = dict["snippet"] as? String, !rawSnippet.isEmpty {
+                    snippet = rawSnippet
+                }
             }
-            completion(PageLocation(offset: offset, visibleRange: visible))
+            completion(PageLocation(offset: offset, visibleRange: visible, snippet: snippet))
         }
     }
 
@@ -944,7 +968,8 @@ final class ReaderViewController: NSViewController {
                 let label = self.currentChapterTitle.map { "\($0) · \(ordinal)" } ?? "Bookmark · \(ordinal)"
                 let bookmark = BookmarkManager.shared.add(
                     bookURL: url, label: label, spineIndex: spineIndex,
-                    characterOffset: location.offset, chapterTitle: self.currentChapterTitle)
+                    characterOffset: location.offset, chapterTitle: self.currentChapterTitle,
+                    snippet: location.snippet)
                 self.currentPositionBookmarkID = bookmark.id
             } else {
                 // Removes every bookmark on this page, including duplicates created
@@ -1120,18 +1145,100 @@ final class ReaderViewController: NSViewController {
                 + "window.honeycrispAutoScrollFrame = null;")
     }
 
-    func speakCurrentLocation() {
+    func speak(mode: String = "auto", point: NSPoint? = nil) {
         guard currentPackage != nil else { return }
         let index = currentMode == .scroll ? activeScrollSpineIndex : currentSpineIndex
-        evaluateInSurfaceWorld("window.honeycrispCurrentSpeechText(\(index));") { [weak self] result, _ in
-            guard let self, let text = result as? String, !text.isEmpty else { return }
-            self.speechCoordinator.start(chapterIndex: index, text: text)
+        let pointArgs: String
+        if let point {
+            pointArgs = "\(point.x), \(point.y)"
+        } else {
+            pointArgs = "null, null"
+        }
+        evaluateInSurfaceWorld("window.honeycrispSpeechStartOffset(\(index), '\(mode)', \(pointArgs));") { [weak self] result, _ in
+            guard let self,
+                  let jsonString = result as? String,
+                  let data = jsonString.data(using: .utf8),
+                  let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let res = dict["resource"] as? Int,
+                  let offset = dict["offset"] as? Int,
+                  let pkg = self.currentPackage else { return }
+
+            let sourceStr = dict["source"] as? String ?? "start"
+            let source = SpeechStartSource(rawValue: sourceStr) ?? .start
+
+            let parser = EPUBParser()
+            let options = ChapterTransformOptions.current(from: SettingsManager.shared)
+            guard let map = parser.speechMap(in: pkg, at: res, options: options) else { return }
+            let sentences = map.sentences()
+            guard !sentences.isEmpty else { return }
+
+            let targetIdx = SpeechStartResolver.sentenceIndex(
+                in: sentences,
+                caretOffset: offset,
+                source: source,
+                nextStartIsOnScreen: true
+            ) ?? 0
+
+            let startOffset = sentences[targetIdx].chapterStart
+            self.speechCoordinator.start(chapterIndex: res, map: map, fromChapterOffset: startOffset)
+        }
+    }
+
+    func speakCurrentLocation() {
+        speak(mode: "auto")
+    }
+
+    @objc func speakFromContextMenu(_ sender: NSMenuItem) {
+        if let val = sender.representedObject as? NSValue {
+            speak(mode: "point", point: val.pointValue)
+        } else {
+            speak(mode: "auto")
         }
     }
 
     func toggleSpeechPause() {
         speechCoordinator.togglePlayPause { [weak self] in
-            self?.speakCurrentLocation()
+            self?.speak(mode: "auto")
+        }
+    }
+
+    @objc func speechToolbarAction(_ sender: Any?) {
+        if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
+            toggleSpeechPause()
+        } else if speechCoordinator.playbackState.isPlaying {
+            stopSpeech()
+        } else {
+            speak(mode: "auto")
+        }
+    }
+
+    private func updateSpeechButton() {
+        guard let btn = speechButton else { return }
+        let state = SpeechToolbarState(playback: speechCoordinator.playbackState, hasBook: currentPackage != nil)
+        btn.image = NSImage(systemSymbolName: state.symbolName, accessibilityDescription: state.tooltip)
+        btn.toolTip = state.tooltip
+        btn.setAccessibilityLabel(state.tooltip)
+        btn.isEnabled = state.isEnabled
+    }
+
+    private func pushSpeechHighlight() {
+        guard SettingsManager.shared.speechHighlight, let progress = lastSpeechProgress else { return }
+        if speechHighlightInFlight {
+            pendingSpeechProgress = progress
+            return
+        }
+        speechHighlightInFlight = true
+        let js = progress.highlightJS(
+            includeWord: SettingsManager.shared.speechHighlightWord,
+            follow: SettingsManager.shared.speechFollow
+        )
+        evaluateInSurfaceWorld(js) { [weak self] _, _ in
+            guard let self else { return }
+            self.speechHighlightInFlight = false
+            if let next = self.pendingSpeechProgress {
+                self.pendingSpeechProgress = nil
+                self.pushSpeechHighlight()
+            }
         }
     }
 
@@ -1438,6 +1545,15 @@ final class ReaderViewController: NSViewController {
     /// `scheduleStructuralReload` instead, not this.
     @objc func applyDynamicSettings() {
         applyCosmeticCSSUpdate()
+    }
+
+    @objc private func handleSettingsChanged() {
+        if !SettingsManager.shared.speechHighlight {
+            evaluateInSurfaceWorld("window.honeycrispSpeechClear();")
+        } else if speechCoordinator.playbackState.isPlaying {
+            pushSpeechHighlight()
+        }
+        updateSpeechButton()
     }
 
     /// JS-only live patch of the `#honeycrisp-vars` `<style>` element's textContent —
@@ -2179,20 +2295,41 @@ extension ReaderViewController: NSWindowDelegate {
 
 extension ReaderViewController: SpeechCoordinatorDelegate {
     func speechCoordinator(_ coordinator: SpeechCoordinator, didChangeState state: SpeechCoordinator.PlaybackState) {
-        // Observers or UI controls can bind here
+        updateSpeechButton()
+        MediaKeyCoordinator.shared.updateNowPlaying(state: state, reader: self)
+        if case .idle = state {
+            lastSpeechProgress = nil
+            pendingSpeechProgress = nil
+            evaluateInSurfaceWorld("window.honeycrispSpeechClear();")
+        }
+    }
+
+    func speechCoordinator(_ coordinator: SpeechCoordinator, didAdvanceTo progress: SpeechProgress) {
+        lastSpeechProgress = progress
+        if SettingsManager.shared.speechHighlight {
+            pushSpeechHighlight()
+        }
+    }
+
+    func speechCoordinator(_ coordinator: SpeechCoordinator, willBeginChapter chapterIndex: Int) {
+        if currentMode == .paginated, chapterIndex != currentSpineIndex, let pkg = currentPackage {
+            currentSpineIndex = chapterIndex
+            updateCurrentChapter(spineIndex: chapterIndex)
+            loadSpineItem(index: chapterIndex, restorePosition: .start, pkg: pkg)
+        }
     }
 
     func speechCoordinatorRequestsNextChapter(
         _ coordinator: SpeechCoordinator,
         afterChapter chapterIndex: Int
-    ) -> (chapterIndex: Int, text: String)? {
+    ) -> (chapterIndex: Int, map: SpeechTextMap)? {
         guard let package = currentPackage else { return nil }
         let parser = EPUBParser()
         let options = ChapterTransformOptions.current(from: SettingsManager.shared)
         var candidate = chapterIndex + 1
         while package.spineURLs.indices.contains(candidate) {
-            if let text = parser.speechText(in: package, at: candidate, options: options), !text.isEmpty {
-                return (candidate, text)
+            if let map = parser.speechMap(in: package, at: candidate, options: options), !map.text.isEmpty {
+                return (candidate, map)
             }
             candidate += 1
         }
@@ -2202,14 +2339,14 @@ extension ReaderViewController: SpeechCoordinatorDelegate {
     func speechCoordinatorRequestsPreviousChapter(
         _ coordinator: SpeechCoordinator,
         beforeChapter chapterIndex: Int
-    ) -> (chapterIndex: Int, text: String)? {
+    ) -> (chapterIndex: Int, map: SpeechTextMap)? {
         guard let package = currentPackage else { return nil }
         let parser = EPUBParser()
         let options = ChapterTransformOptions.current(from: SettingsManager.shared)
         var candidate = chapterIndex - 1
         while candidate >= 0 {
-            if let text = parser.speechText(in: package, at: candidate, options: options), !text.isEmpty {
-                return (candidate, text)
+            if let map = parser.speechMap(in: package, at: candidate, options: options), !map.text.isEmpty {
+                return (candidate, map)
             }
             candidate -= 1
         }
@@ -2319,7 +2456,7 @@ extension ReaderViewController: NSToolbarDelegate {
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             .openFile, .titleLabel, .authorLabel, .search, .toc, .pageCount, .fontSize, .themePopover, .history, .floatToggle,
-            .bookmark, .space, .flexibleSpace,
+            .bookmark, .speech, .space, .flexibleSpace,
         ]
     }
 
@@ -2478,6 +2615,21 @@ extension ReaderViewController: NSToolbarDelegate {
             refreshBookmarkButton()
             return item
 
+        case .speech:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            let state = SpeechToolbarState(playback: speechCoordinator.playbackState, hasBook: currentPackage != nil)
+            let button = makeToolbarButton(
+                symbol: state.symbolName,
+                tooltip: state.tooltip,
+                action: #selector(speechToolbarAction(_:))
+            )
+            speechButton = button
+            updateSpeechButton()
+            item.view = button
+            item.label = "Speech"
+            item.paletteLabel = "Text to Speech"
+            return item
+
         default: return nil
         }
     }
@@ -2611,7 +2763,7 @@ final class ReaderWebView: WKWebView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+        guard let urls = sender.droppedSupportedURLs(), !urls.isEmpty else {
             return []
         }
         return .copy
@@ -2622,14 +2774,14 @@ final class ReaderWebView: WKWebView {
     }
 
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+        guard let urls = sender.droppedSupportedURLs(), !urls.isEmpty else {
             return false
         }
         return true
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let urls = droppedSupportedURLs(from: sender), !urls.isEmpty else {
+        guard let urls = sender.droppedSupportedURLs(), !urls.isEmpty else {
             return false
         }
         if let appDelegate = NSApp.delegate as? AppDelegate {
@@ -2637,16 +2789,6 @@ final class ReaderWebView: WKWebView {
             return true
         }
         return false
-    }
-
-    private func droppedSupportedURLs(from sender: NSDraggingInfo) -> [URL]? {
-        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
-        guard let urls = sender.draggingPasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: options
-        ) as? [URL] else { return nil }
-        let valid = urls.filter { BookFormat.isSupported(url: $0) }
-        return valid.isEmpty ? nil : valid
     }
 
     override func keyDown(with event: NSEvent) {
@@ -2667,6 +2809,7 @@ final class ReaderWebView: WKWebView {
         return menu.items.isEmpty ? nil : menu
     }
 
+    // swiftlint:disable:next function_body_length
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         // WKWebView tags its built-in items with a stable NSMenuItem.identifier
         // (e.g. "WKMenuItemIdentifierShareMenu"). These strings are undocumented
@@ -2729,6 +2872,20 @@ final class ReaderWebView: WKWebView {
             menu.insertItem(browserSearchItem, at: 1)
         }
 
+        if let rvc = readerViewController, rvc.currentPackage != nil {
+            let title = hasSelection ? "Speak from Selection" : "Speak from Here"
+            let speakItem = NSMenuItem(
+                title: title,
+                action: #selector(ReaderViewController.speakFromContextMenu(_:)),
+                keyEquivalent: ""
+            )
+            speakItem.target = rvc
+            let pt = convert(event.locationInWindow, from: nil)
+            let webPoint = NSPoint(x: pt.x, y: isFlipped ? pt.y : bounds.height - pt.y)
+            speakItem.representedObject = NSValue(point: webPoint)
+            menu.insertItem(speakItem, at: 0)
+        }
+
         super.willOpenMenu(menu, with: event)
     }
 }
@@ -2745,6 +2902,7 @@ extension NSToolbarItem.Identifier {
     static let fontSize = NSToolbarItem.Identifier("fontSize")
     static let history = NSToolbarItem.Identifier("history")
     static let bookmark = NSToolbarItem.Identifier("bookmark")
+    static let speech = NSToolbarItem.Identifier("speech")
     static let floatToggle = NSToolbarItem.Identifier("floatToggle")
     // NEW: replaces readingModeToggle; Apple-Books-style theme quick switcher
     static let themePopover = NSToolbarItem.Identifier("themePopover")
