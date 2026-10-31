@@ -1,6 +1,7 @@
 # Honeycrisp framework (target design)
 
-Status: design, not implemented. `ARCHITECTURE.md` describes what the code does today; this file
+Status: target design. Layers L0 to L3 for flowing formats are largely built (the table in section 2 says where each file sits); paged formats (PDF, CBZ), MOBI conversion and the capability
+model (C9) are not. `ARCHITECTURE.md` describes what the code does today; this file
 describes what it should become and the rules that keep it there. `docs/ROADMAP.md` says in what
 order. Where this file and the code disagree, the code is current and this file is the goal.
 
@@ -12,8 +13,8 @@ other. This document makes the structure explicit so each change has a home, a c
 ## 1. Product
 
 Honeycrisp is a native macOS reader for local files, built with AppKit and WebKit (pure AppKit `@main` on
-`AppDelegate`, no SwiftUI). It reads flowing text formats (EPUB, Markdown, plain text, and MOBI/AZW3
-through conversion) and fixed-page formats (PDF, CBZ). One window per open book. No library view.
+`AppDelegate`, no SwiftUI). It reads flowing text formats (EPUB, HTML, Markdown and plain text today; MOBI/AZW3
+through conversion later) and fixed-page formats (PDF, CBZ, not built). One window per open book. No library view.
 
 Principles, in priority order. When two conflict, the earlier one wins.
 
@@ -52,16 +53,16 @@ Cross-cutting: Settings (L4, one source of truth), Persistence (L4, versioned an
 
 | Today | Layer(s) | Target home |
 |---|---|---|
-| `Parsing/EPUBParser.swift` (models, unzip, OPF, search, HTML, CSS, JS in one file) | L0, L1, L2, L3 mixed | split by layer: `Format/EPUB`, `Publication`, `Content`, `Render` |
-| `Parsing/TOCParser.swift` | L0 | `Format/EPUB` |
-| `Reader/PaginationEngine.swift`, `PaginationJS.swift` | L3 | `Render/Flowing` |
+| `Parsing/EPUBParser.swift` (unzip, OPF, DRM, landmarks), `Parsing/TOCParser.swift`, the importers and `BookFormat` | L0 | `Format/*` |
+| `Parsing/EPUBPackage.swift` | L1 | `Publication` |
+| `Content/*` | L2 | `Content` (already split; `EPUBParser.searchResults` and `speechText` forward to `ChapterSearch`) |
+| `Reader/FlowSurface.swift`, `FlowDocumentBuilder.swift`, `EPUBResourceSchemeHandler.swift`, `ReaderStyles.swift`, `ReaderScripts.swift`, `PaginationEngine.swift`, `PaginationJS.swift`, `ChapterHost*.swift` | L3 | `Render/Flowing` |
 | `Reader/ReaderViewController.swift` (state, navigation, speech, search host, toolbar, settings reaction) | L3, L4, L5 mixed | shell controller plus session objects; extract by contract, not by size |
-| `History/*` | L4 | `State` |
-| `Settings/SettingsManager.swift` | L4 | `State/Settings` |
-| `Settings/*Controller`, `Sidebar/*`, `App/*` | L5 | `Shell` |
+| `History/*`, `Settings/SettingsManager.swift`, `Settings/ThemeStore.swift`, `Settings/ThemeFileCodec.swift` | L4 | `State` |
+| `Settings/*Controller`, `Sidebar/*`, `App/*`, `Reader/BookInfoViewController.swift` | L5 | `Shell` |
 
 The split is mechanical and behavior-neutral, done one layer boundary at a time (roadmap M1, M3,
-M5). Do not reorganize directories ahead of the contract that justifies it.
+M5; the `EPUBParser` split landed in M5 pass 7). Do not reorganize directories ahead of the contract that justifies it.
 
 ## 3. Contracts
 
@@ -80,7 +81,7 @@ Locator = flow(resource: Int, offset: Int, layout: Int, fraction: Double)
   `layout` is the version of that definition. `fraction` is the position inside the resource from
   0 to 1, stored as the fallback.
 - Restore rule: if the saved `layout` equals the current one, seek by `offset`. Otherwise seek by
-  `fraction`. Today `anchorLayout` is stored but nothing reads it; this closes that gap.
+  `fraction`. Implemented in `Locator.flowRestoreTarget`, reading `anchorLayout`.
 - Book progress is derived, never stored as truth: weighted by known text length per resource,
   falling back to resource byte size until lengths are known. Do not derive it from total scroll
   height (estimated heights made global percentages unstable in the Sumra reference).
@@ -215,7 +216,7 @@ search/speech  -> L2 text extraction (parity with C2) -> Locator -> L3 scrolls a
 |---|---|---|
 | Unit (pure) | Locator math, progress, sanitizer, navigation history, theme codec, history and bookmark durability | every pure type ships with tests |
 | Pipeline | synthetic chapter fixtures in, expected served HTML and extracted text out | fixtures are generated in temp directories; never add real EPUBs |
-| WebKit harness | parity (C2), style cascade (C4), host behavior (C5) in a real `WKWebView` | required before any L2, L3 or C4 change merges; started: `WebKitOffsetParityTests` exists, and its parity and rewrite cases are expected failures until the merged document is replaced (roadmap M4a, decision B1) |
+| WebKit harness | parity (C2), style cascade (C4), host behavior (C5) in a real `WKWebView` | required before any L2, L3 or C4 change merges; `WebKitOffsetParityTests` and the per-section `ChapterPipelineParityTests` exist; one case in the former is still an `XCTExpectFailure` that predates M4a and is due for removal (roadmap 1.2 item 3, decision B1) |
 | Device | local `samples/` runs recorded in `docs/compatibility-corpus.md` | observed outcome only, never copy book content |
 
 A change to an untested area (`SettingsManager`, `KeyBinding`, `PaginationEngine`,

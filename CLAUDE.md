@@ -6,7 +6,7 @@ Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
 ## Documents (one of each)
 - `docs/FRAMEWORK.md`: target design, layers, contracts, admission rules. Read before any change to
   parsing, rendering, positions, styling, persistence or settings.
-- `docs/ROADMAP.md`: the only plan. Decisions R1 to R23, milestones M0 to M10 (M2.1, M4a, M8.1 added), verify list.
+- `docs/ROADMAP.md`: the only plan. Decisions R1 to R24, milestones M0 to M10 (M2.1, M4a, M8.1 added), built and unbuilt table (1.1), known gaps (1.2), verify list, next work (7).
 - `ARCHITECTURE.md`: what the code does today. `INDEX.md`: code map.
 - Superseded documents are deleted, not archived. A milestone is not done until the affected
   document is updated and its `Status:` line in the roadmap is changed. Do not add plan or survey
@@ -53,8 +53,8 @@ Read `INDEX.md` first to locate code; it maps files, sections, and common tasks.
 
 ## Architecture invariants
 - One window, view controller, and `WKWebView` per open book. No shared document model, no database.
-- Persistence is `UserDefaults` only: settings (`reader*` keys, `appearanceMode`) via
-  `SettingsManager`, recents and positions via `HistoryManager` (key `EPUBReaderHistory`), bookmarks via `BookmarkManager`
+- Persistence is `UserDefaults` plus theme files: settings (`reader*` keys, `appearanceMode`) via
+  `SettingsManager`, themes as one JSON file each in `Application Support/Honeycrisp/Themes` through `ThemeStore` (R19; the old `readerThemes` blob stays as a rollback copy), recents and positions via `HistoryManager` (key `EPUBReaderHistory`), bookmarks via `BookmarkManager`
   (key `HoneycrispReadingBookmarks.v1`), key bindings (`readerKeyBindings`). Change settings through
   `SettingsManager` setters, not raw `UserDefaults` writes, so notifications fire.
 - Settings notifications: `.readerCosmeticSettingsChanged` is a live CSS-variable patch with no
@@ -150,6 +150,5 @@ Trigger: "implement the plan across multiple passes". Work from the plan; do not
   `ReaderViewController`, or search UI. Say so when a change touches them.
 
 ## Doc drift
-`ARCHITECTURE.md` and `README.md` list four Settings tabs in places; code builds five (General,
-Reading, Appearance, History, Shortcuts). The README architecture table omits several files.
-`ARCHITECTURE.md` section 7 is historical. Trust the code, then fix the doc in the same PR.
+Settings has six tabs (General, Reading, Formatting, Appearance, History, Shortcuts). Known drift and dead code that the docs name
+are listed in `docs/ROADMAP.md` section 1.2. Trust the code, then fix the doc in the same PR.

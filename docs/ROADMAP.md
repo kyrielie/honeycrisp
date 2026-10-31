@@ -1,37 +1,71 @@
 # Honeycrisp roadmap
 
-This is the only plan document. It replaces `roadmap-unified.md`, `implementation-roadmap.md`,
-`implementation-plan-tranche-1.md`, `terminal-readers-survey-and-plan.md`,
-`theme-and-typography-plan.md`, `reference-survey.md`, `honeycrisp-settings-window-plan.md` and `plan-theme-folder-storage.md`.
-Design rules and contracts live in `docs/FRAMEWORK.md`; this file covers decisions, order and gates.
+This is the only plan document. Superseded plans, surveys and handoffs are deleted, not archived; implementation plans are
+handoff files kept outside the repo (see `CLAUDE.md`, Workflows). Design rules and contracts live in `docs/FRAMEWORK.md`; this
+file covers decisions, order and gates.
 
-Status: active implementation. Local macOS build and tests are available; milestones below reflect
-`main` at 91c0dfd (2.2.1 is 3f033bc; the snapshot of the windowed chapter host is branch `chapter-engine`). Items marked "verify" are unchecked.
+Status: active implementation. Local macOS build and tests are available. Milestones below reflect `main` at 9dd9e37, read
+from the code and tests in the 2026-10-30 review (nothing was built or run in that review; test status is the owner's to
+confirm with `./test.sh`). 2.2.1 is 3f033bc; the snapshot of the windowed chapter host is branch `chapter-engine` (91c0dfd).
+Items marked "verify" are unchecked.
 
 ## 1. Baseline
 
-Present in code (read, not run):
-- Durable storage: per-element decode, `StorageQuarantine`, `anchorLayout` on history and bookmarks.
-- DRM detection limited to real markers (LCP, ADEPT, non-font encryption algorithms).
-- `ReaderCSSSanitizer` on values interpolated into CSS; `ReaderContrast` search-hit palette.
-- Editable themes with light and dark sets, five Settings tabs, hide images, skip cover, AO3
-  formatting, remove-indents, scroll and paginated modes, history, bookmarks, search, speech (basic).
-- Parser tests, plus tests for history, bookmarks, TOC, sanitizer, contrast, restore position, `Locator`, the scheme handler, themes and a WebKit parity harness.
+Read from the code at 9dd9e37 on 2026-10-30. "Verified" means read in the named file or symbol; nothing was run.
 
-Known gaps in code today:
-- Chapter bodies keep `<script>`, event attributes and `javascript:` hrefs; `allowsContentJavaScript`
-  is `true`; resource URLs are rewritten by regex (single-quoted, unquoted and `%20` cases fail).
-- The merged scroll document concatenates every chapter, so book class names collide and cost grows
-  with book size.
-- Offsets are defined in JS and recomputed in Swift. `WebKitOffsetParityTests` covers them; its merged-document case is an expected
-  failure (wrapper whitespace shifts offsets by three UTF-16 units) until M3.
-- Publisher CSS is dropped: `EPUBParser.extractBody` keeps only the `<body>`, so stylesheet `<link>` tags never load and books whose
-  markup depends on their CSS render wrongly. Seen with a Project Gutenberg "advanced" EPUB (`span.sidenote`, `span.pagenum`,
-  `span.stpagenum`, `div.footnote`): margin notes and page markers show as inline text. Verified in code; WebKit output and the
-  book's own CSS rules were not inspected. M3 fixes it through the host stylesheet (R1); no interim style hack. Under R20 the default flow surface does not load book CSS (R21), so this case is served by the chapter host only.
-- Generator CSS carries a little meaning (static inspection of local samples, structure only; see `docs/compatibility-corpus.md`). AO3 downloads hide a heading with `.toc-heading { display: none }`; FicLab hides its landmarks list with `#landmarks { display: none }` and defines `.underline`, `.strikeout`, `.align-center` and `.monospace` in each chapter's head. A path that drops the head makes the hidden elements visible. Verified in the sample files; what 2.2.1 shows for them has not been observed.
-- Self-closing non-void tags (`<p/>`, `<a id="x"/>`) occur in real EPUB XHTML (counts in the corpus file). The default path puts XHTML bodies into a `text/html` document, where such a tag is an open tag. Not observed in 2.2.1; the M1 fixtures cover `<a id="x"/>`.
-- Largest real book (owner-supplied; structure Verified by unpacking): 307 chapters, 26.0 MB of XHTML, 23.07M characters, 4.07M words, no images, no scripts. The owner reports that 2.2.1 opens and reads it, with slow style changes and janky fast scrolling, and about 65 MB of memory (process not identified; WebContent memory not recorded). Scaling the baseline in M3 linearly predicts about 870 MB at this size (Unverified; the two figures probably measure different processes).
+### 1.1 Built and unbuilt
+
+| Area | State | Evidence |
+|---|---|---|
+| Content pipeline (R5, R20) | built | `Sources/Content/*`: SwiftSoup, EPUB XHTML parsed as XML, one HTML serialization, concurrent `ChapterPipeline.renderAll`; `EPUBAnchor.currentLayout` is 2 |
+| Flow surface, the default (M4a, M5) | built | `FlowSurface`, `FlowDocumentBuilder`, scheme handler, CSP header, `allowsContentJavaScript = false`, client-world scripts; the gate numbers are not recorded (1.2 item 2) |
+| Paged mode on the flow surface | built | `FlowDocumentBuilder.buildPagedDocument`, `PaginationJS`, `PaginationEngine` |
+| Chapter host (R20 flag mode) | built, frozen | `HONEYCRISP_CHAPTER_HOST=1`: 1,233 lines in `ChapterHost*.swift` and `ServedChapter.swift`, 2,826 lines in 16 `ChapterHost*` test files, 21 references in `ReaderViewController` |
+| Formats: EPUB, HTML, Markdown, plain text (M7.1) | built | `BookFormat`, `DocumentImporter`, three importers, four document types in `Honeycrisp/Info.plist`, Open panel, drop target and Finder events use `BookFormat` |
+| Formats: PDF, CBZ, MOBI/AZW3 (M7.2 to M7.4) | unbuilt | no PDFKit, image page view or libmobi code in `Sources` |
+| Table of contents (M8.1) | built | `TOCModel`, `TOCPopupViewController`, `TOCParser` fallbacks; the sidebar is deleted |
+| Back and Forward, bookmarks, search | built | `NavigationHistoryStack`, `BookmarkManager` (with `snippet`), `SearchBarViewController`, Go menu with Cmd-[ and Cmd-] |
+| Speech (M9) | built, bugs open | `SpeechCoordinator`, `SpeechTextMap`, `AVFoundationTTSEngine`, highlight overlay, follow-along, toolbar item in the customization palette only; see 1.2 item 1 |
+| Book Info, media keys (M9) | built | `BookInfoViewController` (rebindable Cmd-I), `MediaKeyCoordinator` (`MPRemoteCommandCenter`) |
+| Typography and themes (M2) | built | `Theme` alignment, hyphenation, spacing, bold weight, import and export, contrast warning |
+| Theme files (M2.1, R19) | built | `ThemeStore`, `ThemeFileCodec`, migration flag `readerThemesMigratedToFiles`, flush in `applicationWillTerminate`, Open Themes Folder, rescan on activation |
+| Settings window | built | six tabs: General, Reading, Formatting, Appearance, History, Shortcuts (`SettingsTabViewController.tabSpecs`); 15 rebindable actions (`RebindableAction`) |
+| Chrome (M8) | unbuilt | no toolbar subtitle, no combined Aa popover, no theme preview toggle; the toolbar has separate font-size and theme-popover items |
+| Liquid Glass (M10) | unbuilt | no macOS 26 code; the only `#available` gates are macOS 13.3 and 14 |
+| Window state restoration | unbuilt | `ReaderWindowController.setupWindow` sets `isRestorable = false` |
+| Parked (R15) | not started | source-style preface, series navigation, Quick Look, Sparkle, notarization; no `.nnwtheme` skin code exists in `main` |
+
+Durable storage, DRM detection limited to real markers, `ReaderCSSSanitizer` and the `ReaderContrast` palette are carried
+over from earlier milestones and unchanged.
+
+### 1.2 Known gaps today
+
+1. Speech highlight overlay boxes and search-hit marks are probably invisible. Verified in `ReaderStyles.readerCSS`: `.hc-sp-s`, `.hc-sp-w` and
+   `mark.ql-hit` set `background` without `!important`, and the universal rule `* { background-color: transparent !important }`
+   outranks them. Nothing sets inline styles on them (`ReaderScripts.swift`). A prior handoff plan measured the same cascade in
+   headless Chromium; it was not observed in WebKit or in the app. Paged documents add a second defect (`max-width: 100% !important`
+   collapses the zero-width overlay container). No test sees either, because `FlowSpeechHighlightTests` never loads `readerCSS`.
+2. The M4a gate for the flow surface was never recorded here. `ReaderBaselineTests` now builds the flow document (it calls
+   `FlowDocumentBuilder.buildDocument`), but the tables in M3 are the old merged-document and host numbers, and no flow-surface
+   figure or large-book figure is recorded.
+3. `WebKitOffsetParityTests.testOffsetParityForEntitiesUnicodeWhitespaceAndSelfClosingAnchor` is still an `XCTExpectFailure`
+   (decision B1 says "until M4a replaces the merged document"). M4a is complete and the merged document is deleted, so the
+   expectation is stale. The offset contract for the flow surface is covered per section by `ChapterPipelineParityTests`.
+4. Dead code (Verified by grep): `FlowSurfaceFlag` and the `HONEYCRISP_FLOW` and `HONEYCRISP_LEGACY` variables are read only by a test,
+   because the legacy path was deleted in M5; the six forwarding members at the end of `EPUBParser` (`readerJS`, `readerCSS`,
+   `readerVarsCSS`, `monospaceStack`, `imageVisibilityCSS`, `paginatedColumnCSS`) only call `ReaderScripts` and `ReaderStyles`.
+5. The three speech settings `speechHighlight`, `speechHighlightWord` and `speechFollow` (all default on) have no control in
+   Settings; the Reading tab has voice, rate and auto-scroll only.
+6. No tests for `KeyBinding`, `SearchBarViewController` or `ReaderViewController`; `SettingsManager` is tested for themes and
+   speech only; `PaginationEngine` navigation is covered only through the surface tests.
+7. `ReaderViewController.swift` is 2,910 lines and still holds speech, bookmark, history and flag-mode glue (FRAMEWORK section 2).
+8. The pre-migration `readerThemes` blob stays in `UserDefaults` as a rollback copy indefinitely (M2.1 non-blocking default).
+
+Largest real book (owner-supplied; structure Verified by unpacking): 307 chapters, 26.0 MB of XHTML, 23.07M characters, 4.07M
+words, no images, no scripts. The owner reports that 2.2.1 opens and reads it, with slow style changes and janky fast scrolling,
+and about 65 MB of memory (process not identified; WebContent memory not recorded). Scaling the baseline in M3 linearly predicts
+about 870 MB at this size (Unverified; the two figures probably measure different processes). The same book has not been recorded
+on the flow surface.
 
 ## 2. Decisions
 
@@ -52,7 +86,7 @@ Resolved here as recommendations; reverse any by editing this table and the affe
 | R11 | Continuous scroll position is `(resource, offset)`; progress is derived (C1). Paginated mode paginates per chapter; the displayed page count becomes per chapter or an estimate. This is a visible behavior change, confirmed for flag-mode scroll in M4 (label per chapter, same format as paginated mode). | Global page numbers depend on laying out the whole book. |
 | R12 | History retains more entries than it displays (start at 300, measure `UserDefaults` size first); path normalization like bookmarks. Closes old D18 and D19. | The cap of 100 silently drops saved positions. |
 | R13 | Navigation history (Back and Forward): yes, as a pure type plus Go-menu items and rebindable shortcuts; toolbar button optional. Closes old D10. | Cheap, testable, high value for footnotes. |
-| R14 | Word-level speech highlighting: yes, off by default, after the chapter host exists. Closes old D11. | Needs offset-to-range mapping in the mounted window. |
+| R14 | Speech highlighting: yes, ON by default, toggleable (`readerSpeechHighlight`). Sentence tint plus an optional word emphasis (`readerSpeechHighlightWord`, default on). Built on the flow surface in scroll and paged modes; the chapter host has no speech and stays frozen. Closes old D11. | The sentence layer does not depend on the word callback, which not every voice delivers (Unverified); offsets come from the C2-parity text map. Default on is an owner decision recorded in the speech handoff plans; the code defaults already match. Recorded here in the 2026-10-30 review: confirm. |
 | R15 | Parked: source-style preface (old W14), Series folders and series navigation (old D16), Quick Look (old W8), Sparkle, notarization. | R1 makes the preface mostly unnecessary; the rest need a Developer ID or add sandbox and library-like scope. Revisit on request. |
 | R16 | Deployment floor stays macOS 13 for now. Liquid Glass is a later chrome milestone (M10) behind `#available`, written only when it can be tested on macOS 26. Rede is the model. | The reviewer's machine is on macOS 15, so macOS 26 code cannot be tested yet. |
 | R17 | ZIP entry-count and size limits: skip. DRM rule and search-hit contrast: already implemented. Closes old D17, D20, D5. | Containment is handled by ZIPFoundation; the rest is done. |
@@ -62,6 +96,7 @@ Resolved here as recommendations; reverse any by editing this table and the affe
 | R21 | The flow surface does not load the book's stylesheets. The pipeline harvests simple rules (`.class`, `#id`, `tag`, `tag.class` selectors) and applies a whitelist as inline style on matching elements: `display:none` (as `hidden`), italic, bold, underline and line-through, centered or right alignment, monospace. Geometry (margins, indent, justification, width) stays with the user layer (C4). Elements are hidden, never deleted, because the offset walk counts hidden text (C2). Cascade order is source order; specificity is not modeled. Amends R1 for that surface. | Generator CSS carries a small amount of meaning (AO3 and FicLab hide elements and define underline, strike and alignment classes) and nothing else in the fanfiction samples needed book CSS. Loading it would need per-chapter isolation. Inline style attributes already survive. |
 | R22 | Single-file sources (HTML, TXT, Markdown, legacy MOBI) are split into chapters at L0: `<article>` or generator containers first, then headings, then `mbp:pagebreak` for MOBI, then a size cap at paragraph boundaries; a failed split degrades to one chapter. The Markdown parser choice stays open (M7.1); a small in-house converter for the fanfiction subset is the default proposal. External `http(s)` images are not loaded by default; whether a setting enables them is open and needs a decision. | The samples include single-file HTML, TXT and legacy MOBI whose only chapter signals are those; one Fimfiction HTML hotlinks its cover image. |
 | R23 | One table of contents UI: the centered popup (`TOCPopupViewController`, opened by the toolbar button and the View menu item). The sidebar (`TOCSidebarViewController`), its `NSSplitView` host and `TOCSidebarDelegate` are deleted. The popup gains a filter field, keyboard navigation (arrows, Return, Escape) and a key panel. Rows resolve to spine indices once, in a pure `TOCModel` with stable item identity; the current entry is derived from `(spineIndex, fragment)`, not from a file path alone. Resolves the open question in M8 item 4. | Two UIs existed and the sidebar was unreachable (collapsed at load, never toggled). The popup is what users actually see, and it is the Rede-style overlay M8 names as the model. A pure model fixes identity, nested reveal and wrong-current-entry bugs once and is testable without AppKit. TOC jumps for the flow surface stay in M5; the model keys on spine index and fragment so it survives the position model (`Locator`) and non-EPUB sources (M7). |
+| R24 | Speech follow-along is on by default (`readerSpeechFollow`). The speech toolbar item (`.speech`) is in the customization palette only, not in the default set, so no toolbar identifier bump. | Optional control without changing existing users' layouts; follow-along is the point of highlighting. Built (`toolbarAllowedItemIdentifiers`, `SettingsManager.resetAllToDefaults`). Recorded here in the 2026-10-30 review from the speech handoff plans: confirm. |
 
 ## 3. Milestones
 
@@ -70,10 +105,9 @@ milestone is done when its exit criteria hold and the affected docs are updated.
 
 ### M0. Baseline and truth (S)
 
-Status: in progress (keep/drop decision, keep-set commit and listed cleanup are in the tree at 3f033bc: no stripping code,
-`currentLayout` is 1, `swiftlint.yml` is gone, no uncommitted Swift changes; remaining: confirm `./test.sh` passes at that
-commit, refresh the "Doc drift" paragraph in `CLAUDE.md`, and fix the Linting section of `README.md`, which names swift-format and a
-`.swift-format` file the repo does not have).
+Status: complete except one owner confirmation (the keep/drop decision, keep-set commit and listed cleanup landed at 3f033bc;
+the "Doc drift" paragraph of `CLAUDE.md`, the README Linting section and the tab count were corrected in the 2026-10-30 docs
+pass; remaining: confirm `./test.sh` passes at 9dd9e37).
 
 - Review the uncommitted diff file by file. Keep: code-font toggle, theme and popover work, new
   theme tests. Drop: `strippingEmbeddedStyles`, its tests, and the `currentLayout` bump to 2 (R1).
@@ -126,10 +160,12 @@ the language is unknown (help text "Needs book language").
 
 ### M2.1. Theme files (M, parallel track, after the M0 keep-set commit)
 
-Status: not started. Decision R19. Build on the committed M0 keep set (theme and popover work). Theme fields,
-Settings controls and reader CSS do not change.
+Status: complete (passes 1 to 3 are in the tree: `ThemeFileCodec`, `ThemeStore`, `SettingsManager` cache and one-time migration, flush in
+`applicationWillTerminate`, Open Themes Folder button, Show Themes in Finder menu item, `rescanIfChanged` on activation and when Appearance
+opens; covered by `ThemeFileCodecTests`, `ThemeStoreTests`, `SettingsManagerThemeTests`). The exit criteria below were not measured in the review
+(Unverified): the owner confirms them by hand. Decision R19. Theme fields, Settings controls and reader CSS did not change.
 
-Design (not yet built):
+Design (as built; details of the debounce and migration are in `ThemeStore.swift` and `SettingsManager.swift`):
 - One file per theme, `<slug>.honeycrisp-theme.json`, in the `ThemeExport` shape (`{version: 1, theme}`),
   pretty printed with sorted keys. Identity is the `id` inside the file, never the name. Slug: strip `/ : \` and
   control characters and leading dots, trim, cap at about 80 characters, empty becomes "Theme"; collisions are
@@ -157,8 +193,8 @@ Constraints (Verified in code):
   bookmark: a separate decision.
 - Numeric Appearance rows fire `onChange` while dragging unless `commitsOnRelease` (`ValueSliderControl`), so
   disk writes must be debounced in the same pass that wires them.
-- `AppDelegate` has no will-terminate or resign-active hook (only `applicationShouldTerminateAfterLastWindowClosed`);
-  the flush needs one.
+- `AppDelegate` had no will-terminate hook when this was planned; `applicationWillTerminate` now calls
+  `ThemeStore.flushPendingWrites`. A resign-active flush was not added (Unverified whether it is needed).
 
 Passes:
 1. Codec and store, not wired. Tests: codec round trip keeps `id`, `isDefault`, `seedKey`; a non-seed `seedKey` is
@@ -295,16 +331,19 @@ Design:
 - Served by `EPUBResourceSchemeHandler` (`__app/*.html` as `text/html` override), author content JavaScript off (`allowsContentJavaScript = false`), app scripts in `WKContentWorld.defaultClient`, strict CSP, link navigation restricted to in-book resources. (Complete, Pass 3)
 - R21 harvest in the pipeline (`ChapterStyles.swift`): whitelist simple `.class`, `#id`, `tag`, `tag.class` rules (display:none as `hidden`, italic, bold, underline, line-through, center/right alignment, monospace); discard geometry and colors; apply Rule N6 semantic HTML5 (`<details open>`, `<nav hidden>`); strip raw `<style>` tags from body. (Complete, Pass 4)
 - Positions: the page script walks text from the start of one section and reports `(resource, offset, fraction)`; section offset seek scrolls the target section offset to the reading line. (Complete, Pass 5)
-- Default flip: `FlowSurface` is the active default reading surface; `ChapterHostSurface` is reachable via `HONEYCRISP_CHAPTER_HOST=1`; legacy merged path is reachable via `HONEYCRISP_FLOW=0` or `HONEYCRISP_LEGACY=1`. (Complete, Pass 6)
+- Default flip: `FlowSurface` is the active default reading surface; `ChapterHostSurface` is reachable via `HONEYCRISP_CHAPTER_HOST=1`. The legacy merged path was deleted in M5, so `HONEYCRISP_FLOW=0` and `HONEYCRISP_LEGACY=1` no longer select anything (`FlowSurfaceFlag` is dead code, 1.2 item 4). (Complete, Pass 6)
 - Large books: chapters are parsed concurrently off the main thread. Chunked delivery from the scheme handler and `content-visibility: auto` are options only if a measurement shows the need (both Unverified; see the verify list).
 
 Gate, all measured: parity test (C2) per section on every fixture; hidden text counted equally with and without the harvest; open time and WebContent memory no worse than 2.2.1 on the 2,000-page fixture (about 820 ms, 124 MB) and no worse than the owner's recorded large-book numbers; author scripts do not execute; `<p/>` and `<a id="x"/>` fixtures render correctly; remote images do not load.
 
 Exit: the default path is the flow surface, the chapter host is still reachable through its flag, INDEX and ARCHITECTURE updated.
 
+Open: the gate figures (open time and WebContent memory on the 2,000-page fixture and on the owner's largest book) are not recorded (1.2 item 2). Record them
+here, then decide the fate of the chapter host (section 7, item 2).
+
 ### M5. Port features to the surface seam, delete the regex path (L)
 
-Status: complete. (Passes 1 to 7 complete: Navigation history stack, Flow TOC and fragment navigation, speech and auto-scroll on FlowSurface, bookmarks on FlowSurface, in-book anchor and cross-chapter links, deleted legacy merged document path and LegacyMergedSurface, EPUBParser modularized across layers).
+Status: complete. (Passes 1 to 8 complete: Navigation history stack, Flow TOC and fragment navigation, speech and auto-scroll on FlowSurface, bookmarks on FlowSurface, in-book anchor and cross-chapter links, deleted legacy merged document path and LegacyMergedSurface, EPUBParser modularized across layers).
 
 Pass summary:
 - Pass 1 (Decision R13): Navigation history stack (`NavigationLocation`, `NavigationHistoryStack` in `Sources/History/NavigationHistory.swift`), Back (Cmd-[) and Forward (Cmd-]) shortcuts, native Go menu in `AppDelegate`. Tested in `NavigationHistoryTests.swift`.
@@ -333,7 +372,7 @@ Exit: no regex remains in L2 for HTML structure; chapter bodies contain no `<scr
 
 ### M7. Formats (M each, after M5)
 
-Status: M7.1 complete (HTML, Markdown, Plain Text). M7.2-M7.4 pending.
+Status: M7.1 complete (HTML, Markdown, Plain Text; Verified in `BookFormat`, `DocumentImporter` and `Info.plist`). M7.2 to M7.4 not started (no PDFKit, CBZ or libmobi code).
 
 1. [COMPLETE] HTML, Markdown and plain text (R22): convert to chapters at L0; may start after M6, in parallel with M4a and M5. HTML splits on `<article>` or generator containers, then headings, then a size cap. Plain text normalizes CRLF and encodings, treats a leading `> ` block as the header and `> N. Title` lines as chapter starts (seen in one Fimfiction export), and turns scene-break lines into `<hr>`. The open path hardcodes `epub` (`EPUBDropTargetView`, `ReaderWindowController`, `AppDelegate`) and `Honeycrisp/Info.plist` declares only `org.idpf.epub-container`; both change here. Original item text follows. Plain text is escaping plus paragraph
    detection; Markdown splits chapters on top-level headings. Verify the Markdown parser choice from
@@ -350,7 +389,7 @@ Exit per format: open, restore, history, bookmarks, error mapping, and tests wit
 
 ### M8. Chrome (M, parallel track)
 
-Status: not started.
+Status: not started. Item 4 is done by M8.1. Of the rest, only the separate font-size and theme-popover toolbar items exist; there is no title and subtitle, no combined Aa popover, no preview toggle (Verified by grep).
 
 Model: Rede's UI, adapted to AppKit and macOS 13. Items in priority order:
 1. Native title and subtitle in the toolbar; chapter breadcrumb as the title.
@@ -391,7 +430,10 @@ outside the spine cannot be clicked; the selection and filter rules are covered 
 
 ### M9. Reader features (M each, after M5)
 
-Status: not started.
+Status: mostly built. Speech (flow surface, both modes, with highlight, follow-along, a `PlaybackState` machine and `SpeechTextMap` abbreviation protection), the Book Info sheet
+(`BookInfoViewController`), bookmark snippets (`ReadingBookmark.snippet`) and media keys (`MediaKeyCoordinator`) are in the tree. Open: the speech
+highlight is probably invisible (1.2 item 1) and has no Settings controls (item 5); the input and menu audit (the last bullet) was not done. Unverified: that each speech
+chunk carries a `Locator`, and which voices deliver word callbacks on macOS 13.
 
 - Speech: one extractor for all chapters with block separators (not shared with search offsets),
   sentence chunking with abbreviation protection, each chunk carrying a `Locator`; word highlight
@@ -450,16 +492,13 @@ be reopened by editing this file.
 
 ## 6. Verify before coding
 
-- Decision B1: the offset parity case in `WebKitOffsetParityTests` stays an expected failure until M4a replaces the merged document; no offset-definition change and no `currentLayout` bump before then.
-- Decision B2: SwiftSoup 2.14.3 is the candidate (tag manifest is `swift-tools-version:6.0`, macOS 12
-  platform floor; verified from the tag). Assumed buildable on the owner's Xcode; the M6 spike
-  (`SwiftSoupSpikeTests`) confirms or rejects R5.
+- Decision B1 (due): M4a replaced the merged document, so the expected failure in `WebKitOffsetParityTests` should be replaced by a per-section assertion or deleted (section 7, item 3).
+  Decision B2 is closed: SwiftSoup 2.14.3 is adopted (R5).
 - WebKit: author-JS-off semantics with client-world scripts and user scripts on macOS 13;
   `WKURLSchemeHandler` response headers (Content-Security-Policy honored or not); whether
   `ENABLE_OUTGOING_NETWORK_CONNECTIONS` can be dropped once content cannot reach the network.
 - Hyphenation prefix honored by macOS 13 WebKit; that low-specificity alignment rules lose to book
   class and inline rules.
-- SwiftSoup: builds under `SWIFT_VERSION: 5.9` and project settings; behavior on real XHTML.
 - Markdown parser choice and its API; libmobi-swift macOS build.
 - ZIPFoundation single-entry read API (needed only for lazy zip serving).
 - `AVSpeechSynthesizerDelegate` range callback on macOS 13.
@@ -502,3 +541,22 @@ be reopened by editing this file.
 | D10, D11 | R13, R14 |
 | D12, D13, D15, D16 | R1, R15 |
 | D18, D19 | R12 |
+
+## 7. Next work
+
+Ordered by risk to readers first, then by cost. Sizes as in section 3. Each item is a PR or a pass series, with its own tests; none is started.
+
+| # | Item | Why | Size | Gate or decision |
+|---|---|---|---|---|
+| 1 | Make the speech highlight and search hits visible: give `#hc-speech-hl` boxes and `mark.ql-hit` declarations that outrank the universal `*` rule, fix the paged-mode `max-width` collapse, then add a test that loads the real `readerCSS` and asserts computed colors (1.2 item 1). Follow-ons in the same series: selection extent in scroll mode, follow-along for long and wrapped sentences, "Speak from Here" across chapter sections, a word-callback section gate in `AVFoundationTTSEngine`, and Settings controls for the three speech keys (1.2 item 5). | The feature exists but cannot be seen; search hits share the same defect. Cheapest fix with the largest visible effect. | S for the CSS and test, M for the series | Owner confirms the symptom is in scroll mode before the selection-extent pass; no persisted-format change; `currentLayout` unchanged |
+| 2 | Record the M4a gate (2,000-page fixture and the 4.07M-word book on the flow surface), then decide the chapter host: keep frozen, or delete `ChapterHostSurface` and its 16 test files (about 1,233 source and 2,826 test lines, plus 21 references in `ReaderViewController`). | Two surfaces cost review and test time. R20 keeps the host only until a measured large-book gate says whether windowing is needed. | S to measure, M to delete | Blocking owner decision after the numbers; deletion amends R2, R20 and FRAMEWORK C5 |
+| 3 | Close decision B1: replace the stale `XCTExpectFailure` in `WebKitOffsetParityTests` with a per-section assertion, or delete the case if `ChapterPipelineParityTests` already covers it. | A permanent expected failure hides a regression in the offset contract (C2). | S | None |
+| 4 | Remove dead code: `FlowSurfaceFlag` and its test, the six forwarding members at the end of `EPUBParser`, and the unused speech JS functions `honeycrispCurrentSpeechText` and `honeycrispSpeechOffsetOnScreen` (with the one test that keeps the first alive). Update `INDEX.md` in the same pass. | Misleading flags and shims; the roadmap and architecture documents had described the legacy path as live. | S | Behavior-neutral; call sites move to `ReaderStyles` and `ReaderScripts` |
+| 5 | Close the test gaps that need no WebKit: `KeyBinding` (encode, decode, defaults, conflicts), `SettingsManager` setters and reset coverage for each tab, `PaginationEngine` navigation. | The riskiest untested code is persistence and key handling. | M | None |
+| 6 | M8 chrome: title and subtitle, then the combined Aa popover, then the theme preview toggle. | The one unbuilt parallel milestone; all items are independent of the pipeline. | M | None; M10 follows only when macOS 26 can be tested |
+| 7 | M7.2 PDF (`PagedSurface`, `Locator.page`, PDFKit search, format discriminator in persistence per C7). | The largest format still missing; CBZ and MOBI follow. | L | Owner decision to proceed; persisted-format change |
+| 8 | Split `ReaderViewController` by contract, one layer boundary per PR: speech glue first (it already has its own delegate extension and coordinator), then bookmarks and navigation history. | 2,910 lines in one class; FRAMEWORK section 2 marks it as mixed L3, L4 and L5. | M each | Behavior-neutral; only after items 1 and 2, which touch the same regions |
+| 9 | Window state restoration (`isRestorable = false` today): restore the book URL and frame through the security-scoped bookmark, never the reading position. | Known gap since the architecture review; not in any milestone. | M | Owner decision; brushes no non-goal |
+| 10 | Copy and process: the README and `site/index.html` call Honeycrisp an EPUB reader while HTML, Markdown and plain text also open; consider running `swiftlint` in CI (`CLAUDE.md` says it does not today); keep handoff plans outside the repo tree (`make_upload_zip.sh` packs untracked files, so local handoff files ship in every review zip). | Small, removes recurring drift. | S | Owner decision on CI |
+
+Blocking owner decisions: item 2 (after measuring), item 7, item 9. Non-blocking: item 10.

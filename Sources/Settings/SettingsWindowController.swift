@@ -12,7 +12,7 @@
 //  • CustomFontStore and its disk-copy logic are retained so existing persisted
 //    custom font names continue to work, but are no longer populated by file import
 //
-// CHANGES (pre-Ventura AppKit polish pass, per docs/honeycrisp-settings-window-plan.md):
+// CHANGES (pre-Ventura AppKit polish pass, see ARCHITECTURE.md section 9):
 //  • Window is closable-only by default; .resizable is added/removed per pane via
 //    SettingsPanelWindow.resetWindowBehavior()/addResizableBehavior(). None of the
 //    four current panes opt into isResizableView, but the machinery matches the

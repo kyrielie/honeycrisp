@@ -5,14 +5,16 @@ no SwiftUI. XcodeGen `project.yml` is the source of truth for the generated Xcod
 project. The root Swift package is a secondary build entry point. macOS 13+.
 
 This file describes what the code does today. The target design and its contracts are in
-`docs/FRAMEWORK.md`; the plan and decisions are in `docs/ROADMAP.md`. In the default path (until roadmap milestone M4a, R20),
-book scripts and resource URLs are not restricted: `allowsContentJavaScript` is `true` and chapter
-bodies keep `<script>` and event attributes. Flag mode (4a) restricts them.
+`docs/FRAMEWORK.md`; the plan, decisions and build status are in `docs/ROADMAP.md`. Book content is untrusted: in the default path
+the flow surface turns author JavaScript off (`allowsContentJavaScript = false`), the content pipeline removes `<script>`, event attributes
+and `javascript:` URLs, resources load only through the `honeycrisp-epub://` scheme handler, and responses carry a
+`Content-Security-Policy` header. Whether WebKit enforces that header on the app scheme is on the roadmap verify list (Unverified).
+The chapter host (flag mode, section 4a) enforces the same restrictions.
 
 ## 1. Project generation
 
-`project.yml` defines the macOS app target, ZIPFoundation dependency, sandbox
-entitlements, document type registration, and shared `Honeycrisp` scheme. Run
+`project.yml` defines the macOS app target, the ZIPFoundation and SwiftSoup dependencies, sandbox
+entitlements, document type registration (EPUB, HTML, Markdown, plain text) and the shared `Honeycrisp` scheme. Run
 `xcodegen generate` after changing it. Do not hand-edit the generated
 `Honeycrisp.xcodeproj`. Release workflows generate the project before building.
 
@@ -20,25 +22,29 @@ entitlements, document type registration, and shared `Honeycrisp` scheme. Run
 
 Single-process, multi-window. Each opened book gets its own
 `ReaderWindowController` / `ReaderViewController` / `WKWebView`. There is no
-document model shared across windows and no library/database — the app's
-only persistent state is `UserDefaults` (settings, theme list, key bindings),
-history (`HistoryManager`), and independent per-book bookmarks (`BookmarkManager`). This is a
+document model shared across windows and no library/database. Persistent state is `UserDefaults`
+(settings, key bindings, history through `HistoryManager`, per-book bookmarks through `BookmarkManager`) plus one JSON file per
+theme in the app container (`ThemeStore`, section 5). This is a
 deliberate scope boundary: Honeycrisp is a reader, not a library manager
 (see `ambrosia` for that role).
 
 ```
-AppDelegate (AppKit @main)               — app lifecycle, NSMenu, file-open routing
+AppDelegate (AppKit @main)               , app lifecycle, NSMenu, file-open routing
 └── ReaderWindowController (N instances, one per open book)
-        └── ReaderViewController          — WKWebView host, toolbar, keyboard/trackpad nav
-            ├── EPUBParser                 — unzip, OPF/spine parse, HTML+CSS build
-            ├── TOCParser                  — NCX / nav.xhtml / spine-synthesis
-            ├── PaginationEngine           — column-layout state machine (paginated mode)
-            ├── TOCPopupViewController     — popup with type-to-filter
-            └── SearchBarViewController    — in-book search overlay
-    SettingsManager (singleton)            — UserDefaults-backed settings/themes
-    HistoryManager (singleton)             — UserDefaults-backed recent-files + position
-    BookmarkManager (singleton)            — versioned per-book return points
-    SettingsWindowController (singleton)   — App-menu Settings window
+        └── ReaderViewController          , WKWebView host, toolbar, keyboard/trackpad nav
+            ├── DocumentImporter           , EPUB, plain text, HTML, Markdown into an EPUBPackage
+            │   └── EPUBParser, TOCParser  , unzip, OPF/spine, TOC
+            ├── FlowDocumentBuilder        , ChapterPipeline output into one flow or paged document
+            ├── FlowSurface                , default surface: scheme handler, CSP, client-world scripts
+            │   (ChapterHostSurface       , flag mode only, frozen)
+            ├── PaginationEngine           , column-layout state machine (paginated mode)
+            ├── SpeechCoordinator          , sentence queue, TTSEngine, highlight progress
+            ├── TOCPopupViewController     , popup with type-to-filter
+            └── SearchBarViewController    , in-book search overlay
+    SettingsManager (singleton)            , UserDefaults-backed settings; theme cache over ThemeStore
+    HistoryManager (singleton)             , UserDefaults-backed recent-files + position
+    BookmarkManager (singleton)            , versioned per-book return points
+    SettingsWindowController (singleton)   , App-menu Settings window
 ```
 
 ## 3. Module responsibilities
@@ -47,10 +53,12 @@ AppDelegate (AppKit @main)               — app lifecycle, NSMenu, file-open ro
 |---|---|
 | `App/AppDelegate.swift` | Pure AppKit `@main` entry point; app lifecycle, all `NSMenu` construction, Apple-Event file-open handling, per-window vs per-tab open routing, live keybinding sync (`syncMenuShortcuts`), menu validation. |
 | `Reader/ReaderWindowController.swift` | Per-window chrome: `NSWindow` creation, toolbar attach, float-on-top level/collectionBehavior, cascading placement, window-close → flush position save. |
-| `Reader/ReaderViewController.swift` | The core reading surface: `WKWebView` configuration and message handlers, toolbar (`NSToolbarDelegate`), keyboard/scroll-wheel monitors for paginated mode, TOC popup host, search overlay host, cosmetic-vs-structural settings application, position save/restore, title display. |
+| `Reader/ReaderViewController.swift` | The core reading surface: `WKWebView` configuration and message handlers, surface selection (`FlowSurface`, or `ChapterHostSurface` behind the flag), toolbar (`NSToolbarDelegate`), keyboard/scroll-wheel monitors for paginated mode, TOC popup host, search overlay host, bookmark, navigation-history and speech glue, cosmetic-vs-structural settings application, position save/restore, title display. |
 | `Reader/FlowingSurface.swift` | L3 surface protocol (`FlowingSurface`, FRAMEWORK C5) isolating reading surfaces from shell logic; `ChapterHostSurface` and `FlowSurface` conformance. (Legacy merged document path deleted in M5). |
 | `Reader/FlowDocumentBuilder.swift` | Multi-chapter flow document builder; namespaces element IDs, rewrites in-book links, resolves app-scheme URLs. |
 | `Reader/FlowSurface.swift` | Flow surface implementation (default reading surface): renders continuous flow document under `honeycrisp-epub://`, disables author JS, isolates client-world scripts, section-rooted positions, and enforces CSP. |
+| `Reader/ChapterHost*.swift`, `Reader/ServedChapter.swift` | Chapter host (flag mode, section 4a): `ChapterHostSurface`, `ChapterHostShell`, `ChapterHostScript` and its tail, `ChapterHostCSS`, `ChapterHostPaging`, `ChapterHostHandlers`; `ServedChapter.prepare` adds the host stylesheet and `lang`. |
+| `Reader/EPUBResourceSchemeHandler.swift` | `honeycrisp-epub://book/...` scheme handler: path containment, MIME, optional response headers, `/__app/` app resources, markup transform hook. Serves `FlowSurface` and `ChapterHostSurface`. |
 | `Reader/ReaderCosmeticSettings.swift` | Snapshot of reader cosmetics and hit color palette; pure Foundation and AppKit-free. |
 | `Reader/ReaderStyles.swift` | Stylesheets, CSS variables (`readerVarsCSS`), image visibility, and multi-column CSS (`paginatedColumnCSS`). |
 | `Reader/ReaderScripts.swift` | Injected client-world scripts (`readerJS`) for search, position, navigation, and speech. |
@@ -62,6 +70,8 @@ AppDelegate (AppKit @main)               — app lifecycle, NSMenu, file-open ro
 | `Reader/TTS/AVFoundationTTSEngine.swift` | Native `AVSpeechSynthesizer` implementation with UTF-16 code unit range handling. |
 | `Reader/PaginationEngine.swift` | Drives `PaginationJS` from Swift: column navigation, fraction/offset restore, spine-boundary detection. |
 | `Reader/PaginationJS.swift` | JS injected only in paginated mode: column-snap page turns, boundary detection posting back to `PageActionMessageHandler`. |
+| `Reader/BookInfoViewController.swift` | Book Info sheet from parsed metadata; `cleanDescription` strips tags and decodes entities. |
+| `Reader/MediaKeyCoordinator.swift` | System media keys and Now Playing through `MPRemoteCommandCenter`, wired to `SpeechCoordinator`. |
 | `Parsing/BookFormat.swift` | File format detection enum (`BookFormat`), UTI definitions, file extension mappings, and format support queries. |
 | `Parsing/DocumentImporter.swift` | Unified importation dispatcher (`DocumentImporter`, `DocumentImporterError`) converting EPUB, plain text, HTML, and Markdown files into `EPUBPackage` instances. |
 | `Parsing/PlainTextImporter.swift` | Pure Foundation plain text importer: multi-encoding fallback, metadata extraction, chapter heading detection, scene break detection, and synthesized EPUB package generation. |
@@ -70,82 +80,91 @@ AppDelegate (AppKit @main)               — app lifecycle, NSMenu, file-open ro
 | `Parsing/EPUBPackage.swift` | Publication data models (`EPUBPackage`, `EPUBManifestItem`, `EPUBSpineItem`, `EPUBLandmark`, `BookSearchResult`, `EPUBParseError`). |
 | `Parsing/EPUBParser.swift` | Pure Foundation and ZIPFoundation parser (AppKit-free, WebKit-free): ZIP extraction, `container.xml` -> OPF -> manifest/spine/navigation/landmark parsing. |
 | `Parsing/TOCParser.swift` | Manifest-declared EPUB3 nav, NCX (EPUB2), and synthesized spine fallback; preserves hierarchy and resolves Start Reading landmarks. |
+| `Content/ChapterDecoder.swift`, `ChapterMarkup.swift`, `ChapterText.swift`, `ChapterTransforms.swift`, `ChapterURLs.swift`, `ChapterStyles.swift`, `ChapterPipeline.swift` | The one content pipeline (R20): byte decoding, SwiftSoup XML and HTML parsing with active-content removal, text extraction that matches the page script's text-node walk (C2), AO3 and spacer transforms, URL rewriting, publisher style harvest (R21), and the `ChapterPipeline` facade with concurrent `renderAll`. |
 | `Content/ChapterSearch.swift` | Search indexing and speech text extraction over package chapters using `ChapterPipeline`. |
 | `Content/SpeechTextMap.swift` | Bidirectional mapping between spoken sentences and chapter UTF-16 offsets with block-boundary preservation. |
 | `Sidebar/TOCModel.swift` | Pure Swift model for TOC hierarchy, resolution, expansion, and filtering (`TOCLocation`, `TOCItem`, `TOCModel`). |
 | `Sidebar/TOCPopupViewController.swift` | Modernized popup Table of Contents with type-to-filter search and keyboard navigation (`TOCPanel`, `TOCOutlineView`). |
 | `Sidebar/SearchBarViewController.swift` | Centered in-book search overlay, debounced input, contextual excerpts, and navigable results. Search terms pass to WebKit as JSON string literals. |
 | `Sidebar/ThemePopoverViewController.swift` | Toolbar gear-button quick theme switcher (Apple-Books-style popover). |
+| `History/Locator.swift` | `Locator` (`.flow`, `.page`), `flowRestoreTarget` (exact offset when the saved layout matches `EPUBAnchor.currentLayout`, else clamped fraction), progress derivation. |
+| `History/StorageQuarantine.swift` | Bounded raw copies of unreadable stored blobs, shared by history and bookmarks. |
 | `History/NavigationHistory.swift` | Back and Forward navigation history stack (`NavigationLocation`, `NavigationHistoryStack`, Decision R13). |
 | `History/HistoryManager.swift` | Singleton; `UserDefaults`-backed `[HistoryEntry]` — url, title, opened date, security-scoped bookmark, reading-progress percent, and a flow locator with offset, layout, and fraction fallback. |
 | `History/ReadingBookmark.swift` | Codable bookmarks in an independently versioned `UserDefaults` envelope, separate from History. |
 | `History/HistoryViewController.swift` | Popover list of recent books (open / remove actions). |
-| `Settings/SettingsManager.swift` | Singleton; every user-facing setting, all directly `UserDefaults`-backed (no intermediate model object, no persistence layer). Owns the `Theme` list, font presets, reading-mode default, column count, appearance mode, and posts `.readerCosmeticSettingsChanged` / `.readerStructuralSettingsChanged` / `SettingsManager.settingsChangedNotification` on mutation. |
-| `Settings/SettingsWindowController.swift` | Five-tab Settings window (General / Reading / Appearance / History / Shortcuts), all views built imperatively in `loadView()`. |
+| `Settings/SettingsManager.swift` | Singleton; every user-facing setting, `UserDefaults`-backed except themes (no intermediate model object). Owns the `Theme` list (a cache over `ThemeStore`), font presets, reading-mode default, column count, appearance mode, speech voice, rate, highlight and follow, and posts `.readerCosmeticSettingsChanged` / `.readerStructuralSettingsChanged` / `SettingsManager.settingsChangedNotification` on mutation. |
+| `Settings/SettingsWindowController.swift` | Six-tab Settings window (General / Reading / Formatting / Appearance / History / Shortcuts), all views built imperatively in `loadView()`; the Formatting tab is `FanfictionSettingsViewController`. |
 | `Settings/ShortcutsSettingsViewController.swift` | Per-`RebindableAction` key-capture rows. |
+| `Settings/ThemeStore.swift`, `Settings/ThemeFileCodec.swift` | Theme files (R19, M2.1): `ThemeStore` is the only theme file I/O, with an in-memory cache, debounced atomic writes, seed repair and rescan on activation; `ThemeFileCodec` is the pure encode, decode, slug and filename logic. |
+| `Settings/FanfictionSettingsViewController.swift` | Formatting tab: Format for AO3, remove indents, collapse spacer paragraphs. |
+| `Settings/ReaderContrast.swift`, `ReaderCSSSanitizer.swift`, `SettingsValueFormat.swift`, `ValueSliderControl.swift`, `ChapterTransformSettings.swift` | Pure contrast math and hit and speech palettes; validation of values interpolated into CSS; Appearance slider formatting and control; bridge from settings to `ChapterTransformOptions`. |
 | `Settings/KeyBinding.swift` | `RebindableAction` enum + `KeyBinding` codable value type; defaults live here. |
 
-## 3a. Fixed bug: saved reading position previously never restored
+## 3a. Behaviors kept on purpose
 
-`ReaderViewController.loadEPUB(at:)` calls `HistoryManager.shared.record(url:title:)`
-(which logs the just-opened book into history) *before* it reads
-`HistoryManager.shared.savedPosition(for:)` to decide where to restore to —
-in both the paginated-mode branch and, via `scrollRestoreBootstrapJS()`, the
-scroll-mode path. `HistoryManager.record` used to unconditionally replace the
-`HistoryEntry` for that URL with a fresh one whose initializer hardcodes
-`lastSpineIndex`/`lastCharacterOffset` to `0` (only `readingProgressPercent`
-carried forward), so the later `savedPosition(for:)` lookup always read back
-`(0, 0)` for the book that was just opened — every open silently discarded
-the saved position before it was ever consulted. Fixed by having `record()`
-carry `lastSpineIndex`/`lastCharacterOffset` forward from the existing entry
-the same way it already carried `readingProgressPercent` forward, so the
-fix holds regardless of call order at any future call site.
-
-## 3b. Removed dead settings: `removeFirstLine` / `enlargeSecondLine`
-
-`SettingsManager` used to expose `removeFirstLine`/`enlargeSecondLine` as
-fully `UserDefaults`-backed properties, included in `resetAllToDefaults()`,
-but nothing in `EPUBParser`'s HTML-building path ever read either one and no
-Settings pane exposed a control for either — leftover sub-flags from before
-"Format for AO3" (`formatFirstChapter`) absorbed their behavior. Removed;
-any stale `readerRemoveFirstLine`/`readerEnlargeSecondLine` keys left in a
-user's `UserDefaults` from a prior build are now simply unread, which is
-harmless.
-
-## 3c. Fixed: ReaderWindow no longer swallows unhandled key events
-
-`ReaderWindow.keyDown` unconditionally routed every keystroke to
-`ReaderViewController.handleKeyDown(_:)` whenever a reader VC was the
-content view controller, and `handleKeyDown`'s `switch` had a no-op
-`default: break` — so any key outside its five explicit cases (arrows,
-Page Up/Down, ⌘F) was silently swallowed at the window level instead of
-falling through to `super.keyDown(with:)`, losing AppKit's default
-"no responder handled this" behavior (e.g. the system beep) for stray
-keys. `handleKeyDown` now returns whether it actually handled the event,
-and both callers (`ReaderWindow.keyDown`, `ReaderWebView.keyDown`) fall
-back to `super.keyDown(with:)` when it didn't.
+- `HistoryManager.record` carries `lastSpineIndex`, `lastCharacterOffset` and `anchorLayout` forward from the existing entry. Before this
+  was fixed every open recorded the book first and then read back position `(0, 0)`, so saved positions were never restored. It is regression-tested.
+- `removeFirstLine` and `enlargeSecondLine` settings were removed (nothing read them). Stale `readerRemoveFirstLine` and
+  `readerEnlargeSecondLine` keys in `UserDefaults` are unread and harmless.
+- `ReaderViewController.handleKeyDown` returns whether it handled the event, and `ReaderWindow.keyDown` and `ReaderWebView.keyDown` call
+  `super.keyDown` when it did not, so stray keys keep AppKit's default behavior.
 
 ## 4. Data flow: opening a book
 
-1. `AppDelegate.application(_:open:)` or `ReaderWindowController.showOpenPanel` gets a file `URL`.
-2. `ReaderViewController.loadEPUB(url:)` starts security-scoped access, then off the main thread:
-   `EPUBParser.unpackEPUB` (ZIP → temp dir) → `EPUBParser.parsePackage` (container.xml → OPF → `EPUBPackage`) → `TOCParser.parseTOC`.
-3. Back on main: `HistoryManager.record`, TOC model initialized, reading mode read from `SettingsManager.shared.defaultReadingMode`.
-4. `FlowDocumentBuilder` renders chapters inside `<section class="hc-chapter" id="hc-r{N}">` served over `honeycrisp-epub://book/...` via `FlowSurface` for both continuous flow reading (`__app/flow.html`) and paginated mode (`__app/paged.html`).
-5. `readerJS` (injected via `FlowSurface` in `WKContentWorld.defaultClient`) reports scroll, position, and page information back to Swift via `WKScriptMessageHandler` handlers. In paginated mode, `PaginationJS` runs in `defaultClient` alongside a pager bootstrap script that applies column restore before revealing the page.
+1. `AppDelegate.application(_:open:)` or `ReaderWindowController.showOpenPanel` gets a file `URL`; both filter by `BookFormat.isSupported`.
+2. `ReaderViewController.loadDocument(at:)` calls `loadEPUB(at:)`, which starts security-scoped access and, off the main thread, calls
+   `DocumentImporter.importDocument(at:to:)` into a work directory under Application Support. EPUB goes through `EPUBParser.unpackEPUB` and
+   `parsePackage` (container.xml, OPF, `EPUBPackage`); plain text, HTML and Markdown importers synthesize an `EPUBPackage` with an NCX TOC. Then `TOCParser.parseTOC`.
+3. Back on main, `finishLoading` publishes the package, works out where to open (saved `Locator` through `HistoryManager`, or past the cover), initializes the TOC model and reads
+   the reading mode from `SettingsManager.shared.defaultReadingMode`.
+4. `FlowDocumentBuilder` renders chapters inside `<section class="hc-chapter" id="hc-r{N}">`, served over `honeycrisp-epub://book/...` by `FlowSurface` for both continuous flow reading
+   (`__app/flow.html`) and paginated mode (`__app/paged.html`).
+5. `readerJS` (injected by `FlowSurface` in `WKContentWorld.defaultClient`) reports scroll, position and page information back to Swift through `WKScriptMessageHandler` handlers. In
+   paginated mode, `PaginationJS` runs in `defaultClient` with a pager bootstrap that applies the column restore before revealing the page.
 
-The reader architecture is layered across L1-L3: `FlowDocumentBuilder` and `FlowSurface` render chapters served over `honeycrisp-epub://book/...` with author JavaScript disabled, app scripts in `WKContentWorld.defaultClient`, and publisher styles harvested via `ChapterStyles` (Rule N3/N6, Decision R21). The legacy merged document path (`buildScrollHTML` and `LegacyMergedSurface`) was completely removed in Milestone M5. Under milestone M5, navigation history (Decision R13), TOC fragment navigation, bookmarks, speech, and cross-chapter anchor navigation operate directly on `FlowSurface`.
+The reader is layered L1 to L3: `FlowDocumentBuilder` and `FlowSurface` render chapters with author JavaScript disabled, app scripts in the client world, and publisher styles
+harvested by `ChapterStyles` (Rule N3 and N6, Decision R21). Navigation history (R13), TOC fragment navigation, bookmarks, speech and cross-chapter anchor navigation operate on
+`FlowSurface`. The legacy merged-document path was removed in M5.
 
-### 4a. Flag mode: chapter host spike (roadmap M3; off by default)
+### 4a. Flag mode: chapter host (roadmap M3 and M4; off by default; frozen)
 
-Status: frozen at roadmap M4 pass 7 (R20). The code stays behind the flag, bug fixes only; the snapshot is branch `chapter-engine` at 91c0dfd. It is not the default and has no history, search, speech or bookmarks.
+Status: frozen at roadmap M4 pass 7 (R20): bug fixes only; snapshot branch `chapter-engine` at 91c0dfd. It has no history, search, speech, bookmarks, TOC jumps or cross-chapter links, and it
+is a read-only viewer. With `HONEYCRISP_CHAPTER_HOST=1` (set in the Xcode scheme, never persisted), `ReaderViewController` builds its web view through `ChapterHostSurface`.
 
-
-With the environment variable `HONEYCRISP_CHAPTER_HOST=1`, `ReaderViewController` builds its web view through `ChapterHostSurface` and scroll mode shows the chapter at `activeScrollSpineIndex` and its neighbours (a window of up to three) as isolated documents: a script-free XHTML shell (`ChapterHostShell`, served as the `__app/shell.html` app resource) holds one iframe per chapter, each served by `EPUBResourceSchemeHandler` at `honeycrisp-epub://book/...`. Author JavaScript is off for the whole web view, the book's own stylesheets are kept, `ChapterHostCSS` is the user layer, and links and navigation are restricted to the app scheme. One app script, `ChapterHostScript`, runs in the client world (`WKContentWorld.defaultClient`) and sizes each iframe to its chapter (on load, again right after, and when the shell's own load finishes, because a first measurement can precede style application); this relies on app scripts running with content JavaScript off and reading same-scheme iframes (assumption A1 in the M3 plan, tested by `ChapterHostShellTests`). Cosmetic setting changes patch live: `applyCosmeticCSSUpdate` has a flagged branch that calls `ChapterHostSurface.applyCosmetics`, which updates the CSS served to chapters mounted later and replaces the text of `<style id="honeycrisp-user">` in every mounted chapter document through the client world (`honeycrispHost.applyUserCSS`, the CSS passed as a `callAsyncJavaScript` argument, assigned as text only), then re-fits the frames; no reload. The client script also exposes `honeycrispHost.offsetOfFirstVisibleText(x)` and `scrollTo(resource, offset)` (Swift: `ChapterHostSurface.firstVisiblePosition` and `scroll(to:in:)`), positions as `{resource, offset}` with offsets counted per chapter document by the same body text-node walk as the merged script (contract C2); nothing in the reader calls them yet (position save and restore is M5). The shell holds one `div.hc-slot` per spine item (height estimated from the file size until the chapter is measured); only slots near the viewport hold an iframe, and `ChapterHostScript.reconcile` mounts and evicts on scroll and resize (mount margin 2 viewport heights, evict margin 4, at most 5 mounted, a slot on screen is never evicted, an evicted slot keeps its height). The first load does not reconcile, and the shell opens on the first mounted chapter. A measured chapter height replaces the estimate, and when the slot lies above the reading line (a third down the window) the script scrolls by the difference in the same JS turn (`overflow-anchor: none` on the shell); a frame still showing its initial `about:blank` document is never measured, and until the first position is established an empty slot at the window top does not count as above; a running px-per-byte ratio re-estimates unmeasured slots the same way. The script posts the reading position (`{resource, offset, chapterPage, chapterPages}`, throttled to one post per 100 ms) to the client-world handler `hostPosition`; `ChapterHostSurface.onPositionChange` hands it to `ReaderViewController.didReceiveHostPosition`, which updates `activeScrollSpineIndex`, the current chapter and the label (per chapter, `page/pages chapter/count`, same format as paginated mode, roadmap R11). `loadWindow(restoring:)` opens on a chapter start, a text offset or a fraction: the shell is hidden by a body attribute until the script has restored after the target frame loaded and was re-fitted (the target is placed again when the shell's own load finishes, and the reveal waits for that; a 2 s timer reveals it if nothing reports); a structural reload reopens at the current position in memory. Still nothing is saved or read from history. It is a read-only viewer. Not ported (M4, M5, M6): position save and restore, progress, search, speech, bookmarks, TOC jumps, cross-chapter links, AO3 and indent transforms, hide images, spacer collapsing (paginated mode is ported, see below). `ChapterHostSurface.loadPaged` serves one chapter as the top-level document with column CSS (`EPUBParser.paginatedColumnCSS`, wrapped by `ChapterHostCSS.pagedBlock`, appended to the user block so cosmetic patches keep it) and the shared `PaginationJS` as a client-world script (`pagerBootstrap`: setup, restore, reveal, all run on the window `load` event so the column count is read from the settled layout; scripts are re-added before every load); `PaginationEngine(webView:contentWorld:)` drives it through `callAsyncJavaScript`, and `pageAction` and `positionUpdate` are registered in the client world. `PaginationJS.qlOffsetAtCurrentColumn` returns the offset of the first text on the current page (the inverse of `qlNavigateToOffset`, same text-node walk, no DOM mutation), and a cosmetic patch of a paged chapter seeks back to that offset after recounting columns, so the text being read stays on screen (fraction only when the chapter has no text on or after the page). In flag mode paginated mode now uses it: `ReaderViewController.loadSpineItem` delegates to `loadHostedPagedChapter` (geometry from `ChapterHostPaging.geometry`, `PaginationEngine(webView:contentWorld: .defaultClient)`), `navigateSpine` hands off at chapter edges through `ChapterHostPaging.handoff` (next chapter at its first column, previous at its last; ignored while the engine is not ready, i.e. while a chapter loads), and `webView(_:didFinish:)` reads the layout back with `applyLayout`, which retries while the pager's own setup has not yet run on `load`. A paged open or hand-off restores from an in-memory `Restore` only (`ChapterHostPaging.pagedTarget`), never from history, and `didReceiveProgress` writes nothing in flag mode. A resize (only when the geometry changed) or a structural setting change reopens the chapter at the offset of the first text on the page (`PaginationEngine.currentOffset`, in memory only), and a link activation that would change the document is cancelled while paged (`ChapterHostPaging.changesDocument`; cross-chapter links are M5, same-document fragments are left alone). `toggleReadingMode` has a flag branch (`toggleHostedReadingMode`): scroll to paged reads the text on the window's reference line (`firstVisiblePosition`) and opens the paged chapter at that exact offset (`ChapterHostPaging.toPaged`), paged to scroll reopens the window at `PaginationEngine.currentOffset` (`ChapterHostPaging.toScroll`); both counts use the same body text-node walk (contract C2), nothing is read from or written to history, and a toggle while a chapter is loading (engine not ready) reopens that chapter at its start. Flag mode never writes to `HistoryManager` or `BookmarkManager`: `flushPositionSave`, the position capture in `scheduleStructuralReload` and `toggleBookmarkAtCurrentPosition` return early, because their JS queries fall back to offset 0 when the page script is absent. With the flag unset nothing changes. Note: flag mode offsets are over raw chapter bytes and equal pipeline text only for chapters without active content.
+- Structure: a script-free XHTML shell (`ChapterHostShell`, served as `__app/shell.html`) holds one `div.hc-slot` per spine item (height estimated from file size until measured).
+  Only slots near the viewport hold an iframe, each served by `EPUBResourceSchemeHandler`. Author JavaScript is off, the book's own stylesheets are kept, `ChapterHostCSS` is the user
+  layer, and navigation is restricted to the app scheme.
+- Client script (`ChapterHostScript`, `WKContentWorld.defaultClient`): sizes each iframe (on load, right after, and when the shell's own load finishes), mounts and evicts on scroll and
+  resize (mount margin 2 viewport heights, evict margin 4, at most 5 mounted, a slot on screen is never evicted, an evicted slot keeps its height), and replaces estimates with measured
+  heights, scrolling by the difference when the slot lies above the reading line (`overflow-anchor: none`). It relies on app scripts running with content JavaScript off and reading
+  same-scheme iframes (assumption A1, `ChapterHostShellTests`).
+- Position: the script posts `{resource, offset, chapterPage, chapterPages}` (throttled to one post per 100 ms) to the handler `hostPosition`; `ChapterHostSurface.onPositionChange` hands it to
+  `ReaderViewController.didReceiveHostPosition`, which updates the label (per chapter, R11). `honeycrispHost.offsetOfFirstVisibleText(x)` and `scrollTo(resource, offset)` (Swift:
+  `firstVisiblePosition`, `scroll(to:in:)`) count offsets per chapter with the same text-node walk as the page script (C2). `loadWindow(restoring:)` opens on a chapter start, a text offset
+  or a fraction; the shell stays hidden until the target frame is restored and re-fitted (a 2 s timer reveals it otherwise). A structural reload reopens at the current position in memory.
+- Cosmetics: `applyCosmeticCSSUpdate` has a flagged branch that calls `ChapterHostSurface.applyCosmetics`, which updates the CSS served to chapters mounted later and replaces the text of
+  `<style id="honeycrisp-user">` in every mounted chapter (`honeycrispHost.applyUserCSS`, the CSS passed as a `callAsyncJavaScript` argument and assigned as text), then re-fits the frames. No reload.
+- Paged mode: `ChapterHostSurface.loadPaged` serves one chapter as the top-level document with column CSS (`ReaderStyles.paginatedColumnCSS`, wrapped by `ChapterHostCSS.pagedBlock`) and the shared
+  `PaginationJS` as a client-world script (`pagerBootstrap` runs on the window `load` event so the column count is read from the settled layout). `PaginationEngine(webView:contentWorld:)` drives it;
+  `pageAction` and `positionUpdate` are registered in the client world. `PaginationJS.qlOffsetAtCurrentColumn` returns the offset of the first text on the current page, so a cosmetic patch, a
+  resize or a structural change reopens at the same text. `navigateSpine` hands off at chapter edges through `ChapterHostPaging.handoff` (next chapter at its first column, previous at its last;
+  ignored while a chapter loads). A link activation that would change the document is cancelled while paged (`ChapterHostPaging.changesDocument`).
+  `toggleReadingMode` has a flag branch (`toggleHostedReadingMode`) that converts exact offsets in both directions (`ChapterHostPaging.toPaged`, `toScroll`).
+- Persistence: flag mode never writes to `HistoryManager` or `BookmarkManager`. `flushPositionSave`, the position capture in `scheduleStructuralReload` and `toggleBookmarkAtCurrentPosition`
+  return early, because their JS queries fall back to offset 0 when the page script is absent. A paged open or hand-off restores from an in-memory `Restore` only.
+- Offsets in flag mode are over raw chapter bytes and equal pipeline text only for chapters without active content.
 
 ## 5. Settings persistence model
 
-`SettingsManager` is a thin, direct `UserDefaults` wrapper — every property is a computed `get`/`set` pair reading/writing a `UserDefaults` key, with no separate serialized settings object and no export/import path. `Theme` and `KeyBinding` values are `Codable` and stored as encoded `Data` blobs under single keys (`themes`, key-binding dictionary). Legacy-key migration (e.g. `migrateLegacyFontFamily`, `migrateLegacyThemes`) is handled inline, per-property, at read time.
+`SettingsManager` is a direct `UserDefaults` wrapper: every property is a computed `get`/`set` pair on a `UserDefaults` key, with no separate serialized settings object. Themes are the exception
+(R19, M2.1). Each theme is one JSON file, `<slug>.honeycrisp-theme.json` in the `ThemeExport` shape, in `Application Support/Honeycrisp/Themes` inside the app container.
+`ThemeStore` is the only type that touches those files; it keeps an in-memory cache, writes changed files atomically after a 250 ms trailing debounce, flushes on
+`applicationWillTerminate`, regenerates missing seed themes, skips unreadable or newer-version files without rewriting them, and rescans on app activation and when Appearance opens
+(`rescanIfChanged`). `SettingsManager.themes` returns the cache and its setter writes through the store, so mutation call sites did not change. On first launch after the upgrade the
+existing migration chain runs once and writes every file, guarded by the flag `readerThemesMigratedToFiles`; the old `readerThemes` blob is left in `UserDefaults` as a rollback copy.
+`readerCurrentThemeID` stays in `UserDefaults`. `KeyBinding` values are `Codable` blobs under `readerKeyBindings`. Legacy-key migration (for example `migrateLegacyFontFamily`,
+`migrateLegacyThemes`) runs inline at read time.
 
 ## 5a. Stored data durability and anchor layout
 
@@ -157,18 +176,21 @@ Anchor layout. Saved character offsets are only valid for the text extraction th
 
 - No library/catalog view — File > Open / drag-drop / Open Recent / explicit bookmarks only.
 - No cross-book full-text search — `SearchBarViewController` is in-book only.
-- Publisher CSS is not loaded in the default path (the `<head>` is dropped). The chapter host (flag mode) keeps it (R1); the planned flow surface harvests a small whitelist instead (R21). See `docs/FRAMEWORK.md` C4.
+- Publisher stylesheets are not loaded in the default flow surface: the pipeline harvests a small whitelist of simple rules into inline attributes (R21) and strips raw `<style>` elements. The chapter host (flag mode) keeps the book's styles (R1). See `docs/FRAMEWORK.md` C4.
 - No per-window/per-book reading mode override — `currentMode` always initializes from the global `SettingsManager.shared.defaultReadingMode`.
 
-## 7. Known architectural gaps and their resolution (historical notes; current plan is `docs/ROADMAP.md`)
+## 7. Known gaps
 
-- **DRM**: resolved. `EPUBParser` detects real DRM markers and throws `EPUBParseError.drmProtected`; font obfuscation alone is not DRM. Original note: a DRM-protected EPUB fell into the generic `.malformed`/`.opfNotFound` path. Resolution was: detect `META-INF/encryption.xml` in `EPUBParser.parsePackage`, add `EPUBParseError.drmProtected`; the existing in-webview `showError` path already surfaces `errorDescription` with no further plumbing needed.
-- **Calibre annotations**: not supported (read or write). Blocked on confirming Calibre's actual on-disk format — Calibre stores highlights/bookmarks in its own library metadata (`metadata.db`/sidecar), not embedded in the EPUB file itself, and a standalone-opened EPUB (Honeycrisp's only input mode — see §6) generally won't carry that sidecar. Needs a real sample before a parser is written. When built: read-only by hard constraint, no write path to the EPUB or any sidecar, enforced in code (not just documented).
-- **Quote sharing**: parked in `docs/ROADMAP.md`; no design or code yet.
-- **Reading aids**: scroll-mode auto-scroll and text-to-speech (TTS) via `SpeechCoordinator` and `AVFoundationTTSEngine`. TTS highlights spoken sentences and words with an absolutely positioned CSS overlay in `document.documentElement` (`#hc-speech-hl`), preserving contract C2 offsets with zero DOM mutation of book content. Resolves start location from active text selection or the first visible sentence at the viewport top, snapped to sentence start. Supports optional NSToolbar start/stop button, follow-along auto-scrolling across paragraphs, and automatic chapter advancing in both scroll and paginated modes.
-- **Scroll-mode page count**: the plan's premise ("no cheap whole-book page count in scroll mode") turned out to already be **false as currently implemented** — `EPUBParser.readerJS`'s `honeycrispPageInfo()` already computes `ceil(scrollHeight/innerHeight)`, and `ReaderViewController.didReceiveScrollPageInfo` already displays it correctly. The only real defect found is a doc comment in `ReaderViewController` that mis-scopes a paginated-mode caveat onto scroll mode too. This item is closer to "verify and fix a comment" than "implement a new calculation."
-- **HIG cleanup**: four independent, all confirmed present — `window.title` forced empty in `ReaderViewController.setToolbarTitle` (window title should be set even while hidden from the titlebar, since Window menu/Mission Control/VoiceOver read the model value independent of `titleVisibility`); `ReaderWindowController.setupWindow` sets `isRestorable = false` with state restoration to be implemented (persisting book URL + frame via a security-scoped bookmark, not reading position — see below); 19 `NSLog` debug call sites across `SettingsWindowController`, `ShortcutsSettingsViewController`, `AppDelegate.openSettingsAction`, and one in `ReaderViewController.showThemePopover`, all left over from diagnosing a since-fixed Settings-menu bug, to be deleted; toolbar buttons in `ReaderViewController.makeToolbarButton` accessibility-labeled only via the underlying `NSImage`, to get `setAccessibilityLabel` on the control itself, matching the pattern `SettingsWindowController` already uses correctly elsewhere.
-- **Config file**: `SettingsManager` stays `UserDefaults`-only as the source of truth (lower-risk path, per the plan's own recommendation) — no migration off it. Adds export/import: a new `SettingsSnapshot: Codable` aggregating every existing computed property, serialized to `~/Library/Application Support/Honeycrisp/settings.json`, applied back through the existing computed-property setters (not raw `UserDefaults` writes) so existing change-notification and validation side effects still fire.
+Current, prioritized gaps are in `docs/ROADMAP.md` sections 1.2 and 7. Notes kept here because the code does not explain them:
+
+- **DRM**: `EPUBParser.isDRMProtected` detects real markers (LCP, ADEPT, non-font encryption algorithms) and `parsePackage` throws `EPUBParseError.drmProtected`; font obfuscation alone is not DRM.
+- **Calibre annotations**: not supported (read or write). Calibre keeps highlights in its own library metadata, not in the EPUB, so a standalone-opened EPUB generally carries none. Needs a real sample
+  before a parser is written; when built it would be read-only, enforced in code.
+- **Quote sharing**: not planned (roadmap section 5).
+- **Speech**: `SpeechCoordinator` queues sentences from `SpeechTextMap` (C2-parity offsets, block breaks, hidden text skipped) through a pluggable `TTSEngine` (`AVFoundationTTSEngine`). The highlight is an
+  absolutely positioned overlay (`#hc-speech-hl`) appended to `document.documentElement`, so book content is never mutated. Speech starts from the selection or the first visible sentence, follows
+  along in scroll and paged modes, and advances across chapters. The overlay colors are likely overridden by the universal `!important` rule in `readerCSS` (roadmap 1.2 item 1).
+- **Window state restoration**: `ReaderWindowController.setupWindow` sets `isRestorable = false`.
 
 ## 8. Decisions carried over from the revision plan
 
@@ -186,9 +208,8 @@ present in `SettingsWindowController.swift` and is correctly wired to
 
 It has no visible effect: every pane's `loadView()` constructs its root
 `NSView` with `frame: NSRect(origin: .zero, size: SettingsPaneMetrics.size)`
-— the same fixed 520×560 constant for General, Appearance, History, and
-Shortcuts — so `resolvePreferredPaneSize()` always resolves to the same
-size for all five tabs and the animated resize path never actually
+(the same fixed 520×560 constant, `SettingsPaneMetrics.size`, for every tab) so `resolvePreferredPaneSize()` always resolves to the same
+size for all six tabs and the animated resize path never actually
 resizes anything. This is intentional (see the doc comment on
 `SettingsPaneMetrics`: a prior version *did* size per-tab and that read as
 unwanted "responsive" resizing), but the plan document was never updated to
@@ -199,6 +220,6 @@ the documentation now caught up to it.
 
 ## 10. Settings and AppKit entry point
 
-Historically, `Sources/App/EPUBReaderApp.swift` declared a SwiftUI `Settings` scene alongside `AppDelegate.setupMenus()`. In release builds, the SwiftUI `@main` lifecycle interfered with menu management by overwriting `NSApp.mainMenu` and intercepting ⌘, with its `Settings` scene (displaying a blank window).
+An earlier `Sources/App/EPUBReaderApp.swift` declared a SwiftUI `Settings` scene alongside `AppDelegate.setupMenus()`. In release builds, the SwiftUI `@main` lifecycle interfered with menu management by overwriting `NSApp.mainMenu` and intercepting ⌘, with its `Settings` scene (displaying a blank window).
 
 Fixed: The SwiftUI `@main` shim (`EPUBReaderApp.swift`) is removed. `AppDelegate` is the direct `@main` entry point with an explicit `@MainActor static func main()` that instantiates and strongly retains `AppDelegate`, sets `NSApp.delegate`, and starts the run loop (`app.run()`). Because Honeycrisp has no nib or storyboard, this explicit programmatic bootstrap is required so AppKit invokes `applicationWillFinishLaunching` and `applicationDidFinishLaunching`, leaving `AppDelegate.setupMenus()` and `SettingsWindowController.shared` in full control of macOS menu bar population and settings window presentation.
