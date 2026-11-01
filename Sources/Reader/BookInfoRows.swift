@@ -16,7 +16,13 @@ enum BookInfoRows {
 
     /// The always-present rows. With AO3 metadata the spine-item count is dropped (the AO3 section
     /// reports the work's own chapter count) and a missing language falls back to the AO3 one.
-    static func baseRows(package: EPUBPackage, formatName: String, ao3: AO3MetadataRecord?) -> [BookInfoRow] {
+    /// `description` is the cleaned OPF description; it gets a last row unless an AO3 summary is shown.
+    static func baseRows(
+        package: EPUBPackage,
+        formatName: String,
+        ao3: AO3MetadataRecord?,
+        description: String? = nil
+    ) -> [BookInfoRow] {
         var rows = [BookInfoRow(label: "Format", value: formatName)]
         if ao3 == nil {
             rows.append(BookInfoRow(label: "Chapters", value: "\(package.spineURLs.count)"))
@@ -25,6 +31,9 @@ enum BookInfoRows {
         rows.append(BookInfoRow(label: "Date", value: package.publicationDate ?? placeholder))
         rows.append(BookInfoRow(label: "Language", value: package.language ?? ao3?.language ?? placeholder))
         rows.append(BookInfoRow(label: "Identifier", value: package.identifier ?? placeholder))
+        if let description, !description.isEmpty, ao3?.summary == nil {
+            rows.append(BookInfoRow(label: "Description", value: description))
+        }
         return rows
     }
 
@@ -48,6 +57,7 @@ enum BookInfoRows {
         addList("Tags", record.additionalTags)
         add("Series", record.series.isEmpty ? nil : record.series.map { "Part \($0.index) of \($0.name)" }.joined(separator: "; "))
         addList("Collections", record.collections)
+        add("Summary", record.summary)
         add("Words", record.wordCount.map { grouped($0, locale: locale) })
         add("Chapters", chaptersText(record))
         if record.isComplete || record.chapterCurrent != nil {

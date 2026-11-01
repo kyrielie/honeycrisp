@@ -83,7 +83,7 @@ final class BookInfoViewController: NSViewController {
         self.view = root
     }
 
-    /// Header, base fields, optional AO3 section and description, stacked top to bottom.
+    /// Header, base fields (including the description) and optional AO3 section, stacked top to bottom.
     /// Also returns the views that must span the stack's full width.
     private func buildContentStack(ao3Rows: [BookInfoRow]) -> (stack: NSStackView, fullWidth: [NSView]) {
         let stack = NSStackView()
@@ -94,7 +94,12 @@ final class BookInfoViewController: NSViewController {
 
         let headerBox = createHeaderView()
         let separator = createSeparator()
-        let baseRows = createRowsView(BookInfoRows.baseRows(package: package, formatName: formatDescription(), ao3: ao3))
+        let baseRows = createRowsView(BookInfoRows.baseRows(
+            package: package,
+            formatName: formatDescription(),
+            ao3: ao3,
+            description: package.bookDescription.map(Self.cleanDescription)
+        ))
         var fullWidthViews: [NSView] = [headerBox, separator, baseRows]
         stack.addArrangedSubview(headerBox)
         stack.addArrangedSubview(separator)
@@ -103,9 +108,6 @@ final class BookInfoViewController: NSViewController {
         if let ao3Section = createAO3Section(rows: ao3Rows) {
             stack.addArrangedSubview(ao3Section)
             fullWidthViews.append(ao3Section)
-        }
-        if let descView = createDescriptionView() {
-            stack.addArrangedSubview(descView)
         }
         return (stack, fullWidthViews)
     }
@@ -206,35 +208,6 @@ final class BookInfoViewController: NSViewController {
         let rowsView = createRowsView(rows)
         container.addArrangedSubview(rowsView)
         rowsView.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
-        return container
-    }
-
-    private func createDescriptionView() -> NSView? {
-        guard let desc = package.bookDescription, !desc.isEmpty else { return nil }
-        let container = NSStackView()
-        container.orientation = .vertical
-        container.alignment = .leading
-        container.spacing = 4
-
-        let descTitle = NSTextField(labelWithString: "Description:")
-        descTitle.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        descTitle.textColor = .secondaryLabelColor
-        container.addArrangedSubview(descTitle)
-
-        let descScroll = NSScrollView()
-        descScroll.hasVerticalScroller = true
-        descScroll.drawsBackground = false
-        descScroll.translatesAutoresizingMaskIntoConstraints = false
-        descScroll.heightAnchor.constraint(equalToConstant: 70).isActive = true
-
-        let descText = NSTextView()
-        descText.isEditable = false
-        descText.isSelectable = true
-        descText.drawsBackground = false
-        descText.font = NSFont.systemFont(ofSize: 11)
-        descText.string = Self.cleanDescription(desc)
-        descScroll.documentView = descText
-        container.addArrangedSubview(descScroll)
         return container
     }
 

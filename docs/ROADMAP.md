@@ -440,7 +440,7 @@ chunk carries a `Locator`, and which voices deliver word callbacks on macOS 13.
   sentence chunking with abbreviation protection, each chunk carrying a `Locator`; word highlight
   from synthesizer range callbacks, off by default (verify the callback and its macOS 13 behavior);
   explicit state machine for start, stop and finish races.
-- Book Info sheet from parsed metadata (publisher, language, identifier, date, description, and for AO3 EPUBs the preface fields: rating, warnings, categories, fandoms, relationships, characters, tags, series, collections, words, chapters, status, dates, kudos, link);
+- Book Info sheet from parsed metadata (publisher, language, identifier, date, description, and for AO3 EPUBs the preface fields: rating, warnings, categories, fandoms, relationships, characters, tags, series, collections, summary, words, chapters, status, dates, kudos, link; the description is an ordinary row);
   store a text snippet with new bookmarks.
 - Audit of input and menu requests (full-window drop target, media keys where macOS exposes them,
   auto-scroll hold-to-change, menu completeness, live column changes): mark done, partial, open.

@@ -11,22 +11,48 @@ enum AO3MetadataExtractor {
     /// Number of spine items, counted from the start, searched for the preface.
     static let maxSpineItemsScanned = 5
 
-    /// Reads at most the first `maxSpineItemsScanned` spine items and returns the record from the
-    /// first one that holds a `dl.tags` preface. Items that cannot be read are skipped.
+    /// Reads at most the first `maxSpineItemsScanned` spine items. The record comes from the first one
+    /// that holds a `dl.tags` preface; the summary from the first one with a "Summary" heading followed
+    /// by a blockquote (the title page, which may come before or after the preface). Returns nil when
+    /// no preface is found. Items that cannot be read are skipped.
     static func extract(from package: EPUBPackage) -> AO3MetadataRecord? {
+        var record: AO3MetadataRecord?
+        var summary: String?
         for url in package.spineURLs.prefix(maxSpineItemsScanned) {
             guard let data = try? Data(contentsOf: url) else { continue }
             let html = ChapterDecoder.decode(data).text
-            guard mightContainPreface(html) else { continue }
-            if let record = extract(from: html) { return record }
+            if record == nil, mightContainPreface(html) { record = extract(from: html) }
+            if summary == nil, mightContainSummary(html) { summary = extractSummary(from: html) }
+            if record != nil, summary != nil { break }
         }
-        return nil
+        guard var found = record else { return nil }
+        found.summary = summary
+        return found
     }
 
     /// Cheap string test that lets non-AO3 chapters skip the SwiftSoup parse. It only rules chapters
     /// out; `extract(from:)` decides.
     static func mightContainPreface(_ html: String) -> Bool {
         html.contains("<dl") && html.contains("tags")
+    }
+
+    /// Cheap string test, like `mightContainPreface`, for the summary scan.
+    static func mightContainSummary(_ html: String) -> Bool {
+        html.contains("blockquote") && html.range(of: "summary", options: .caseInsensitive) != nil
+    }
+
+    /// The text of the blockquote that directly follows a "Summary" heading (`p`, `h2`, `h3` or `h4`),
+    /// with paragraphs joined by a blank line. Nil when there is none.
+    static func extractSummary(from html: String) -> String? {
+        guard let doc = try? SwiftSoup.parse(html),
+              let headings = try? doc.select("p, h2, h3, h4").array() else { return nil }
+        for heading in headings {
+            guard text(of: heading)?.caseInsensitiveCompare("Summary") == .orderedSame,
+                  let next = try? heading.nextElementSibling(),
+                  next.tagName().lowercased() == "blockquote" else { continue }
+            return paragraphText(of: next)
+        }
+        return nil
     }
 
     /// Parses one chapter's HTML. Returns nil when it has no `dl.tags` element.
@@ -194,6 +220,12 @@ enum AO3MetadataExtractor {
         guard let raw = try? element.text() else { return nil }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func paragraphText(of element: Element) -> String? {
+        let paragraphs = ((try? element.select("p").array()) ?? []).compactMap { text(of: $0) }
+        if !paragraphs.isEmpty { return paragraphs.joined(separator: "\n\n") }
+        return text(of: element)
     }
 
     private static func linkTexts(in element: Element) -> [String] {

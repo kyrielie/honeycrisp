@@ -70,10 +70,10 @@ AppDelegate (AppKit @main)               , app lifecycle, NSMenu, file-open rout
 | `Reader/TTS/AVFoundationTTSEngine.swift` | Native `AVSpeechSynthesizer` implementation with UTF-16 code unit range handling. |
 | `Reader/PaginationEngine.swift` | Drives `PaginationJS` from Swift: column navigation, fraction/offset restore, spine-boundary detection. |
 | `Reader/PaginationJS.swift` | JS injected only in paginated mode: column-snap page turns, boundary detection posting back to `PageActionMessageHandler`. |
-| `Reader/BookInfoRows.swift` | Pure row model for the Book Info sheet (`BookInfoRows.baseRows`, `ao3Rows`). |
+| `Reader/BookInfoRows.swift` | Pure row model for the Book Info sheet (`BookInfoRows.baseRows`, `ao3Rows`); the OPF description is a row, replaced by the AO3 summary when there is one. |
 | `Reader/BookInfoViewController.swift` | Book Info sheet from parsed metadata: label and value rows in one scrolling panel above a pinned Done button, plus an AO3 heading and rows when a record is supplied; `cleanDescription` strips tags and decodes entities. `ReaderViewController.loadEPUB` extracts the AO3 record once on the import queue, only for EPUB sources, and holds it in `currentAO3Metadata` (not persisted, not in `EPUBPackage`). |
 | `Reader/MediaKeyCoordinator.swift` | System media keys and Now Playing through `MPRemoteCommandCenter`, wired to `SpeechCoordinator`. |
-| `Parsing/AO3Metadata.swift`, `Parsing/AO3MetadataExtractor.swift` | AO3 preface metadata: a display-only `AO3MetadataRecord` and an extractor that scans the first five spine items for the `dl.tags` preface. Not persisted and not part of `EPUBPackage`. |
+| `Parsing/AO3Metadata.swift`, `Parsing/AO3MetadataExtractor.swift` | AO3 preface metadata: a display-only `AO3MetadataRecord` and an extractor that scans the first five spine items for the `dl.tags` preface and the title page summary. Not persisted and not part of `EPUBPackage`. |
 | `Parsing/BookFormat.swift` | File format detection enum (`BookFormat`), UTI definitions, file extension mappings, and format support queries. |
 | `Parsing/DocumentImporter.swift` | Unified importation dispatcher (`DocumentImporter`, `DocumentImporterError`) converting EPUB, plain text, HTML, and Markdown files into `EPUBPackage` instances. |
 | `Parsing/PlainTextImporter.swift` | Pure Foundation plain text importer: multi-encoding fallback, metadata extraction, chapter heading detection, scene break detection, and synthesized EPUB package generation. |

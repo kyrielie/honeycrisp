@@ -44,6 +44,40 @@ final class BookInfoRowsTests: XCTestCase {
         XCTAssertEqual(with.first { $0.label == "Language" }?.value, "en")
     }
 
+    // MARK: - Description
+
+    func testDescriptionIsTheLastBaseRowWhenThereIsNoAO3Summary() {
+        let rows = BookInfoRows.baseRows(
+            package: makePackage(spineCount: 1), formatName: "F", ao3: nil, description: "About the book."
+        )
+        XCTAssertEqual(rows.last, BookInfoRow(label: "Description", value: "About the book."))
+    }
+
+    func testDescriptionIsShownForAnAO3BookWithoutASummary() {
+        let rows = BookInfoRows.baseRows(
+            package: makePackage(spineCount: 1), formatName: "F", ao3: AO3MetadataRecord(), description: "About the book."
+        )
+        XCTAssertEqual(value("Description", in: rows), "About the book.")
+    }
+
+    func testDescriptionIsOmittedWhenAnAO3SummaryIsShown() {
+        var record = AO3MetadataRecord()
+        record.summary = "The summary."
+        let rows = BookInfoRows.baseRows(
+            package: makePackage(spineCount: 1), formatName: "F", ao3: record, description: "About the book."
+        )
+        XCTAssertNil(value("Description", in: rows))
+    }
+
+    func testEmptyOrMissingDescriptionAddsNoRow() {
+        for description in [nil, ""] as [String?] {
+            let rows = BookInfoRows.baseRows(
+                package: makePackage(spineCount: 1), formatName: "F", ao3: nil, description: description
+            )
+            XCTAssertNil(value("Description", in: rows))
+        }
+    }
+
     // MARK: - AO3 rows
 
     func testAO3RowsAppearInDisplayOrderWithFormattedValues() {
@@ -57,6 +91,7 @@ final class BookInfoRowsTests: XCTestCase {
         record.characters = ["Person One", "Person Two"]
         record.additionalTags = ["Tag One"]
         record.collections = ["Collection One"]
+        record.summary = "A short summary."
         record.series = [
             AO3MetadataRecord.SeriesEntry(name: "Series One", index: 7, ao3ID: "1"),
             AO3MetadataRecord.SeriesEntry(name: "Series Two", index: 1, ao3ID: nil),
@@ -72,10 +107,11 @@ final class BookInfoRowsTests: XCTestCase {
         let rows = BookInfoRows.ao3Rows(record, locale: enUS)
         XCTAssertEqual(rows.map(\.label), [
             "Rating", "Warnings", "Categories", "Fandoms", "Relationships", "Characters", "Tags", "Series",
-            "Collections", "Words", "Chapters", "Status", "Published", "Updated", "Kudos", "Link",
+            "Collections", "Summary", "Words", "Chapters", "Status", "Published", "Updated", "Kudos", "Link",
         ])
         XCTAssertEqual(value("Warnings", in: rows), "Warning A, Warning B")
         XCTAssertEqual(value("Series", in: rows), "Part 7 of Series One; Part 1 of Series Two")
+        XCTAssertEqual(value("Summary", in: rows), "A short summary.")
         XCTAssertEqual(value("Words", in: rows), "21,069")
         XCTAssertEqual(value("Chapters", in: rows), "5/5")
         XCTAssertEqual(value("Status", in: rows), "Complete")

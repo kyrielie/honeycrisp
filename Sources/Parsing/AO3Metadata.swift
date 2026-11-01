@@ -26,6 +26,8 @@ struct AO3MetadataRecord: Equatable {
     var additionalTags: [String] = []
     var collections: [String] = []
     var language: String?
+    /// The work summary from the title page, paragraphs separated by a blank line.
+    var summary: String?
     var series: [SeriesEntry] = []
     var wordCount: Int?
     var chapterCurrent: Int?

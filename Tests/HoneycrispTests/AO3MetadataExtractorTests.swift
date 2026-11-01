@@ -238,6 +238,62 @@ final class AO3MetadataExtractorTests: XCTestCase {
         XCTAssertEqual(AO3MetadataExtractor.extract(from: package)?.fandoms, ["Caf\u{E9} Fandom"])
     }
 
+    // MARK: - Summary
+
+    func testExtractSummaryJoinsParagraphsWithABlankLine() {
+        let html = makeTitlePage(summaryParagraphs: ["First paragraph.", "Second paragraph."])
+        XCTAssertEqual(AO3MetadataExtractor.extractSummary(from: html), "First paragraph.\n\nSecond paragraph.")
+    }
+
+    func testExtractSummaryAcceptsHeadingElementsAndAnyCase() {
+        let html = makeTitlePage(headingTag: "h3", headingText: "SUMMARY", summaryParagraphs: ["Text."])
+        XCTAssertEqual(AO3MetadataExtractor.extractSummary(from: html), "Text.")
+    }
+
+    func testExtractSummaryRequiresABlockquoteDirectlyAfterTheHeading() {
+        let html = "<body><p>Summary</p><p>Not a blockquote.</p><blockquote><p>Elsewhere.</p></blockquote></body>"
+        XCTAssertNil(AO3MetadataExtractor.extractSummary(from: html))
+    }
+
+    func testExtractSummaryUsesBlockquoteTextWhenThereAreNoParagraphs() {
+        let html = "<body><p>Summary</p><blockquote>Plain text summary.</blockquote></body>"
+        XCTAssertEqual(AO3MetadataExtractor.extractSummary(from: html), "Plain text summary.")
+    }
+
+    func testMightContainSummaryRulesOutPlainChapters() {
+        XCTAssertFalse(AO3MetadataExtractor.mightContainSummary("<p>Summary of events.</p>"))
+        XCTAssertFalse(AO3MetadataExtractor.mightContainSummary("<blockquote>A quote.</blockquote>"))
+        XCTAssertTrue(AO3MetadataExtractor.mightContainSummary(makeTitlePage(summaryParagraphs: ["x"])))
+    }
+
+    func testPackageSummaryComesFromATitlePageBeforeThePreface() throws {
+        let package = try makePackage(spine: [
+            makeTitlePage(summaryParagraphs: ["The summary."]),
+            makePreface(pairs: statsPair()),
+        ])
+        let record = try XCTUnwrap(AO3MetadataExtractor.extract(from: package))
+        XCTAssertEqual(record.summary, "The summary.")
+        XCTAssertEqual(record.workID, "1234567")
+    }
+
+    func testPackageSummaryComesFromATitlePageAfterThePreface() throws {
+        let package = try makePackage(spine: [
+            makePreface(pairs: statsPair()),
+            makeTitlePage(summaryParagraphs: ["Later summary."]),
+        ])
+        XCTAssertEqual(AO3MetadataExtractor.extract(from: package)?.summary, "Later summary.")
+    }
+
+    func testPrefaceWithoutASummaryLeavesSummaryNil() throws {
+        let package = try makePackage(spine: [makePreface(pairs: statsPair()), "<p>Chapter</p>"])
+        XCTAssertNil(AO3MetadataExtractor.extract(from: package)?.summary)
+    }
+
+    func testSummaryAloneDoesNotMakeABookAO3() throws {
+        let package = try makePackage(spine: [makeTitlePage(summaryParagraphs: ["Looks like a summary."]), "<p>Chapter</p>"])
+        XCTAssertNil(AO3MetadataExtractor.extract(from: package))
+    }
+
     // MARK: - Fixtures
 
     private func statsPair() -> String {
@@ -252,6 +308,21 @@ final class AO3MetadataExtractorTests: XCTestCase {
             <p class="message"><b>A Test Work</b><br/>Posted originally at <a href="\(workHref)">the work page</a>.</p>
             <div><dl class="tags">\(pairs)</dl></div>
           </div>
+        </body>
+        """
+    }
+
+    private func makeTitlePage(
+        headingTag: String = "p",
+        headingText: String = "Summary",
+        summaryParagraphs: [String]
+    ) -> String {
+        let paragraphs = summaryParagraphs.map { "<p>\($0)</p>" }.joined()
+        return """
+        <body>
+          <div class="meta"><h1>A Test Work</h1><div class="byline">by Someone</div></div>
+          <\(headingTag)>\(headingText)</\(headingTag)>
+          <blockquote class="userstuff">\(paragraphs)</blockquote>
         </body>
         """
     }
