@@ -140,6 +140,7 @@ final class ReaderViewController: NSViewController {
     private weak var floatButton: NSButton?
     private var isFloatingWindow = false
     private weak var historyButton: NSButton?
+    private weak var bookInfoButton: NSButton?
     private weak var searchButton: NSButton?
     private weak var tocButton: NSButton?
     private weak var titleLabel: NSTextField?  // centered title in toolbar
@@ -511,6 +512,7 @@ final class ReaderViewController: NSViewController {
     ) {
         currentPackage = pkg
         currentAO3Metadata = ao3Metadata
+        bookInfoButton?.isEnabled = true
         extractionWorkDirectories.append(workDir)
         // Always show title centered in toolbar; never in window chrome
         let title =
@@ -2455,14 +2457,14 @@ extension ReaderViewController: NSToolbarDelegate {
         // available through Customize Toolbar. Existing windows keep their saved layout
         // because the toolbar identifier carries a version (see ReaderWindowController).
         [
-            .toc, .flexibleSpace, .titleLabel, .flexibleSpace, .search, .bookmark, .fontSize, .themePopover,
+            .toc, .flexibleSpace, .titleLabel, .flexibleSpace, .search, .bookmark, .fontSize, .themePopover, .bookInfo,
         ]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             .openFile, .titleLabel, .authorLabel, .search, .toc, .pageCount, .fontSize, .themePopover, .history, .floatToggle,
-            .bookmark, .speech, .space, .flexibleSpace,
+            .bookmark, .speech, .bookInfo, .space, .flexibleSpace,
         ]
     }
 
@@ -2599,6 +2601,16 @@ extension ReaderViewController: NSToolbarDelegate {
                 symbol: "circle.lefthalf.filled", tooltip: "Theme…", action: #selector(showThemePopover(_:)))
             item.view = btn
             item.label = "Theme"
+            return item
+
+        case .bookInfo:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            let btn = makeToolbarButton(symbol: "info.circle", tooltip: "Book Info", action: #selector(showBookInfo(_:)))
+            btn.isEnabled = currentPackage != nil
+            bookInfoButton = btn
+            item.view = btn
+            item.label = "Book Info"
+            item.paletteLabel = "Book Info"
             return item
 
         case .floatToggle:
@@ -2910,6 +2922,7 @@ extension NSToolbarItem.Identifier {
     static let bookmark = NSToolbarItem.Identifier("bookmark")
     static let speech = NSToolbarItem.Identifier("speech")
     static let floatToggle = NSToolbarItem.Identifier("floatToggle")
+    static let bookInfo = NSToolbarItem.Identifier("bookInfo")
     // NEW: replaces readingModeToggle; Apple-Books-style theme quick switcher
     static let themePopover = NSToolbarItem.Identifier("themePopover")
     // .toc, .search, .settings removed — now in menu bar only

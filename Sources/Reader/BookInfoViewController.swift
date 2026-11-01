@@ -10,7 +10,12 @@ final class BookInfoViewController: NSViewController {
     private let ao3: AO3MetadataRecord?
 
     private static let baseHeight: CGFloat = 420
-    private static let ao3ScrollHeight: CGFloat = 140
+    private static let ao3Height: CGFloat = 560
+    private static let labelColumnWidth: CGFloat = 96
+    private static let rowSpacing: CGFloat = 12
+    /// Wrap width for value text: sheet width, minus 20 pt side padding, a legacy scroller (16 pt),
+    /// the label column and the gap. Slightly narrow with overlay scrollers, which only costs a spare line.
+    private static let valueWrapWidth: CGFloat = 480 - 40 - 16 - labelColumnWidth - rowSpacing
 
     init(package: EPUBPackage, sourceURL: URL?, ao3: AO3MetadataRecord? = nil) {
         self.package = package
@@ -23,57 +28,86 @@ final class BookInfoViewController: NSViewController {
 
     override func loadView() {
         let ao3Rows = ao3.map { BookInfoRows.ao3Rows($0) } ?? []
-        let height = ao3Rows.isEmpty ? Self.baseHeight : Self.baseHeight + Self.ao3ScrollHeight + 34
+        let height = ao3Rows.isEmpty ? Self.baseHeight : Self.ao3Height
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: height))
         root.wantsLayer = true
 
+        // Everything above the Done button is one scrolling panel, so long AO3 tag lists scroll
+        // together with the rest of the metadata instead of in a box of their own.
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(scroll)
+
+        let content = FlippedView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        scroll.documentView = content
+
+        let (stack, fullWidthViews) = buildContentStack(ao3Rows: ao3Rows)
+        content.addSubview(stack)
+
+        let footerSeparator = createSeparator()
+        let buttonBox = createButtonBox()
+        root.addSubview(footerSeparator)
+        root.addSubview(buttonBox)
+
+        var constraints: [NSLayoutConstraint] = [
+            scroll.topAnchor.constraint(equalTo: root.topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: footerSeparator.topAnchor, constant: -8),
+
+            footerSeparator.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            footerSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            footerSeparator.bottomAnchor.constraint(equalTo: buttonBox.topAnchor, constant: -14),
+
+            buttonBox.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            buttonBox.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            buttonBox.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16),
+
+            content.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            content.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
+
+            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
+        ]
+        constraints += fullWidthViews.map { $0.widthAnchor.constraint(equalTo: stack.widthAnchor) }
+        NSLayoutConstraint.activate(constraints)
+
+        self.view = root
+    }
+
+    /// Header, base fields, optional AO3 section and description, stacked top to bottom.
+    /// Also returns the views that must span the stack's full width.
+    private func buildContentStack(ao3Rows: [BookInfoRow]) -> (stack: NSStackView, fullWidth: [NSView]) {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(stack)
 
         let headerBox = createHeaderView()
+        let separator = createSeparator()
+        let baseRows = createRowsView(BookInfoRows.baseRows(package: package, formatName: formatDescription(), ao3: ao3))
+        var fullWidthViews: [NSView] = [headerBox, separator, baseRows]
         stack.addArrangedSubview(headerBox)
+        stack.addArrangedSubview(separator)
+        stack.addArrangedSubview(baseRows)
 
-        let separator1 = createSeparator()
-        stack.addArrangedSubview(separator1)
-
-        let grid = createMetadataGrid()
-        stack.addArrangedSubview(grid)
-
-        var ao3View: NSView?
-        if let view = createAO3View(rows: ao3Rows) {
-            stack.addArrangedSubview(view)
-            ao3View = view
+        if let ao3Section = createAO3Section(rows: ao3Rows) {
+            stack.addArrangedSubview(ao3Section)
+            fullWidthViews.append(ao3Section)
         }
-
         if let descView = createDescriptionView() {
             stack.addArrangedSubview(descView)
         }
-
-        let separator2 = createSeparator()
-        stack.addArrangedSubview(separator2)
-
-        let buttonBox = createButtonBox()
-        stack.addArrangedSubview(buttonBox)
-
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
-            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
-            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16),
-            headerBox.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            separator1.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            separator2.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            buttonBox.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
-        if let ao3View {
-            ao3View.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
-
-        self.view = root
+        return (stack, fullWidthViews)
     }
 
     private func createHeaderView() -> NSView {
@@ -132,61 +166,47 @@ final class BookInfoViewController: NSViewController {
         return headerBox
     }
 
-    private func createMetadataGrid() -> NSGridView {
-        let rows = BookInfoRows.baseRows(package: package, formatName: formatDescription(), ao3: ao3)
-        let grid = NSGridView(views: rows.map { [createRowLabel("\($0.label):"), createValueLabel($0.value)] })
-        grid.rowSpacing = 6
-        grid.columnSpacing = 12
-        return grid
+    /// One `Label: value` line per row, label right-aligned in a fixed column and the value wrapping.
+    private func createRowsView(_ rows: [BookInfoRow]) -> NSStackView {
+        let column = NSStackView()
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 6
+        for row in rows {
+            let line = NSStackView()
+            line.orientation = .horizontal
+            line.alignment = .firstBaseline
+            line.distribution = .fill
+            line.spacing = Self.rowSpacing
+
+            let label = createRowLabel("\(row.label):")
+            line.addArrangedSubview(label)
+            line.addArrangedSubview(createValueLabel(row.value))
+            label.widthAnchor.constraint(equalToConstant: Self.labelColumnWidth).isActive = true
+
+            column.addArrangedSubview(line)
+            line.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        }
+        return column
     }
 
-    /// "Archive of Our Own" section: label and value lines in a scrolling, selectable text view.
-    private func createAO3View(rows: [BookInfoRow]) -> NSView? {
+    /// "Archive of Our Own" heading over the same label and value rows as the base fields.
+    private func createAO3Section(rows: [BookInfoRow]) -> NSView? {
         guard !rows.isEmpty else { return nil }
         let container = NSStackView()
         container.orientation = .vertical
         container.alignment = .leading
-        container.spacing = 4
+        container.spacing = 6
 
         let title = NSTextField(labelWithString: "Archive of Our Own")
         title.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
         title.textColor = .secondaryLabelColor
         container.addArrangedSubview(title)
 
-        let scroll = NSTextView.scrollableTextView()
-        guard let textView = scroll.documentView as? NSTextView else { return nil }
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.heightAnchor.constraint(equalToConstant: Self.ao3ScrollHeight).isActive = true
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 0, height: 2)
-        textView.textStorage?.setAttributedString(Self.attributedText(for: rows))
-        container.addArrangedSubview(scroll)
-        scroll.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        let rowsView = createRowsView(rows)
+        container.addArrangedSubview(rowsView)
+        rowsView.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         return container
-    }
-
-    private static func attributedText(for rows: [BookInfoRow]) -> NSAttributedString {
-        let result = NSMutableAttributedString()
-        let labelAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: NSColor.secondaryLabelColor,
-        ]
-        let valueAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11),
-            .foregroundColor: NSColor.labelColor,
-        ]
-        for (index, row) in rows.enumerated() {
-            result.append(NSAttributedString(string: "\(row.label): ", attributes: labelAttributes))
-            result.append(NSAttributedString(string: row.value, attributes: valueAttributes))
-            if index < rows.count - 1 {
-                result.append(NSAttributedString(string: "\n", attributes: valueAttributes))
-            }
-        }
-        return result
     }
 
     private func createDescriptionView() -> NSView? {
@@ -287,11 +307,14 @@ final class BookInfoViewController: NSViewController {
     }
 
     private func createValueLabel(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
+        let label = NSTextField(wrappingLabelWithString: text)
         label.font = NSFont.systemFont(ofSize: 12, weight: .regular)
         label.textColor = .labelColor
         label.isSelectable = true
-        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 0
+        label.preferredMaxLayoutWidth = Self.valueWrapWidth
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return label
     }
 
@@ -310,4 +333,9 @@ final class BookInfoViewController: NSViewController {
     @objc private func dismissSheet() {
         dismiss(nil)
     }
+}
+
+/// Document view for the Book Info scroll view: flipped so content starts at the top.
+private final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }
