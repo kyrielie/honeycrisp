@@ -185,7 +185,7 @@ final class ChapterHostSurface {
             let snapshotObj = try? JSONSerialization.jsonObject(with: Data(snapshotStr.utf8)) as? [String: Any]
             let offset = (snapshotObj?["offset"] as? NSNumber)?.intValue ?? 0
             let before = (snapshotObj?["before"] as? NSNumber)?.doubleValue ?? 0
-            try await webView.callAsyncJavaScript(
+            _ = try await webView.callAsyncJavaScript(
                 """
                 window.qlSetup(cols);
                 if (offset > 0) { window.qlNavigateToOffset(offset); } else { window.qlScrollToFraction(before); }

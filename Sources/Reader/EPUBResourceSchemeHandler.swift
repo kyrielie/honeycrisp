@@ -21,7 +21,9 @@ struct ActiveTaskSet {
 /// serves app-generated resources under `/__app/` (`appResources`) and can prepare chapter markup
 /// (`transform`, see `ServedChapter`).
 final class EPUBResourceSchemeHandler: NSObject, WKURLSchemeHandler {
-    static let scheme = "honeycrisp-epub"
+    /// `nonisolated` because the class is main-actor isolated through `WKURLSchemeHandler` and this
+    /// constant is read from nonisolated code (`allowsNavigation`, URL building).
+    nonisolated static let scheme = "honeycrisp-epub"
 
     /// Settable so a configuration built before the book is parsed can be pointed at it later.
     var rootFolder: URL {

@@ -60,6 +60,14 @@ over from earlier milestones and unchanged.
    speech only; `PaginationEngine` navigation is covered only through the surface tests.
 7. `ReaderViewController.swift` is 2,910 lines and still holds speech, bookmark, history and flag-mode glue (FRAMEWORK section 2).
 8. The pre-migration `readerThemes` blob stays in `UserDefaults` as a rollback copy indefinitely (M2.1 non-blocking default).
+9. Compiler warnings (Xcode 26.3, Swift 5.9 language mode). The mechanical ones are fixed (needless `try?`, an unused result, an unused
+   binding, `nonisolated static let scheme`). Still open: (a) `FlowSurface.applyCosmetics` warns that its `try await webView.evaluateJavaScript(...)`
+   calls throw and await nothing, which suggests they resolve to the fire-and-forget overload (Unverified: check which overload Xcode picks;
+   do not silence it by deleting the keywords); (b) Swift 6 isolation warnings: the `FlowSurface.init` default argument builds a main-actor
+   `EPUBResourceSchemeHandler` in a nonisolated context, and four `ReaderViewController` closures (structural-reload debounce timer,
+   `evaluateJavaScript` completions, resize path) read main-actor `surface` properties from `@Sendable` closures. A fix needs `@MainActor`
+   on `FlowSurface` (six test files construct it synchronously) or a hop that changes timing, and `MainActor.assumeIsolated` needs macOS 14
+   while the app deploys to 13.0; (c) the AppIcon set names a missing `icon-mac-128x128 1.png` while `icon-mac-128x128.png` is unassigned.
 
 Largest real book (owner-supplied; structure Verified by unpacking): 307 chapters, 26.0 MB of XHTML, 23.07M characters, 4.07M
 words, no images, no scripts. The owner reports that 2.2.1 opens and reads it, with slow style changes and janky fast scrolling,
@@ -559,5 +567,6 @@ Ordered by risk to readers first, then by cost. Sizes as in section 3. Each item
 | 8 | Split `ReaderViewController` by contract, one layer boundary per PR: speech glue first (it already has its own delegate extension and coordinator), then bookmarks and navigation history. | 2,910 lines in one class; FRAMEWORK section 2 marks it as mixed L3, L4 and L5. | M each | Behavior-neutral; only after items 1 and 2, which touch the same regions |
 | 9 | Window state restoration (`isRestorable = false` today): restore the book URL and frame through the security-scoped bookmark, never the reading position. | Known gap since the architecture review; not in any milestone. | M | Owner decision; brushes no non-goal |
 | 10 | Copy and process: the README and `site/index.html` call Honeycrisp an EPUB reader while HTML, Markdown and plain text also open; consider running `swiftlint` in CI (`CLAUDE.md` says it does not today); keep handoff plans outside the repo tree (`make_upload_zip.sh` packs untracked files, so local handoff files ship in every review zip). | Small, removes recurring drift. | S | Owner decision on CI |
+| 11 | Clear the open compiler warnings (section 1.2 item 9): fix the AppIcon `Contents.json`, resolve the `FlowSurface` overload question first, then the Swift 6 isolation group as one deliberate pass with tests. | Warnings hide new ones, and the isolation group becomes errors in Swift 6 language mode. | S then M | Check the `evaluateJavaScript` overload before changing it |
 
-Blocking owner decisions: item 2 (after measuring), item 7, item 9. Non-blocking: item 10.
+Blocking owner decisions: item 2 (after measuring), item 7, item 9. Non-blocking: items 10 and 11.

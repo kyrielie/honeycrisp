@@ -297,7 +297,7 @@ final class TOCParser {
     }
 
     private func parseSoupNavList(_ list: Element, base: URL, depth: Int, order: inout Int) -> [TOCEntry] {
-        guard let items = try? list.children().filter({ $0.tagName().lowercased() == "li" }) else { return [] }
+        let items = list.children().filter { $0.tagName().lowercased() == "li" }
         var entries: [TOCEntry] = []
         for item in items {
             guard let link = try? item.select("> a").first() ?? item.select("a").first(),

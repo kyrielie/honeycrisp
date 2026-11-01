@@ -1243,7 +1243,7 @@ final class ReaderViewController: NSViewController {
         evaluateInSurfaceWorld(js) { [weak self] _, _ in
             guard let self else { return }
             self.speechHighlightInFlight = false
-            if let next = self.pendingSpeechProgress {
+            if self.pendingSpeechProgress != nil {
                 self.pendingSpeechProgress = nil
                 self.pushSpeechHighlight()
             }
