@@ -334,8 +334,3 @@ final class BookInfoViewController: NSViewController {
         dismiss(nil)
     }
 }
-
-/// Document view for the Book Info scroll view: flipped so content starts at the top.
-private final class FlippedView: NSView {
-    override var isFlipped: Bool { true }
-}
