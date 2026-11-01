@@ -106,11 +106,17 @@ final class ReaderContrastTests: XCTestCase {
         let css = EPUBParser.readerCSS
 
         XCTAssertFalse(css.contains("FFEE58"))
-        XCTAssertTrue(css.contains("background: var(--reader-hit-bg);"))
+        // background-color with !important so the universal background-color rule cannot override them
+        XCTAssertTrue(css.contains("background-color: var(--reader-hit-bg) !important;"))
         XCTAssertTrue(css.contains("color: var(--reader-hit-text);"))
-        XCTAssertTrue(css.contains("background: var(--reader-hit-active-bg);"))
+        XCTAssertTrue(css.contains("background-color: var(--reader-hit-active-bg) !important;"))
         XCTAssertTrue(css.contains("color: var(--reader-hit-active-text);"))
         XCTAssertTrue(css.contains("outline: 2px solid var(--reader-hit-text);"))
+        // speech overlay boxes also use background-color !important
+        XCTAssertTrue(css.contains("background-color: var(--reader-speech-sentence) !important;"))
+        XCTAssertTrue(css.contains("background-color: var(--reader-speech-word) !important;"))
+        // #hc-speech-hl must resist the paginated-mode max-width collapse
+        XCTAssertTrue(css.contains("max-width: none !important;"))
     }
 
     private func makeCosmetics(_ hit: ReaderContrast.HitColors) -> ReaderCosmeticSettings {

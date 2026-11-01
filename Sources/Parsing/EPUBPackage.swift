@@ -20,6 +20,9 @@ struct EPUBPackage {
     let version: String?
     let navigationURL: URL?
     let landmarks: [EPUBLandmark]
+    /// AO3 preface metadata, present when the first spine item contains a `dl.tags` block.
+    /// Extracted lazily by `AO3MetadataExtractor`; nil for non-AO3 books.
+    let ao3Metadata: AO3MetadataRecord?
 
     init(
         rootFolder: URL,
@@ -37,7 +40,8 @@ struct EPUBPackage {
         identifier: String? = nil,
         publicationDate: String? = nil,
         bookDescription: String? = nil,
-        subjects: [String] = []
+        subjects: [String] = [],
+        ao3Metadata: AO3MetadataRecord? = nil
     ) {
         self.rootFolder = rootFolder
         self.spineURLs = spineURLs
@@ -57,6 +61,7 @@ struct EPUBPackage {
         self.publicationDate = publicationDate
         self.bookDescription = bookDescription
         self.subjects = subjects
+        self.ao3Metadata = ao3Metadata
     }
 }
 

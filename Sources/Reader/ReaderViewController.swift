@@ -34,6 +34,8 @@ final class ReaderViewController: NSViewController {
     private var didScheduleEmptyStateHintFade = false
 
     fileprivate var currentPackage: EPUBPackage?
+    /// AO3 preface metadata for the open EPUB, read once at load for Book Info. Not persisted.
+    private var currentAO3Metadata: AO3MetadataRecord?
     private var currentEPUBURL: URL?
     /// The active flowing surface implementation (FRAMEWORK contract C5).
     private var surface: FlowingSurface!
@@ -482,10 +484,12 @@ final class ReaderViewController: NSViewController {
 
                 let tocParser = TOCParser()
                 let tocEntries = tocParser.parseTOC(for: pkg)
+                let ao3Metadata = BookFormat.detect(url: url) == .epub ? AO3MetadataExtractor.extract(from: pkg) : nil
 
                 DispatchQueue.main.async { [weak self] in
                     self?.finishLoading(
-                        package: pkg, tocEntries: tocEntries, tocParser: tocParser, workDir: createdWorkDir, url: url)
+                        package: pkg, tocEntries: tocEntries, tocParser: tocParser, ao3Metadata: ao3Metadata,
+                        workDir: createdWorkDir, url: url)
                 }
             } catch {
                 if let workDir {
@@ -502,9 +506,11 @@ final class ReaderViewController: NSViewController {
     /// Main-thread half of `loadEPUB`: publishes the parsed package, works out where to open (saved position, or
     /// past the cover) and renders.
     private func finishLoading(
-        package pkg: EPUBPackage, tocEntries: [TOCEntry], tocParser: TOCParser, workDir: URL, url: URL
+        package pkg: EPUBPackage, tocEntries: [TOCEntry], tocParser: TOCParser, ao3Metadata: AO3MetadataRecord?,
+        workDir: URL, url: URL
     ) {
         currentPackage = pkg
+        currentAO3Metadata = ao3Metadata
         extractionWorkDirectories.append(workDir)
         // Always show title centered in toolbar; never in window chrome
         let title =
@@ -1533,7 +1539,7 @@ final class ReaderViewController: NSViewController {
 
     @objc func showBookInfo(_ sender: Any?) {
         guard let pkg = currentPackage else { return }
-        let infoVC = BookInfoViewController(package: pkg, sourceURL: currentEPUBURL)
+        let infoVC = BookInfoViewController(package: pkg, sourceURL: currentEPUBURL, ao3: currentAO3Metadata)
         presentAsSheet(infoVC)
     }
 

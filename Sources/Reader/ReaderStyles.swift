@@ -129,36 +129,39 @@ enum ReaderStyles {
     static let readerCSS = """
     /* Search highlight colours */
     mark.ql-hit {
-        background: var(--reader-hit-bg);
+        background-color: var(--reader-hit-bg) !important;
         color: var(--reader-hit-text);
         border-radius: 2px;
         padding: 0 1px;
     }
     mark.ql-hit.ql-active {
-        background: var(--reader-hit-active-bg);
+        background-color: var(--reader-hit-active-bg) !important;
         color: var(--reader-hit-active-text);
         outline: 2px solid var(--reader-hit-text);
     }
 
-    /* Speech highlight overlay */
+    /* Speech highlight overlay.
+       #hc-speech-hl has width:0/height:0 and expands via absolutely positioned children.
+       max-width:none prevents the paginated-mode * rule from collapsing it. */
     #hc-speech-hl {
         position: absolute;
         left: 0;
         top: 0;
         width: 0;
         height: 0;
+        max-width: none !important;
         pointer-events: none;
         z-index: 5;
     }
     .hc-sp-s {
         position: absolute;
-        background: var(--reader-speech-sentence);
+        background-color: var(--reader-speech-sentence) !important;
         border-radius: 3px;
         pointer-events: none;
     }
     .hc-sp-w {
         position: absolute;
-        background: var(--reader-speech-word);
+        background-color: var(--reader-speech-word) !important;
         border-radius: 3px;
         pointer-events: none;
     }

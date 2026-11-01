@@ -39,6 +39,71 @@ final class FlowSpeechHighlightTests: XCTestCase {
         XCTAssertEqual(inDocEl, true)
     }
 
+    /// Verifies that speech highlight boxes get a visible background-color in the
+    /// presence of the full readerCSS (including the universal background-color:transparent rule).
+    @MainActor
+    func testSpeechHighlightBoxesHaveVisibleBackgroundWithReaderCSS() async throws {
+        let webView = try await makeConfiguredFlowWebView(bodyHTML: """
+            <section class=\"hc-chapter\" id=\"hc-r0\" data-resource=\"0\">
+            <p>Hello world. Second sentence.</p>
+            </section>
+            """, includeReaderCSS: true)
+
+        _ = try await evalJS(webView, "window.honeycrispSpeechHighlight(0, 0, 12, 0, 5, 0);")
+
+        let sentenceBg = try await evalJS(webView, """
+            (() => {
+                const box = document.querySelector('.hc-sp-s');
+                if (!box) return null;
+                return window.getComputedStyle(box).backgroundColor;
+            })();
+            """) as? String
+        let sentenceBgValue = try XCTUnwrap(sentenceBg, "No .hc-sp-s box found")
+        XCTAssertFalse(sentenceBgValue.isEmpty, "computed backgroundColor is empty")
+        // transparent means the fix failed
+        XCTAssertFalse(
+            sentenceBgValue == "rgba(0, 0, 0, 0)" || sentenceBgValue == "transparent",
+            ".hc-sp-s has transparent background; expected speech color. Got: \(sentenceBgValue)"
+        )
+
+        let wordBg = try await evalJS(webView, """
+            (() => {
+                const box = document.querySelector('.hc-sp-w');
+                if (!box) return null;
+                return window.getComputedStyle(box).backgroundColor;
+            })();
+            """) as? String
+        let wordBgValue = try XCTUnwrap(wordBg, "No .hc-sp-w box found")
+        XCTAssertFalse(
+            wordBgValue == "rgba(0, 0, 0, 0)" || wordBgValue == "transparent",
+            ".hc-sp-w has transparent background; expected speech color. Got: \(wordBgValue)"
+        )
+    }
+
+    /// Verifies that search hit marks get a visible background-color in the
+    /// presence of the full readerCSS universal background-color:transparent rule.
+    @MainActor
+    func testSearchHitMarksHaveVisibleBackgroundWithReaderCSS() async throws {
+        let webView = try await makeConfiguredFlowWebView(bodyHTML: """
+            <section class=\"hc-chapter\" id=\"hc-r0\" data-resource=\"0\">
+            <p><mark class=\"ql-hit\">word</mark> rest of sentence.</p>
+            </section>
+            """, includeReaderCSS: true)
+
+        let hitBg = try await evalJS(webView, """
+            (() => {
+                const mark = document.querySelector('mark.ql-hit');
+                if (!mark) return null;
+                return window.getComputedStyle(mark).backgroundColor;
+            })();
+            """) as? String
+        let hitBgValue = try XCTUnwrap(hitBg, "No mark.ql-hit element found")
+        XCTAssertFalse(
+            hitBgValue == "rgba(0, 0, 0, 0)" || hitBgValue == "transparent",
+            "mark.ql-hit has transparent background; expected hit color. Got: \(hitBgValue)"
+        )
+    }
+
     @MainActor
     func testClearRemovesBoxes() async throws {
         let webView = try await makeConfiguredFlowWebView(bodyHTML: """
@@ -75,14 +140,18 @@ final class FlowSpeechHighlightTests: XCTestCase {
     }
 
     @MainActor
-    private func makeConfiguredFlowWebView(bodyHTML: String) async throws -> WKWebView {
+    private func makeConfiguredFlowWebView(bodyHTML: String, includeReaderCSS: Bool = false) async throws -> WKWebView {
         let surface = FlowSurface()
+        let readerCSSBlock = includeReaderCSS
+            ? "<style>\(ReaderStyles.readerCSS)</style>"
+            : ""
         let html = """
         <!doctype html>
         <html>
         <head>
           <meta charset=\"utf-8\">
-          <style id=\"honeycrisp-vars\">:root { --reader-speech-sentence: rgba(0, 104, 218, 0.2); --reader-speech-word: rgba(0, 104, 218, 0.4); }</style>
+          <style id=\"honeycrisp-vars\">:root { --reader-speech-sentence: rgba(0, 104, 218, 0.2); --reader-speech-word: rgba(0, 104, 218, 0.4); --reader-hit-bg: #FFEE58; --reader-hit-text: #000000; --reader-hit-active-bg: Highlight; --reader-hit-active-text: HighlightText; }</style>
+          \(readerCSSBlock)
         </head>
         <body>
           \(bodyHTML)

@@ -7,17 +7,24 @@ final class BookInfoViewController: NSViewController {
 
     private let package: EPUBPackage
     private let sourceURL: URL?
+    private let ao3: AO3MetadataRecord?
 
-    init(package: EPUBPackage, sourceURL: URL?) {
+    private static let baseHeight: CGFloat = 420
+    private static let ao3ScrollHeight: CGFloat = 140
+
+    init(package: EPUBPackage, sourceURL: URL?, ao3: AO3MetadataRecord? = nil) {
         self.package = package
         self.sourceURL = sourceURL
+        self.ao3 = ao3
         super.init(nibName: nil, bundle: nil)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 420))
+        let ao3Rows = ao3.map { BookInfoRows.ao3Rows($0) } ?? []
+        let height = ao3Rows.isEmpty ? Self.baseHeight : Self.baseHeight + Self.ao3ScrollHeight + 34
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: height))
         root.wantsLayer = true
 
         let stack = NSStackView()
@@ -35,6 +42,12 @@ final class BookInfoViewController: NSViewController {
 
         let grid = createMetadataGrid()
         stack.addArrangedSubview(grid)
+
+        var ao3View: NSView?
+        if let view = createAO3View(rows: ao3Rows) {
+            stack.addArrangedSubview(view)
+            ao3View = view
+        }
 
         if let descView = createDescriptionView() {
             stack.addArrangedSubview(descView)
@@ -56,6 +69,9 @@ final class BookInfoViewController: NSViewController {
             separator2.widthAnchor.constraint(equalTo: stack.widthAnchor),
             buttonBox.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
+        if let ao3View {
+            ao3View.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
 
         self.view = root
     }
@@ -117,17 +133,60 @@ final class BookInfoViewController: NSViewController {
     }
 
     private func createMetadataGrid() -> NSGridView {
-        let grid = NSGridView(views: [
-            [createRowLabel("Format:"), createValueLabel(formatDescription())],
-            [createRowLabel("Chapters:"), createValueLabel("\(package.spineURLs.count)")],
-            [createRowLabel("Publisher:"), createValueLabel(package.publisher ?? "—")],
-            [createRowLabel("Date:"), createValueLabel(package.publicationDate ?? "—")],
-            [createRowLabel("Language:"), createValueLabel(package.language ?? "—")],
-            [createRowLabel("Identifier:"), createValueLabel(package.identifier ?? "—")],
-        ])
+        let rows = BookInfoRows.baseRows(package: package, formatName: formatDescription(), ao3: ao3)
+        let grid = NSGridView(views: rows.map { [createRowLabel("\($0.label):"), createValueLabel($0.value)] })
         grid.rowSpacing = 6
         grid.columnSpacing = 12
         return grid
+    }
+
+    /// "Archive of Our Own" section: label and value lines in a scrolling, selectable text view.
+    private func createAO3View(rows: [BookInfoRow]) -> NSView? {
+        guard !rows.isEmpty else { return nil }
+        let container = NSStackView()
+        container.orientation = .vertical
+        container.alignment = .leading
+        container.spacing = 4
+
+        let title = NSTextField(labelWithString: "Archive of Our Own")
+        title.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        title.textColor = .secondaryLabelColor
+        container.addArrangedSubview(title)
+
+        let scroll = NSTextView.scrollableTextView()
+        guard let textView = scroll.documentView as? NSTextView else { return nil }
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.heightAnchor.constraint(equalToConstant: Self.ao3ScrollHeight).isActive = true
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.textContainerInset = NSSize(width: 0, height: 2)
+        textView.textStorage?.setAttributedString(Self.attributedText(for: rows))
+        container.addArrangedSubview(scroll)
+        scroll.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        return container
+    }
+
+    private static func attributedText(for rows: [BookInfoRow]) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        let labelAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let valueAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: NSColor.labelColor,
+        ]
+        for (index, row) in rows.enumerated() {
+            result.append(NSAttributedString(string: "\(row.label): ", attributes: labelAttributes))
+            result.append(NSAttributedString(string: row.value, attributes: valueAttributes))
+            if index < rows.count - 1 {
+                result.append(NSAttributedString(string: "\n", attributes: valueAttributes))
+            }
+        }
+        return result
     }
 
     private func createDescriptionView() -> NSView? {

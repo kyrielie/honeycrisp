@@ -26,7 +26,7 @@ Read from the code at 9dd9e37 on 2026-10-30. "Verified" means read in the named 
 | Table of contents (M8.1) | built | `TOCModel`, `TOCPopupViewController`, `TOCParser` fallbacks; the sidebar is deleted |
 | Back and Forward, bookmarks, search | built | `NavigationHistoryStack`, `BookmarkManager` (with `snippet`), `SearchBarViewController`, Go menu with Cmd-[ and Cmd-] |
 | Speech (M9) | built, bugs open | `SpeechCoordinator`, `SpeechTextMap`, `AVFoundationTTSEngine`, highlight overlay, follow-along, toolbar item in the customization palette only; see 1.2 item 1 |
-| Book Info, media keys (M9) | built | `BookInfoViewController` (rebindable Cmd-I), `MediaKeyCoordinator` (`MPRemoteCommandCenter`) |
+| Book Info, media keys (M9) | built | `BookInfoViewController` (rebindable Cmd-I) with an AO3 preface section (`AO3MetadataExtractor`, `BookInfoRows`; the styled preface card is not started), `MediaKeyCoordinator` (`MPRemoteCommandCenter`) |
 | Typography and themes (M2) | built | `Theme` alignment, hyphenation, spacing, bold weight, import and export, contrast warning |
 | Theme files (M2.1, R19) | built | `ThemeStore`, `ThemeFileCodec`, migration flag `readerThemesMigratedToFiles`, flush in `applicationWillTerminate`, Open Themes Folder, rescan on activation |
 | Settings window | built | six tabs: General, Reading, Formatting, Appearance, History, Shortcuts (`SettingsTabViewController.tabSpecs`); 15 rebindable actions (`RebindableAction`) |
@@ -439,7 +439,7 @@ chunk carries a `Locator`, and which voices deliver word callbacks on macOS 13.
   sentence chunking with abbreviation protection, each chunk carrying a `Locator`; word highlight
   from synthesizer range callbacks, off by default (verify the callback and its macOS 13 behavior);
   explicit state machine for start, stop and finish races.
-- Book Info sheet from parsed metadata (publisher, language, identifier, date, description);
+- Book Info sheet from parsed metadata (publisher, language, identifier, date, description, and for AO3 EPUBs the preface fields: rating, warnings, categories, fandoms, relationships, characters, tags, series, collections, words, chapters, status, dates, kudos, link);
   store a text snippet with new bookmarks.
 - Audit of input and menu requests (full-window drop target, media keys where macOS exposes them,
   auto-scroll hold-to-change, menu completeness, live column changes): mark done, partial, open.

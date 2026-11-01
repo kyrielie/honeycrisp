@@ -209,12 +209,18 @@ final class EPUBParser: NSObject {
 
         guard !spineURLs.isEmpty else { throw EPUBParseError.malformed }
         let landmarks = navigationURL.map { Self.parseLandmarks(at: $0) } ?? []
+        let ao3Metadata = AO3MetadataExtractor.extract(from: EPUBPackage(
+            rootFolder: rootFolder, spineURLs: spineURLs, title: bookTitle, author: bookAuthor,
+            coverURL: coverURL, manifest: manifest, spine: spineItems, version: version,
+            navigationURL: navigationURL, landmarks: landmarks, language: language,
+            publisher: publisher, identifier: identifier, publicationDate: publicationDate,
+            bookDescription: bookDescription, subjects: subjects))
         return EPUBPackage(
             rootFolder: rootFolder, spineURLs: spineURLs, title: bookTitle, author: bookAuthor,
             coverURL: coverURL, manifest: manifest, spine: spineItems, version: version,
             navigationURL: navigationURL, landmarks: landmarks, language: language,
             publisher: publisher, identifier: identifier, publicationDate: publicationDate,
-            bookDescription: bookDescription, subjects: subjects)
+            bookDescription: bookDescription, subjects: subjects, ao3Metadata: ao3Metadata)
     }
 
     private static func resolve(_ href: String, relativeTo base: URL) -> URL {

@@ -61,7 +61,8 @@ Target design: `docs/FRAMEWORK.md`. Plan and build status: `docs/ROADMAP.md` (se
 - `ChapterHostScript.swift` and `ChapterHostScriptTail.swift`: `ChapterHostScript.source` (client-world script: frame sizing, `window.honeycrispHost.fitAll`, `applyUserCSS(css)` replacing `<style id="honeycrisp-user">` in every mounted chapter, `offsetOfFirstVisibleText(x)`, `scrollTo(resource, offset)`, `reconcile()`, `mountedResources()` and `pixelsPerByte()`, `restoreTo(resource, offset, fraction)`, `reveal()` and throttled `hostPosition` posts for windowing and measured heights).
 - `ChapterHostPaging.swift`: pure `ChapterHostPaging` for paginated mode on the host (M4 pass 7): `handoff(from:forward:count:)` (next chapter at its start, previous at its end, nil at book edges), `restore(for:)` (a scroll-window `Position` as an exact `RestorePosition.characterOffset`), `geometry(viewport:cols:paddingH:paddingV:maxWidth:)`. `changesDocument(from:to:)` (link policy), `pagedTarget(for:fallbackIndex:count:)` (the in-memory restore of a flag-mode paged load), `toPaged(from:activeIndex:count:)` and `toScroll(index:offset:count:)` (the exact-offset restores of the mode toggle). Called by `ReaderViewController.renderCurrentContent`, `navigateSpine`, `loadHostedPagedChapter` and `toggleHostedReadingMode`.
 - `ChapterHostHandlers.swift`: `ChapterHostPositionHandler` (client-world `hostPosition`) and `ChapterHostPagerHandler` (client-world `pageAction` and `positionUpdate`), forwarding to `ChapterHostSurface.receive*`.
-- `BookInfoViewController.swift`: Book Info sheet from parsed metadata; `cleanDescription(_:)` strips tags and decodes entities (rebindable Cmd-I, `RebindableAction.bookInfo`).
+- `BookInfoRows.swift`: pure `BookInfoRow` and `BookInfoRows` (`baseRows(package:formatName:ao3:)`, `ao3Rows(_:locale:)`): the rows the Book Info sheet shows; AO3 rows only for fields that are present.
+- `BookInfoViewController.swift`: Book Info sheet from parsed metadata, with an "Archive of Our Own" scrolling section when `init(package:sourceURL:ao3:)` gets a record; `cleanDescription(_:)` strips tags and decodes entities (rebindable Cmd-I, `RebindableAction.bookInfo`).
 - `MediaKeyCoordinator.swift`: `MediaKeyCoordinator.shared`: `MPRemoteCommandCenter` play, pause and track commands wired to `SpeechCoordinator`; `updateNowPlaying(state:reader:)`.
 - `SpeechCoordinator.swift`: speech playback orchestration with sentence chunking, pluggable `TTSEngine`, spine item auto-advance, and progress notifications.
 - `SpeechProgress+JS.swift`: string generation for `honeycrispSpeechHighlight` client-world JS call.
@@ -82,6 +83,8 @@ Target design: `docs/FRAMEWORK.md`. Plan and build status: `docs/ROADMAP.md` (se
 - `ChapterSearch.swift`: text search (`searchResults`) and speech extraction (`speechText`, `speechMap`, `speechChunkRanges`) over package chapters using `ChapterPipeline`.
 
 ### Parsing (`Sources/Parsing`)
+- `AO3Metadata.swift`: `AO3MetadataRecord` (display-only AO3 preface fields: rating, warnings, categories, fandoms, relationships, characters, tags, collections, series, words, chapters, kudos, dates, story URL; not persisted).
+- `AO3MetadataExtractor.swift`: `AO3MetadataExtractor.extract(from: EPUBPackage)` scans spine items 0 to 4 for a `dl.tags` preface (string prefilter, then SwiftSoup); `extract(from: html)` parses one chapter. Adapted from Ambrosia.
 - `BookFormat.swift`: format detection enum (`BookFormat`), UTI mappings, file extension matching, and support predicates.
 - `DocumentImporter.swift`: unified importation entrypoint (`DocumentImporter`, `DocumentImporterError`) dispatching to EPUB, plain text, HTML, and Markdown importers.
 - `EPUBPackage.swift`: publication data types (`EPUBPackage`, `EPUBManifestItem`, `EPUBSpineItem`, `EPUBLandmark`, `BookSearchResult`, `EPUBParseError`).
@@ -143,43 +146,43 @@ Target design: `docs/FRAMEWORK.md`. Plan and build status: `docs/ROADMAP.md` (se
 ### `Reader/ReaderViewController.swift`
 | Lines | Content |
 |---|---|
-| 26-173 | Class, state, pagination state, page-count state, child VCs, layout, toolbar properties |
-| 174-443 | View lifecycle: `loadView` (surface selection, `ChapterHostFlag` branch at l.190, client-world message handlers), `viewDidLoad` |
-| 444-451 | `beginSecurityAccess` |
-| 452-842 | `MARK: Document Loading`: `loadDocument`, `loadEPUB`, `finishLoading`, `initialSpineIndex`, `applyRestoreTarget`, `renderCurrentContent` (`renderFlowContent`, `renderHostedChapter`), `loadSpineItem`, `loadFlowPagedChapter`, `loadHostedPagedChapter`, `reloadPagedAtCurrentOffset`, `updateCurrentChapter` |
-| 843-1390 | Mislabeled `MARK: Navigation History (Decision R13)`; holds far more: `navigate(to:)` (l.818), `goBack`, `goForward`, `evaluateInSurfaceWorld` (l.871), `readPageLocation` (l.903), bookmarks (l.940-1017), `startReading`, chapter navigation (l.1023-1109), auto-scroll (l.1110-1147), speech (`speak` l.1148, `pushSpeechHighlight` l.1224, rate and voice), `navigateSpine` (l.1270), scrollbar visibility, `toggleReadingMode` (l.1310) and `toggleHostedReadingMode` (l.1359) |
-| 1391-1410 | Toolbar title (`setToolbarTitle`) |
-| 1411-1484 | TOC popup host (`toggleTOC`, `closeTOCPopup`) |
-| 1485-1531 | Search host and context menu |
-| 1532-1539 | Book Info sheet (`showBookInfo`) |
-| 1540-1673 | Display settings: `applyDynamicSettings`, `applyCosmeticCSSUpdate`, `scheduleStructuralReload`, `adjustFontSize` |
-| 1674-1873 | Progress reporting and position save and restore: `flushPositionSave`, `reportPaginatedProgress`, `didReceiveScrollPageInfo` |
-| 1874-1925 | Navigation and key handling (`handleKeyDown`) |
-| 1926-2083 | Scroll-wheel, key monitor and resize (paginated mode only) |
-| 2084-2171 | Toolbar updates, helpers (`showLoading`, `showError`), toolbar actions (`showThemePopover`) |
-| 2172-2356 | Delegate extensions: TOC navigation, `SearchBarDelegate`, `NSWindowDelegate`, `SpeechCoordinatorDelegate` |
-| 2357-2435 | `WKNavigationDelegate` (link policy) |
-| 2436-2662 | `NSToolbarDelegate`: default and allowed identifiers (l.2446-2461), `itemForItemIdentifier`, `makeToolbarButton` |
-| 2663-2752 | Five private `WKScriptMessageHandler` classes (progress, position, page action, position update, page info) |
-| 2753-2910 | `ReaderWebView` (key and context menu), toolbar identifier constants |
+| 26-175 | Class, state, pagination state, page-count state, child VCs, layout, toolbar properties |
+| 176-445 | View lifecycle: `loadView` (surface selection, `ChapterHostFlag` branch at l.190, client-world message handlers), `viewDidLoad` |
+| 446-453 | `beginSecurityAccess` |
+| 454-848 | `MARK: Document Loading`: `loadDocument`, `loadEPUB`, `finishLoading`, `initialSpineIndex`, `applyRestoreTarget`, `renderCurrentContent` (`renderFlowContent`, `renderHostedChapter`), `loadSpineItem`, `loadFlowPagedChapter`, `loadHostedPagedChapter`, `reloadPagedAtCurrentOffset`, `updateCurrentChapter` |
+| 849-1396 | Mislabeled `MARK: Navigation History (Decision R13)`; holds far more: `navigate(to:)` (l.818), `goBack`, `goForward`, `evaluateInSurfaceWorld` (l.871), `readPageLocation` (l.903), bookmarks (l.940-1017), `startReading`, chapter navigation (l.1023-1109), auto-scroll (l.1110-1147), speech (`speak` l.1148, `pushSpeechHighlight` l.1224, rate and voice), `navigateSpine` (l.1270), scrollbar visibility, `toggleReadingMode` (l.1310) and `toggleHostedReadingMode` (l.1359) |
+| 1397-1416 | Toolbar title (`setToolbarTitle`) |
+| 1417-1490 | TOC popup host (`toggleTOC`, `closeTOCPopup`) |
+| 1491-1537 | Search host and context menu |
+| 1538-1545 | Book Info sheet (`showBookInfo`) |
+| 1546-1679 | Display settings: `applyDynamicSettings`, `applyCosmeticCSSUpdate`, `scheduleStructuralReload`, `adjustFontSize` |
+| 1680-1879 | Progress reporting and position save and restore: `flushPositionSave`, `reportPaginatedProgress`, `didReceiveScrollPageInfo` |
+| 1880-1931 | Navigation and key handling (`handleKeyDown`) |
+| 1932-2089 | Scroll-wheel, key monitor and resize (paginated mode only) |
+| 2090-2177 | Toolbar updates, helpers (`showLoading`, `showError`), toolbar actions (`showThemePopover`) |
+| 2178-2362 | Delegate extensions: TOC navigation, `SearchBarDelegate`, `NSWindowDelegate`, `SpeechCoordinatorDelegate` |
+| 2363-2441 | `WKNavigationDelegate` (link policy) |
+| 2442-2668 | `NSToolbarDelegate`: default and allowed identifiers (l.2446-2461), `itemForItemIdentifier`, `makeToolbarButton` |
+| 2669-2758 | Five private `WKScriptMessageHandler` classes (progress, position, page action, position update, page info) |
+| 2759-2916 | `ReaderWebView` (key and context menu), toolbar identifier constants |
 
 ### `Parsing/EPUBParser.swift`
 | Lines | Content |
 |---|---|
-| 1-291 | `EPUBParser`: `javaScriptStringLiteral`, `unpackEPUB`, `isDRMProtected(extractedRoot:)`, `parsePackage`, `searchResults`, `speechText`, `speechMap` (forwarders to `ChapterSearch`), `sanitizedLanguageTag`, `parseLandmarks` |
-| 292-337 | Forwarders to `ReaderStyles` and `ReaderScripts` (`imageVisibilityCSS`, `paginatedColumnCSS`, `readerJS`, `monospaceStack`, `readerVarsCSS`, `readerCSS`) |
+| 1-293 | `EPUBParser`: `javaScriptStringLiteral`, `unpackEPUB`, `isDRMProtected(extractedRoot:)`, `parsePackage`, `searchResults`, `speechText`, `speechMap` (forwarders to `ChapterSearch`), `sanitizedLanguageTag`, `parseLandmarks` |
+| 294-339 | Forwarders to `ReaderStyles` and `ReaderScripts` (`imageVisibilityCSS`, `paginatedColumnCSS`, `readerJS`, `monospaceStack`, `readerVarsCSS`, `readerCSS`) |
 
 ### `Settings/SettingsManager.swift`
 | Lines | Content |
 |---|---|
-| 16-279 | `AppearanceMode`, `FontPreset(s)`, `ThemeColorSet`, `Theme`, `ThemeExport`, `ReadingMode`, `NewBookOpensIn` |
-| 280-312 | Notification names, `SettingsManager.shared`, `themeStore`, `init(defaults:themeStore:)` |
-| 313-342 | Font |
-| 343-609 | Themes: cache over `ThemeStore`, one-time migration (`readerThemesMigratedToFiles`, l.464), `currentThemeID`, `currentTheme`, `effectiveColorSet`, `updateTheme`, `addTheme`, `deleteTheme` |
-| 610-697 | Line height, font size, behaviour flags |
-| 698-790 | Pagination; speech settings (`speechVoiceIdentifier`, `speechRate`, `speechHighlight`, `speechHighlightWord`, `speechFollow`, l.732-780) |
-| 791-889 | Reading-column geometry (incl. `useThemeFontForCode`, `mutateCurrentTheme`, `applyAppearanceOverride`) |
-| 890-1032 | Reset to defaults: `resetReaderToDefaults`, `resetAllToDefaults` |
+| 16-281 | `AppearanceMode`, `FontPreset(s)`, `ThemeColorSet`, `Theme`, `ThemeExport`, `ReadingMode`, `NewBookOpensIn` |
+| 282-314 | Notification names, `SettingsManager.shared`, `themeStore`, `init(defaults:themeStore:)` |
+| 315-344 | Font |
+| 345-615 | Themes: cache over `ThemeStore`, one-time migration (`readerThemesMigratedToFiles`, l.464), `currentThemeID`, `currentTheme`, `effectiveColorSet`, `updateTheme`, `addTheme`, `deleteTheme` |
+| 616-703 | Line height, font size, behaviour flags |
+| 704-796 | Pagination; speech settings (`speechVoiceIdentifier`, `speechRate`, `speechHighlight`, `speechHighlightWord`, `speechFollow`, l.732-780) |
+| 797-895 | Reading-column geometry (incl. `useThemeFontForCode`, `mutateCurrentTheme`, `applyAppearanceOverride`) |
+| 896-1038 | Reset to defaults: `resetReaderToDefaults`, `resetAllToDefaults` |
 | 1033-1073 | `notifyChange`, `notifyCosmeticChange`, `notifyStructuralChange`, color helpers |
 
 ### `Settings/SettingsWindowController.swift`
@@ -298,6 +301,8 @@ Target design: `docs/FRAMEWORK.md`. Plan and build status: `docs/ROADMAP.md` (se
 | `FlowingSurfaceTests.swift` | `ChapterHostSurface` conformance to `FlowingSurface`: properties, paged restore target consumption, fallback when no restore is pending, did-finish handling |
 | `ThemeFileCodecTests.swift` | round trip keeps `id`, `seedKey` honored only when recognized, corrupt data and unsupported version throw, slug generation, filename collisions |
 | `ThemeStoreTests.swift` | first launch writes missing seeds, atomic custom theme write, rename removes the old file, slug collisions, delete removes the file, corrupt file preserved and not deleted |
+| `AO3MetadataExtractorTests.swift` | synthetic AO3 prefaces: every field, singular and plural labels, raw rating and warning text kept, work link variants and https upgrade, series parts, stats and completion rules, kudos, one-shot 1/1 default, prefilter, spine 0 to 4 scan, unreadable item skipped, Windows-1252 decoding |
+| `BookInfoRowsTests.swift` | base rows and placeholders, spine chapter count replaced by the AO3 count, language fallback, AO3 row order and formatting (grouped numbers, `n/?`, status, series), empty fields omitted |
 | `BookInfoDescriptionTests.swift` | `cleanDescription`: tags stripped, named, numeric and hex entities decoded, whitespace collapsed |
 | `BookmarkSnippetTests.swift` | snippet persists and decodes; a legacy bookmark without a snippet still decodes |
 | `MediaKeyCoordinatorTests.swift` | setup registers targets once; now-playing info cleared when idle |
